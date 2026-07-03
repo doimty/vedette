@@ -1,5 +1,7 @@
 export ARCHS = arm64 arm64e
 
+THEOS_PACKAGE_SCHEME = roothide
+
 export DEBUG = 0
 export FINALPACKAGE = 1
 

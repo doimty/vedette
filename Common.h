@@ -6,6 +6,7 @@
 #include <Foundation/Foundation.h>
 #include <HBLog.h>
 #include <objc/runtime.h>
+#include <roothide.h>
 
 #define VEDETTE_IDENTIFIER @"com.udevs.vedette"
 #define PREFS_PATH @"/var/mobile/Library/Preferences/com.udevs.vedette.plist"
@@ -14,3 +15,5 @@
 #define NOTIFY_PID_NN "com.udevs.vedette.notify-pid"
 #define PREFS_CHANGED_NN @"com.udevs.vedette.prefschanged"
 #define RESTORE_ALL_MONITORS_NN @"com.udevs.vedette.restore-all-monitors"
+
+#define VDT_JBROOT_PATH(path) jbroot(@(path))

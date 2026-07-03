@@ -20,6 +20,7 @@
 
 #import "CHPDaemonList.h"
 #import "CHPDaemonInfo.h"
+#import "../../Common.h"
 
 #import <dirent.h>
 
@@ -72,7 +73,7 @@
 
 	[daemonPlists addObjectsFromArray:[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/System/Library/NanoLaunchDaemons"] includingPropertiesForKeys:nil options:0 error:nil]];
 
-	[daemonPlists addObjectsFromArray:[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/Library/LaunchDaemons"] includingPropertiesForKeys:nil options:0 error:nil]];
+	[daemonPlists addObjectsFromArray:[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:VDT_JBROOT_PATH("/Library/LaunchDaemons")] includingPropertiesForKeys:nil options:0 error:nil]];
 
 	for(NSURL* daemonPlistURL in [daemonPlists reverseObjectEnumerator])
 	{

@@ -69,7 +69,7 @@
         PSSpecifier *supportDevSpec = [PSSpecifier preferenceSpecifierNamed:@"Support Development" target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
         [supportDevSpec setProperty:@"Support Development" forKey:@"label"];
         [supportDevSpec setButtonAction:@selector(donation)];
-        [supportDevSpec setProperty:[UIImage imageWithContentsOfFile:@"/Library/PreferenceBundles/VedettePrefs.bundle/PayPal.png"] forKey:@"iconImage"];
+        [supportDevSpec setProperty:[UIImage imageWithContentsOfFile:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle/PayPal.png")] forKey:@"iconImage"];
         [rootSpecifiers addObject:supportDevSpec];
         
         
@@ -81,14 +81,14 @@
         PSSpecifier *twitterSpec = [PSSpecifier preferenceSpecifierNamed:@"Twitter" target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
         [twitterSpec setProperty:@"Twitter" forKey:@"label"];
         [twitterSpec setButtonAction:@selector(twitter)];
-        [twitterSpec setProperty:[UIImage imageWithContentsOfFile:@"/Library/PreferenceBundles/VedettePrefs.bundle/Twitter.png"] forKey:@"iconImage"];
+        [twitterSpec setProperty:[UIImage imageWithContentsOfFile:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle/Twitter.png")] forKey:@"iconImage"];
         [rootSpecifiers addObject:twitterSpec];
         
         //Reddit
         PSSpecifier *redditSpec = [PSSpecifier preferenceSpecifierNamed:@"Reddit" target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
         [redditSpec setProperty:@"Twitter" forKey:@"label"];
         [redditSpec setButtonAction:@selector(reddit)];
-        [redditSpec setProperty:[UIImage imageWithContentsOfFile:@"/Library/PreferenceBundles/VedettePrefs.bundle/Reddit.png"] forKey:@"iconImage"];
+        [redditSpec setProperty:[UIImage imageWithContentsOfFile:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle/Reddit.png")] forKey:@"iconImage"];
         [rootSpecifiers addObject:redditSpec];
         
         //udevs
@@ -116,7 +116,7 @@
     
     
     UIImage *headerImage = [[UIImage alloc]
-                            initWithContentsOfFile:[[NSBundle bundleWithPath:@"/Library/PreferenceBundles/VedettePrefs.bundle"] pathForResource:@"Vedette512" ofType:@"png"]];
+                            initWithContentsOfFile:[[NSBundle bundleWithPath:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle")] pathForResource:@"Vedette512" ofType:@"png"]];
     UIImageView *imageView = [[UIImageView alloc] initWithFrame:Imageframe];
     [imageView setImage:headerImage];
     [imageView setContentMode:UIViewContentModeScaleAspectFit];

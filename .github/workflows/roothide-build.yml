@@ -1,0 +1,96 @@
+name: Build Vedette roothide
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - roothide-compat-test
+    paths:
+      - '.github/workflows/roothide-build.yml'
+      - '**/*.h'
+      - '**/*.m'
+      - '**/*.mm'
+      - '**/*.xm'
+      - '**/*.plist'
+      - 'Makefile'
+      - 'control'
+      - 'layout/**'
+      - 'vedetteprefs/**'
+
+jobs:
+  package:
+    name: Package (roothide)
+    runs-on: macos-14
+
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      THEOS_PACKAGE_SCHEME: roothide
+      FINALPACKAGE: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Install packaging tools
+        run: |
+          brew update
+          brew install dpkg ldid make
+
+      - name: Install roothide Theos
+        run: |
+          git clone --recursive https://github.com/roothide/theos.git "$THEOS"
+          git -C "$THEOS" checkout --detach 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
+
+      - name: Install iPhoneOS16.5 SDK
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git /tmp/theos-sdks
+          git -C /tmp/theos-sdks checkout --detach 0222fd5413cf4b9af096f37b4621afa2688572f7
+          git -C /tmp/theos-sdks sparse-checkout set iPhoneOS16.5.sdk
+          mkdir -p "$THEOS/sdks"
+          cp -R /tmp/theos-sdks/iPhoneOS16.5.sdk "$THEOS/sdks/"
+
+      - name: Add libproc header stub
+        run: |
+          mkdir -p "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/libproc"
+          cat > "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/libproc/libproc.h" <<'EOF'
+          #ifndef LIBPROC_LIBPROC_H
+          #define LIBPROC_LIBPROC_H
+          
+          #include <sys/cdefs.h>
+          #include <stdint.h>
+          #include <sys/types.h>
+          
+          #define PROC_PIDPATHINFO_MAXSIZE 4096
+          
+          __BEGIN_DECLS
+          int proc_pidpath(int pid, void * buffer, uint32_t buffersize);
+          __END_DECLS
+          
+          #endif
+          EOF
+
+      - name: Build AltList for Theos vendor
+        run: |
+          export PATH="/opt/homebrew/opt/make/libexec/gnubin:$THEOS/bin:$PATH"
+          git clone --depth 1 https://github.com/opa334/AltList.git /tmp/AltList
+          make -C /tmp/AltList clean
+          make -C /tmp/AltList FINALPACKAGE=1 SDKVERSION=16.5
+          mkdir -p "$THEOS/vendor/include/AltList" "$THEOS/vendor/lib"
+          cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/"
+          cp /tmp/AltList/*.h "$THEOS/vendor/include/AltList/"
+
+      - name: Build package
+        run: |
+          export PATH="/opt/homebrew/opt/make/libexec/gnubin:$THEOS/bin:$PATH"
+          make clean SDKVERSION=16.5
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide SDKVERSION=16.5
+
+      - name: Upload deb packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: vedette-roothide-packages
+          path: packages/*.deb
+          if-no-files-found: error
