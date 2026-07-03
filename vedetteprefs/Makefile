@@ -9,6 +9,6 @@ VedettePrefs_FRAMEWORKS = UIKit
 VedettePrefs_PRIVATE_FRAMEWORKS = Preferences
 VedettePrefs_EXTRA_FRAMEWORKS = AltList
 VedettePrefs_INSTALL_PATH = /Library/PreferenceBundles
-VedettePrefs_CFLAGS = -fobjc-arc
+VedettePrefs_CFLAGS = -fobjc-arc -I$(THEOS_PROJECT_DIR)
 
 include $(THEOS_MAKE_PATH)/bundle.mk
