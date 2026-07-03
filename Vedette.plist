@@ -2,6 +2,7 @@
 	Filter = {
 		Bundles = (
 			"com.apple.Security",
+			"com.apple.UIKit",
 		);
 	};
 }
