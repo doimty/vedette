@@ -1,4 +1,8 @@
+ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
+TARGET := iphone:clang:16.5:15.0
+else
 TARGET := iphone:clang:latest:7.0
+endif
 
 include $(THEOS)/makefiles/common.mk
 
