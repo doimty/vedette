@@ -5,7 +5,7 @@ THEOS_PACKAGE_SCHEME = roothide
 export DEBUG = 0
 export FINALPACKAGE = 1
 
-export PREFIX = $(THEOS)/toolchain/Xcode11.xctoolchain/usr/bin/
+export PREFIX ?= $(THEOS)/toolchain/Xcode11.xctoolchain/usr/bin/
 
 TARGET := iphone:clang:latest:7.0
 INSTALL_TARGET_PROCESSES = SpringBoard

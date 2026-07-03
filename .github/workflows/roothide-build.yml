@@ -26,6 +26,7 @@ jobs:
       THEOS: ${{ github.workspace }}/theos
       THEOS_PACKAGE_SCHEME: roothide
       FINALPACKAGE: 1
+      PREFIX: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
 
     steps:
       - name: Checkout
