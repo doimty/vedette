@@ -2,6 +2,7 @@
 	Filter = {
 		Executables = (
 			"runningboardd",
+			"screentimeagent",
 		);
 	};
 }
