@@ -6,6 +6,7 @@
 #import "Common.h"
 #import "VDTProcessManager.h"
 #import "VDTShared.h"
+#import "VDTProbe.h"
 
 #include <notify.h>
 
@@ -13,15 +14,37 @@
 static void notify_new_pid(const char *notificationName, uint64_t pid){
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
         int token = 0;
-        notify_register_check(notificationName, &token);
-        notify_set_state(token, pid);
-        notify_cancel(token);
-        notify_post(notificationName);
+        int registerRet = notify_register_check(notificationName, &token);
+        int setRet = notify_set_state(token, pid);
+        int cancelRet = notify_cancel(token);
+        int postRet = notify_post(notificationName);
+        VDTProbeRecord(@"app.notifyPost", @{
+            @"notification": [NSString stringWithUTF8String:notificationName] ?: @"",
+            @"pid": @(pid),
+            @"registerRet": @(registerRet),
+            @"token": @(token),
+            @"setRet": @(setRet),
+            @"cancelRet": @(cancelRet),
+            @"postRet": @(postRet)
+        });
     });
 }
 
 #pragma mark runningboardd
 static int notify_pid_token;
+
+static void write_injectdebug_state(NSString *processName, pid_t pid, NSString *executablePath, BOOL isApplication, NSString *bundleIdentifier, BOOL enabled, BOOL processEnabled){
+    NSString *safeProcessName = processName.length > 0 ? processName : @"unknown";
+    VDTProbeRecord(@"inject.loaded", @{
+        @"processName": safeProcessName,
+        @"pid": @(pid),
+        @"executablePath": executablePath ?: @"",
+        @"isApplication": @(isApplication),
+        @"bundleIdentifier": bundleIdentifier ?: @"",
+        @"enabled": @(enabled),
+        @"processEnabled": @(processEnabled)
+    });
+}
 
 static void reloadPrefs(){
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -77,6 +100,13 @@ static void reloadPrefs(){
         }];
                 
         NSArray *pids = pids_with_identifier_and_type([identifiers objectsAtIndexes:monitorIndices], [types objectsAtIndexes:monitorIndices]);
+        VDTProbeRecord(@"runningboardd.reloadPrefs", @{
+            @"enabled": @(enabled),
+            @"appConfigCount": @(appConfigs.count),
+            @"daemonConfigCount": @(daemonConfigs.count),
+            @"monitorIdentifierCount": @(monitorIndices.count),
+            @"monitorPids": pids ?: @[]
+        });
         monitor_pids(pids, [percentages objectsAtIndexes:monitorIndices], [intervals objectsAtIndexes:monitorIndices]);
         HBLogDebug(@"Monitor ** pids: %@ ** %@ ** %@", pids, [percentages objectsAtIndexes:monitorIndices], [intervals objectsAtIndexes:monitorIndices]);
         
@@ -141,13 +171,24 @@ static void restoreAllMonitors(){
                     NSString *processName = [executablePath lastPathComponent];
                     
                     if ([processName isEqualToString:@"runningboardd"]){
+                        write_injectdebug_state(processName, [procInfo processIdentifier], executablePath, isApplication, nil, YES, YES);
                         reloadPrefs();
-                        notify_register_dispatch(NOTIFY_PID_NN, &notify_pid_token, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(int token) {
+                        int notifyRet = notify_register_dispatch(NOTIFY_PID_NN, &notify_pid_token, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(int token) {
                             uint64_t pid = 0;
-                            notify_get_state(token, &pid);
+                            int getRet = notify_get_state(token, &pid);
+                            VDTProbeRecord(@"runningboardd.notifyReceived", @{
+                                @"token": @(token),
+                                @"getRet": @(getRet),
+                                @"pid": @(pid)
+                            });
                             if (pid > 0){
                                 received_new_proc((pid_t)pid);
                             }
+                        });
+                        VDTProbeRecord(@"runningboardd.listenerRegistered", @{
+                            @"notification": [NSString stringWithUTF8String:NOTIFY_PID_NN] ?: @"",
+                            @"ret": @(notifyRet),
+                            @"token": @(notify_pid_token)
                         });
                         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)reloadPrefs, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)restoreAllMonitors, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
@@ -161,6 +202,7 @@ static void restoreAllMonitors(){
                         id enabledVal = valueForKeyWithPrefs(@"enabled", weakPrefs);
                         BOOL enabled = enabledVal ? [enabledVal boolValue] : YES;
                         BOOL processEnabled = [valueForProcessConfigKeyWithPrefs((isApplication ? bundleIdentifier : processName), @"enabled", @NO, (isApplication ? VDTConfigTypeApp : VDTConfigTypeDaemon), weakPrefs) boolValue];
+                        write_injectdebug_state(processName, [procInfo processIdentifier], executablePath, isApplication, bundleIdentifier, enabled, processEnabled);
                         if (enabled && processEnabled){
                             HBLogDebug(@"Notify new pid: %d", [procInfo processIdentifier]);
                             notify_new_pid(NOTIFY_PID_NN, [procInfo processIdentifier]);

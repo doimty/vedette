@@ -5,6 +5,7 @@
 
 #import "VDTProcessManager.h"
 #import "VDTShared.h"
+#import "VDTProbe.h"
 #import "PrivateHeaders.h"
 
 NSDictionary *prefs;
@@ -27,7 +28,7 @@ static NSString* name_from_pid(pid_t pid){
 }
 
 static void write_termdebug_state(NSDictionary *state){
-    [state writeToFile:VDT_TERMDEBUG_PATH atomically:YES];
+    VDTProbeRecord(@"runningboardd.monitorSyscall", state ?: @{});
 }
 
 /*
@@ -73,6 +74,13 @@ NSArray* pids_with_identifier_and_type(NSArray <NSString *>*identifiers, NSArray
             }
         }
     }
+    if (buffer) free(buffer);
+    VDTProbeRecord(@"runningboardd.pidLookup", @{
+        @"identifiers": identifiers ?: @[],
+        @"types": types ?: @[],
+        @"procListCount": @(k),
+        @"matchedPids": pids ?: @[]
+    });
     return pids; // only existed pids are returned
 }
 
@@ -168,16 +176,35 @@ void throttle_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages
         pid_t pid = [pids[idx] intValue];
         if (pid > 0){
             int percentage = [percentages[idx] intValue];
+            int setRet = 0;
+            int setErrno = 0;
+            int clearRet = 0;
+            int clearErrno = 0;
             
             if (percentage > 0){
-                if (proc_setcpu_percentage(pid, PROC_SETCPU_ACTION_THROTTLE, percentage) == 0){
+                errno = 0;
+                setRet = proc_setcpu_percentage(pid, PROC_SETCPU_ACTION_THROTTLE, percentage);
+                setErrno = errno;
+                if (setRet == 0){
                     HBLogDebug(@"Throttled pid %d with percentage %d%% ", pid, percentage);
                 }
             }else{
-                if (proc_clear_cpulimits(pid) == 0){
+                errno = 0;
+                clearRet = proc_clear_cpulimits(pid);
+                clearErrno = errno;
+                if (clearRet == 0){
                     HBLogDebug(@"Restored CPU limits for pid %d ", pid);
                 }
             }
+            VDTProbeRecord(@"runningboardd.throttleSyscall", @{
+                @"pid": @(pid),
+                @"name": name_from_pid(pid) ?: @"",
+                @"requestedPercentage": @(percentage),
+                @"setRet": @(setRet),
+                @"setErrno": @(setErrno),
+                @"clearRet": @(clearRet),
+                @"clearErrno": @(clearErrno)
+            });
         }
     }
 }
@@ -202,6 +229,15 @@ void received_new_proc(pid_t pid){
 
     }
     
+    VDTProbeRecord(@"runningboardd.receivedNewProcResolved", @{
+        @"pid": @(pid),
+        @"name": name_from_pid(pid) ?: @"",
+        @"bundleIdentifier": appProxy.bundleIdentifier ?: @"",
+        @"percentage": @(percentage),
+        @"interval": @(interval),
+        @"violationPolicy": @(violationPolicy)
+    });
+    
     switch (violationPolicy) {
         case VDTViolationPolicyMonitorAndTerminate:
             monitor_pids(@[@(pid)], @[@(percentage)], @[@(interval)]);
@@ -210,6 +246,7 @@ void received_new_proc(pid_t pid){
             throttle_pids(@[@(pid)], @[@(percentage)]);
             break;
         default:
+            VDTProbeRecord(@"runningboardd.policyNone", @{@"pid": @(pid), @"violationPolicy": @(violationPolicy)});
             break;
     }
 }
