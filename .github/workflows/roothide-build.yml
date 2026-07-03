@@ -76,8 +76,8 @@ jobs:
         run: |
           export PATH="/opt/homebrew/opt/make/libexec/gnubin:$THEOS/bin:$PATH"
           git clone --depth 1 https://github.com/opa334/AltList.git /tmp/AltList
-          make -C /tmp/AltList clean
-          make -C /tmp/AltList FINALPACKAGE=1 SDKVERSION=16.5
+          make -C /tmp/AltList clean THEOS_PACKAGE_SCHEME=rootless SDKVERSION=16.5
+          make -C /tmp/AltList FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless SDKVERSION=16.5
           mkdir -p "$THEOS/vendor/include/AltList" "$THEOS/vendor/lib"
           cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/"
           cp /tmp/AltList/*.h "$THEOS/vendor/include/AltList/"
