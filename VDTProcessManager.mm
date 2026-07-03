@@ -26,6 +26,10 @@ static NSString* name_from_pid(pid_t pid){
     return [NSString stringWithUTF8String:nameBuffer];
 }
 
+static void write_termdebug_state(NSDictionary *state){
+    [state writeToFile:VDT_TERMDEBUG_PATH atomically:YES];
+}
+
 /*
 static NSArray* all_running_pids(){
     int n = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
@@ -80,19 +84,80 @@ void monitor_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages,
             int percentage = [percentages[idx] intValue];
             int interval = [intervals[idx] intValue];
             
-            proc_disable_cpumon(pid);
+            int beforePercentage = 0;
+            int beforeInterval = 0;
+            int afterDisablePercentage = 0;
+            int afterDisableInterval = 0;
+            int afterFatalPercentage = 0;
+            int afterFatalInterval = 0;
+            
+            errno = 0;
+            int beforeGetRet = proc_get_cpumon_params(pid, &beforePercentage, &beforeInterval);
+            int beforeGetErrno = errno;
+            
+            errno = 0;
+            int disableRet = proc_disable_cpumon(pid);
+            int disableErrno = errno;
+            
+            errno = 0;
+            int afterDisableGetRet = proc_get_cpumon_params(pid, &afterDisablePercentage, &afterDisableInterval);
+            int afterDisableGetErrno = errno;
+            
+            int fatalRet = 0;
+            int fatalErrno = 0;
+            int defaultsRet = 0;
+            int defaultsErrno = 0;
             
             if (percentage > 0 && interval > 0){
-                if (proc_set_cpumon_params_fatal(pid, percentage, interval) == 0){
+                errno = 0;
+                fatalRet = proc_set_cpumon_params_fatal(pid, percentage, interval);
+                fatalErrno = errno;
+                if (fatalRet == 0){
                     HBLogDebug(@"Monitoring pid %d with percentage %d%% and interval %ds", pid, percentage, interval);
                 }
             }else{
-                if (proc_set_cpumon_defaults(pid) == 0){
+                errno = 0;
+                defaultsRet = proc_set_cpumon_defaults(pid);
+                defaultsErrno = errno;
+                if (defaultsRet == 0){
                     HBLogDebug(@"Restore CPU limits for pid: %d", pid);
                 }
             }
             
-            proc_resume_cpumon(pid);
+            errno = 0;
+            int afterFatalGetRet = proc_get_cpumon_params(pid, &afterFatalPercentage, &afterFatalInterval);
+            int afterFatalGetErrno = errno;
+            
+            errno = 0;
+            int resumeRet = proc_resume_cpumon(pid);
+            int resumeErrno = errno;
+            
+            write_termdebug_state(@{
+                @"pid": @(pid),
+                @"name": name_from_pid(pid) ?: @"",
+                @"requestedPercentage": @(percentage),
+                @"requestedInterval": @(interval),
+                @"beforeGetRet": @(beforeGetRet),
+                @"beforeGetErrno": @(beforeGetErrno),
+                @"beforePercentage": @(beforePercentage),
+                @"beforeInterval": @(beforeInterval),
+                @"disableRet": @(disableRet),
+                @"disableErrno": @(disableErrno),
+                @"afterDisableGetRet": @(afterDisableGetRet),
+                @"afterDisableGetErrno": @(afterDisableGetErrno),
+                @"afterDisablePercentage": @(afterDisablePercentage),
+                @"afterDisableInterval": @(afterDisableInterval),
+                @"fatalRet": @(fatalRet),
+                @"fatalErrno": @(fatalErrno),
+                @"defaultsRet": @(defaultsRet),
+                @"defaultsErrno": @(defaultsErrno),
+                @"afterFatalGetRet": @(afterFatalGetRet),
+                @"afterFatalGetErrno": @(afterFatalGetErrno),
+                @"afterFatalPercentage": @(afterFatalPercentage),
+                @"afterFatalInterval": @(afterFatalInterval),
+                @"resumeRet": @(resumeRet),
+                @"resumeErrno": @(resumeErrno)
+            });
         }
     }
 }

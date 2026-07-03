@@ -15,5 +15,6 @@
 #define NOTIFY_PID_NN "com.udevs.vedette.notify-pid"
 #define PREFS_CHANGED_NN @"com.udevs.vedette.prefschanged"
 #define RESTORE_ALL_MONITORS_NN @"com.udevs.vedette.restore-all-monitors"
+#define VDT_TERMDEBUG_PATH @"/var/tmp/com.udevs.vedette.termdebug.plist"
 
 #define VDT_JBROOT_PATH(path) jbroot(@(path))

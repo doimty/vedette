@@ -13,6 +13,7 @@ int proc_name(int pid, void *buffer, uint32_t buffersize);
 int proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize);
 int proc_disable_cpumon(int pid);
 int proc_set_cpumon_params_fatal(int pid, int percentage, int interval);
+int proc_get_cpumon_params(int pid, int *percentage, int *interval);
 int proc_set_cpumon_defaults(int pid);
 int proc_resume_cpumon(int pid);
 int proc_setcpu_percentage(int pid, int action, int percentage);
