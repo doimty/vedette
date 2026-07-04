@@ -5,12 +5,14 @@
 
 #import "VDTProcessManager.h"
 #import "VDTShared.h"
+#import "VDTProbe.h"
 #import "PrivateHeaders.h"
 
 NSDictionary *prefs;
 
 static LSApplicationProxy* appproxy_from_bundle_path(NSString *path){
-    return [objc_getClass("LSApplicationProxy") applicationProxyForBundleURL:[NSURL URLWithString:path]];
+    // Use fileURLWithPath to handle jbroot paths with spaces/special chars
+    return [objc_getClass("LSApplicationProxy") applicationProxyForBundleURL:[NSURL fileURLWithPath:path]];
 }
 
 static LSApplicationProxy* appproxy_from_pid(pid_t pid){
@@ -69,6 +71,12 @@ NSArray* pids_with_identifier_and_type(NSArray <NSString *>*identifiers, NSArray
             }
         }
     }
+    if (buffer) free(buffer);
+    VDTProbeRecord(@"runningboardd.pidLookup", @{
+        @"identifiers": identifiers ?: @[],
+        @"types": types ?: @[],
+        @"matchedPids": pids ?: @[]
+    });
     return pids; // only existed pids are returned
 }
 
@@ -79,20 +87,33 @@ void monitor_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages,
         if (pid > 0){
             int percentage = [percentages[idx] intValue];
             int interval = [intervals[idx] intValue];
-            
-            proc_disable_cpumon(pid);
+            int disableRet = proc_disable_cpumon(pid);
+            int setRet = -999;
+            int resumeRet = -999;
             
             if (percentage > 0 && interval > 0){
-                if (proc_set_cpumon_params_fatal(pid, percentage, interval) == 0){
+                setRet = proc_set_cpumon_params_fatal(pid, percentage, interval);
+                if (setRet == 0){
                     HBLogDebug(@"Monitoring pid %d with percentage %d%% and interval %ds", pid, percentage, interval);
                 }
             }else{
-                if (proc_set_cpumon_defaults(pid) == 0){
+                setRet = proc_set_cpumon_defaults(pid);
+                if (setRet == 0){
                     HBLogDebug(@"Restore CPU limits for pid: %d", pid);
                 }
             }
             
-            proc_resume_cpumon(pid);
+            resumeRet = proc_resume_cpumon(pid);
+            
+            VDTProbeRecord(@"runningboardd.monitorSyscall", @{
+                @"pid": @(pid),
+                @"name": name_from_pid(pid) ?: @"",
+                @"percentage": @(percentage),
+                @"interval": @(interval),
+                @"disableRet": @(disableRet),
+                @"setRet": @(setRet),
+                @"resumeRet": @(resumeRet)
+            });
         }
     }
 }
@@ -103,16 +124,31 @@ void throttle_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages
         pid_t pid = [pids[idx] intValue];
         if (pid > 0){
             int percentage = [percentages[idx] intValue];
+            int setRet = 0;
+            int clearRet = 0;
             
             if (percentage > 0){
-                if (proc_setcpu_percentage(pid, PROC_SETCPU_ACTION_THROTTLE, percentage) == 0){
+                errno = 0;
+                setRet = proc_setcpu_percentage(pid, PROC_SETCPU_ACTION_THROTTLE, percentage);
+                if (setRet == 0){
                     HBLogDebug(@"Throttled pid %d with percentage %d%% ", pid, percentage);
                 }
             }else{
-                if (proc_clear_cpulimits(pid) == 0){
+                errno = 0;
+                clearRet = proc_clear_cpulimits(pid);
+                if (clearRet == 0){
                     HBLogDebug(@"Restored CPU limits for pid %d ", pid);
                 }
             }
+            
+            VDTProbeRecord(@"runningboardd.throttleSyscall", @{
+                @"pid": @(pid),
+                @"name": name_from_pid(pid) ?: @"",
+                @"requestedPercentage": @(percentage),
+                @"setRet": @(setRet),
+                @"setErrno": @(errno),
+                @"clearRet": @(clearRet)
+            });
         }
     }
 }
@@ -136,6 +172,15 @@ void received_new_proc(pid_t pid){
         violationPolicy = (VDTViolationPolicy)[valueForProcessConfigKeyWithPrefs(daemonName, @"violationPolicy", @(VDTViolationPolicyMonitorAndTerminate), VDTConfigTypeDaemon, prefs) unsignedLongValue];
 
     }
+    
+    VDTProbeRecord(@"runningboardd.receivedNewProcResolved", @{
+        @"pid": @(pid),
+        @"name": name_from_pid(pid) ?: @"",
+        @"bundleIdentifier": appProxy.bundleIdentifier ?: @"",
+        @"percentage": @(percentage),
+        @"interval": @(interval),
+        @"violationPolicy": @(violationPolicy)
+    });
     
     switch (violationPolicy) {
         case VDTViolationPolicyMonitorAndTerminate:
