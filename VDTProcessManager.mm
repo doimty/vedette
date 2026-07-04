@@ -10,7 +10,7 @@
 NSDictionary *prefs;
 
 static LSApplicationProxy* appproxy_from_bundle_path(NSString *path){
-    return [objc_getClass("LSApplicationProxy") applicationProxyForBundleURL:[NSURL URLWithString:path]];
+    return [objc_getClass("LSApplicationProxy") applicationProxyForBundleURL:[NSURL fileURLWithPath:path]];
 }
 
 static LSApplicationProxy* appproxy_from_pid(pid_t pid){
@@ -43,12 +43,29 @@ static NSArray* all_running_pids(){
 */
 
 NSArray* pids_with_identifier_and_type(NSArray <NSString *>*identifiers, NSArray <NSNumber *> *types){
-    int n = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-    int *buffer = (int *)malloc(sizeof(int)*n);
-    int k = proc_listpids(PROC_ALL_PIDS, 0, buffer, n*sizeof(int));
-    
+    if (identifiers.count == 0) {
+        return @[];
+    }
+
+    int bufferSize = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+    if (bufferSize <= 0) {
+        return @[];
+    }
+
+    int *buffer = (int *)malloc((size_t)bufferSize);
+    if (buffer == NULL) {
+        return @[];
+    }
+
+    int bytesUsed = proc_listpids(PROC_ALL_PIDS, 0, buffer, bufferSize);
+    if (bytesUsed <= 0) {
+        free(buffer);
+        return @[];
+    }
+
+    int pidCount = bytesUsed / (int)sizeof(int);
     NSMutableArray *pids = [NSMutableArray array];
-    for (int i = 0; i < k; i++) {
+    for (int i = 0; i < pidCount; i++) {
         int pid = buffer[i];
         if (pid == 0) continue;
         
@@ -69,6 +86,7 @@ NSArray* pids_with_identifier_and_type(NSArray <NSString *>*identifiers, NSArray
             }
         }
     }
+    free(buffer);
     return pids; // only existed pids are returned
 }
 

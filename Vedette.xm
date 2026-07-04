@@ -136,7 +136,7 @@ static void restoreAllMonitors(){
                 NSString *executablePath = args[0];
                 if (executablePath){
                     
-                    BOOL isApplication = ([executablePath rangeOfString:@"/Application"].location != NSNotFound) || ([executablePath rangeOfString:@"/CoreServices"].location != NSNotFound);
+                    BOOL isApplication = ([executablePath rangeOfString:@".app/"].location != NSNotFound);
                     
                     NSString *processName = [executablePath lastPathComponent];
                     
