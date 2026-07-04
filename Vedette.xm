@@ -29,8 +29,37 @@ static void notify_rescan(const char *notificationName){
 #pragma mark runningboardd
 static int notify_pid_token;
 
+static void reloadPrefs(void);
+static void restoreAllMonitors(void);
+static dispatch_queue_t VedetteApplyQueue(void);
+
+static dispatch_queue_t VedetteApplyQueue(void){
+    static dispatch_once_t once;
+    static dispatch_queue_t q;
+    dispatch_once(&once, ^{
+        q = dispatch_queue_create("com.udevs.vedette.apply", DISPATCH_QUEUE_SERIAL);
+    });
+    return q;
+}
+
+static void VedettePrefsChangedCallback(CFNotificationCenterRef center,
+                                        void *observer,
+                                        CFStringRef name,
+                                        const void *object,
+                                        CFDictionaryRef userInfo) {
+    reloadPrefs();
+}
+
+static void VedetteRestoreAllMonitorsCallback(CFNotificationCenterRef center,
+                                              void *observer,
+                                              CFStringRef name,
+                                              const void *object,
+                                              CFDictionaryRef userInfo) {
+    restoreAllMonitors();
+}
+
 static void reloadPrefs(){
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    dispatch_async(VedetteApplyQueue(), ^{
         
         prefs = getPrefs();
         
@@ -97,7 +126,7 @@ static void reloadPrefs(){
 }
 
 static void restoreAllMonitors(){
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    dispatch_async(VedetteApplyQueue(), ^{
         //restore_all_monitors();
         NSDictionary *tmpPrefs = getTempPrefs();
         NSMutableArray *identifiers = [NSMutableArray array];
@@ -155,12 +184,12 @@ static void restoreAllMonitors(){
                                 received_new_proc((pid_t)pid);
                             }
                         });
-                        int notify_rescan_token = 0;
+                        static int notify_rescan_token = 0;
                         notify_register_dispatch(NOTIFY_RESCAN_NN, &notify_rescan_token, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(int token) {
                             reloadPrefs();
                         });
-                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)reloadPrefs, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)restoreAllMonitors, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, VedettePrefsChangedCallback, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, VedetteRestoreAllMonitorsCallback, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                     }else{
                         NSString *bundleIdentifier = isApplication ? [[NSBundle mainBundle] bundleIdentifier] : nil;
                         if(isApplication && [bundleIdentifier isEqualToString:@"com.apple.Preferences"]){
@@ -171,18 +200,10 @@ static void restoreAllMonitors(){
                         id enabledVal = valueForKeyWithPrefs(@"enabled", weakPrefs);
                         BOOL enabled = enabledVal ? [enabledVal boolValue] : YES;
                         BOOL processEnabled = [valueForProcessConfigKeyWithPrefs((isApplication ? bundleIdentifier : processName), @"enabled", @NO, (isApplication ? VDTConfigTypeApp : VDTConfigTypeDaemon), weakPrefs) boolValue];
-                        BOOL enabledDaemonExists = NO;
-                        NSArray *daemonConfigs = weakPrefs[@"daemonConfigs"];
-                        for (NSDictionary *daemonConfig in daemonConfigs) {
-                            if ([daemonConfig[@"enabled"] boolValue]) {
-                                enabledDaemonExists = YES;
-                                break;
-                            }
-                        }
-                        if (enabled && enabledDaemonExists) {
-                            notify_rescan(NOTIFY_RESCAN_NN);
-                        }
                         if (enabled && processEnabled){
+                            if (!isApplication) {
+                                notify_rescan(NOTIFY_RESCAN_NN);
+                            }
                             HBLogDebug(@"Notify new pid: %d", [procInfo processIdentifier]);
                             notify_new_pid(NOTIFY_PID_NN, [procInfo processIdentifier]);
                         }
