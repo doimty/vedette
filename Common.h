@@ -13,6 +13,7 @@
 #define PREFS_PATH_TMP @"/var/tmp/com.udevs.vedette.plist"
 
 #define NOTIFY_PID_NN "com.udevs.vedette.notify-pid"
+#define NOTIFY_RESCAN_NN "com.udevs.vedette.rescan"
 #define PREFS_CHANGED_NN @"com.udevs.vedette.prefschanged"
 #define RESTORE_ALL_MONITORS_NN @"com.udevs.vedette.restore-all-monitors"
 
