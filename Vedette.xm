@@ -23,8 +23,47 @@ static void notify_new_pid(const char *notificationName, uint64_t pid){
 #pragma mark runningboardd
 static int notify_pid_token;
 
+static void reloadPrefs(void);
+static void restoreAllMonitors(void);
+
+static dispatch_queue_t VedetteApplyQueue(void){
+    static dispatch_once_t once;
+    static dispatch_queue_t q;
+    dispatch_once(&once, ^{
+        q = dispatch_queue_create("com.udevs.vedette.apply", DISPATCH_QUEUE_SERIAL);
+    });
+    return q;
+}
+
+static void VedetteScheduleDaemonReplaySoon(void){
+    NSArray<NSNumber *> *delays = @[@1.0, @5.0, @15.0, @30.0, @60.0];
+    for (NSNumber *delay in delays){
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)([delay doubleValue] * NSEC_PER_SEC)),
+                       dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+            reloadPrefs();
+        });
+    }
+}
+
+static void VedettePrefsChangedCallback(CFNotificationCenterRef center,
+                                        void *observer,
+                                        CFStringRef name,
+                                        const void *object,
+                                        CFDictionaryRef userInfo) {
+    reloadPrefs();
+    VedetteScheduleDaemonReplaySoon();
+}
+
+static void VedetteRestoreAllMonitorsCallback(CFNotificationCenterRef center,
+                                              void *observer,
+                                              CFStringRef name,
+                                              const void *object,
+                                              CFDictionaryRef userInfo) {
+    restoreAllMonitors();
+}
+
 static void reloadPrefs(){
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    dispatch_async(VedetteApplyQueue(), ^{
         
         prefs = getPrefs();
         
@@ -91,7 +130,7 @@ static void reloadPrefs(){
 }
 
 static void restoreAllMonitors(){
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    dispatch_async(VedetteApplyQueue(), ^{
         //restore_all_monitors();
         NSDictionary *tmpPrefs = getTempPrefs();
         NSMutableArray *identifiers = [NSMutableArray array];
@@ -136,7 +175,7 @@ static void restoreAllMonitors(){
                 NSString *executablePath = args[0];
                 if (executablePath){
                     
-                    BOOL isApplication = ([executablePath rangeOfString:@"/Application"].location != NSNotFound) || ([executablePath rangeOfString:@"/CoreServices"].location != NSNotFound);
+                    BOOL isApplication = ([executablePath rangeOfString:@".app/"].location != NSNotFound);
                     
                     NSString *processName = [executablePath lastPathComponent];
                     
@@ -149,8 +188,9 @@ static void restoreAllMonitors(){
                                 received_new_proc((pid_t)pid);
                             }
                         });
-                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)reloadPrefs, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)restoreAllMonitors, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, VedettePrefsChangedCallback, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, VedetteRestoreAllMonitorsCallback, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                        VedetteScheduleDaemonReplaySoon();
                     }else{
                         NSString *bundleIdentifier = isApplication ? [[NSBundle mainBundle] bundleIdentifier] : nil;
                         if(isApplication && [bundleIdentifier isEqualToString:@"com.apple.Preferences"]){
@@ -161,7 +201,7 @@ static void restoreAllMonitors(){
                         id enabledVal = valueForKeyWithPrefs(@"enabled", weakPrefs);
                         BOOL enabled = enabledVal ? [enabledVal boolValue] : YES;
                         BOOL processEnabled = [valueForProcessConfigKeyWithPrefs((isApplication ? bundleIdentifier : processName), @"enabled", @NO, (isApplication ? VDTConfigTypeApp : VDTConfigTypeDaemon), weakPrefs) boolValue];
-                        if (enabled && processEnabled){
+                        if (enabled && processEnabled && isApplication){
                             HBLogDebug(@"Notify new pid: %d", [procInfo processIdentifier]);
                             notify_new_pid(NOTIFY_PID_NN, [procInfo processIdentifier]);
                         }
