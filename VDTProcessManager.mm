@@ -10,7 +10,7 @@
 NSDictionary *prefs;
 
 static LSApplicationProxy* appproxy_from_bundle_path(NSString *path){
-    return [objc_getClass("LSApplicationProxy") applicationProxyForBundleURL:[NSURL URLWithString:path]];
+    return [objc_getClass("LSApplicationProxy") applicationProxyForBundleURL:[NSURL fileURLWithPath:path]];
 }
 
 static LSApplicationProxy* appproxy_from_pid(pid_t pid){
