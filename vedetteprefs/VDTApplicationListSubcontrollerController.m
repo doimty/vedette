@@ -5,9 +5,10 @@
 
 #import "VDTApplicationListSubcontrollerController.h"
 #import "../VDTShared.h"
+#import "VDTLocalization.h"
 
 @implementation VDTApplicationListSubcontrollerController
 - (NSString*)previewStringForApplicationWithIdentifier:(NSString *)applicationID{
-    return [valueForProcessConfigKey(applicationID, @"enabled", nil, VDTConfigTypeApp) boolValue] ? @"Enabled" : @"";
+    return [valueForProcessConfigKey(applicationID, @"enabled", nil, VDTConfigTypeApp) boolValue] ? VDTLoc([self class], @"Enabled") : @"";
 }
 @end

@@ -24,6 +24,7 @@
 #import "CHPDaemonList.h"
 #import "../VDTProcessConfiguration.h"
 #import "../../VDTShared.h"
+#import "../VDTLocalization.h"
 
 @interface PSListController()
 - (id)controllerForSpecifier:(PSSpecifier*)specifier;
@@ -53,7 +54,7 @@
 
 - (NSString*)topTitle
 {
-	return @"Daemons";
+	return VDTLoc([self class], @"Daemons");
 }
 
 - (NSString*)plistName
@@ -133,7 +134,7 @@ extern NSString* previewStringForSettings(NSDictionary* settings);
 
 - (id)previewStringForSpecifier:(PSSpecifier*)specifier
 {
-    return [valueForProcessConfigKey([specifier propertyForKey:@"daemonName"], @"enabled", nil, VDTConfigTypeDaemon) boolValue] ? @"Enabled" : @"";
+    return [valueForProcessConfigKey([specifier propertyForKey:@"daemonName"], @"enabled", nil, VDTConfigTypeDaemon) boolValue] ? VDTLoc([self class], @"Enabled") : @"";
 }
 
 - (void)reloadValueOfSelectedSpecifier
