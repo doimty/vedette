@@ -6,6 +6,7 @@
 #import "Common.h"
 #import "VDTProcessManager.h"
 #import "VDTShared.h"
+#import "VDTProbe.h"
 
 #include <notify.h>
 
@@ -13,10 +14,17 @@
 static void notify_new_pid(const char *notificationName, uint64_t pid){
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
         int token = 0;
-        notify_register_check(notificationName, &token);
-        notify_set_state(token, pid);
-        notify_cancel(token);
-        notify_post(notificationName);
+        int registerRet = notify_register_check(notificationName, &token);
+        int setRet = notify_set_state(token, pid);
+        int cancelRet = notify_cancel(token);
+        int postRet = notify_post(notificationName);
+        VDTProbeRecord(@"app.notifyPost", @{
+            @"pid": @(pid),
+            @"registerRet": @(registerRet),
+            @"setRet": @(setRet),
+            @"cancelRet": @(cancelRet),
+            @"postRet": @(postRet)
+        });
     });
 }
 
@@ -80,6 +88,13 @@ static void reloadPrefs(){
         monitor_pids(pids, [percentages objectsAtIndexes:monitorIndices], [intervals objectsAtIndexes:monitorIndices]);
         HBLogDebug(@"Monitor ** pids: %@ ** %@ ** %@", pids, [percentages objectsAtIndexes:monitorIndices], [intervals objectsAtIndexes:monitorIndices]);
         
+        VDTProbeRecord(@"runningboardd.reloadPrefs", @{
+            @"appConfigCount": @(appConfigs.count),
+            @"daemonConfigCount": @(daemonConfigs.count),
+            @"monitorIdentifierCount": @(monitorIndices.count),
+            @"monitorPids": pids ?: @[]
+        });
+        
         [identifiers removeObjectsAtIndexes:monitorIndices];
         [types removeObjectsAtIndexes:monitorIndices];
         [percentages removeObjectsAtIndexes:monitorIndices];
@@ -120,6 +135,8 @@ static void restoreAllMonitors(){
         throttle_pids(pids, zeroesArray);
 
         [[NSFileManager defaultManager] removeItemAtPath:PREFS_PATH_TMP error:nil];
+        
+        VDTProbeRecord(@"runningboardd.restoreAllMonitors", @{});
     });
 }
 
@@ -136,23 +153,49 @@ static void restoreAllMonitors(){
                 NSString *executablePath = args[0];
                 if (executablePath){
                     
-                    BOOL isApplication = ([executablePath rangeOfString:@"/Application"].location != NSNotFound) || ([executablePath rangeOfString:@"/CoreServices"].location != NSNotFound);
+                    // Fix: use .app/ suffix to detect real apps instead of substring /Application
+                    // (roothide jbroot path contains /Application even for command-line tools)
+                    BOOL isApplication = ([executablePath rangeOfString:@".app/"].location != NSNotFound) || ([executablePath rangeOfString:@"/CoreServices"].location != NSNotFound);
                     
                     NSString *processName = [executablePath lastPathComponent];
                     
+                    // Log injection event for all non-tool processes
+                    NSString *bundleIdentifier = isApplication ? [[NSBundle mainBundle] bundleIdentifier] : nil;
+                    if (![processName hasPrefix:@"bash"] && ![processName hasPrefix:@"dpkg"] && ![processName hasPrefix:@"apt"] && ![processName hasPrefix:@"killall"]){
+                        VDTProbeRecord(@"inject.loaded", @{
+                            @"processName": processName ?: @"",
+                            @"pid": @([procInfo processIdentifier]),
+                            @"executablePath": executablePath ?: @"",
+                            @"isApplication": @(isApplication),
+                            @"bundleIdentifier": bundleIdentifier ?: @""
+                        });
+                    }
+                    
                     if ([processName isEqualToString:@"runningboardd"]){
+                        VDTProbeRecord(@"runningboardd.ctorEntered", @{
+                            @"pid": @([procInfo processIdentifier]),
+                            @"path": executablePath ?: @""
+                        });
                         reloadPrefs();
-                        notify_register_dispatch(NOTIFY_PID_NN, &notify_pid_token, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(int token) {
+                        int ret = notify_register_dispatch(NOTIFY_PID_NN, &notify_pid_token, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(int token) {
                             uint64_t pid = 0;
-                            notify_get_state(token, &pid);
+                            int getRet = notify_get_state(token, &pid);
+                            VDTProbeRecord(@"runningboardd.notifyReceived", @{
+                                @"token": @(token),
+                                @"getRet": @(getRet),
+                                @"pid": @(pid)
+                            });
                             if (pid > 0){
                                 received_new_proc((pid_t)pid);
                             }
                         });
+                        VDTProbeRecord(@"runningboardd.listenerRegistered", @{
+                            @"ret": @(ret),
+                            @"token": @(notify_pid_token)
+                        });
                         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)reloadPrefs, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)restoreAllMonitors, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                     }else{
-                        NSString *bundleIdentifier = isApplication ? [[NSBundle mainBundle] bundleIdentifier] : nil;
                         if(isApplication && [bundleIdentifier isEqualToString:@"com.apple.Preferences"]){
                             HBLogDebug(@"Yeah, just no.");
                             return;
@@ -164,6 +207,14 @@ static void restoreAllMonitors(){
                         if (enabled && processEnabled){
                             HBLogDebug(@"Notify new pid: %d", [procInfo processIdentifier]);
                             notify_new_pid(NOTIFY_PID_NN, [procInfo processIdentifier]);
+                        }else{
+                            VDTProbeRecord(@"app.skippedNotify", @{
+                                @"processName": processName ?: @"",
+                                @"bundleIdentifier": bundleIdentifier ?: @"",
+                                @"isApplication": @(isApplication),
+                                @"enabled": @(enabled),
+                                @"processEnabled": @(processEnabled)
+                            });
                         }
                     }
                     

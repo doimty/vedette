@@ -5,11 +5,13 @@
 
 #import "VDTProcessManager.h"
 #import "VDTShared.h"
+#import "VDTProbe.h"
 #import "PrivateHeaders.h"
 
 NSDictionary *prefs;
 
 static LSApplicationProxy* appproxy_from_bundle_path(NSString *path){
+    // Use fileURLWithPath to handle jbroot paths with spaces/special chars
     return [objc_getClass("LSApplicationProxy") applicationProxyForBundleURL:[NSURL fileURLWithPath:path]];
 }
 
@@ -24,10 +26,6 @@ static NSString* name_from_pid(pid_t pid){
     char nameBuffer[256];
     proc_name(pid, nameBuffer, sizeof(nameBuffer));
     return [NSString stringWithUTF8String:nameBuffer];
-}
-
-static void write_termdebug_state(NSDictionary *state){
-    [state writeToFile:VDT_TERMDEBUG_PATH atomically:YES];
 }
 
 /*
@@ -73,6 +71,12 @@ NSArray* pids_with_identifier_and_type(NSArray <NSString *>*identifiers, NSArray
             }
         }
     }
+    if (buffer) free(buffer);
+    VDTProbeRecord(@"runningboardd.pidLookup", @{
+        @"identifiers": identifiers ?: @[],
+        @"types": types ?: @[],
+        @"matchedPids": pids ?: @[]
+    });
     return pids; // only existed pids are returned
 }
 
@@ -83,80 +87,32 @@ void monitor_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages,
         if (pid > 0){
             int percentage = [percentages[idx] intValue];
             int interval = [intervals[idx] intValue];
-            
-            int beforePercentage = 0;
-            int beforeInterval = 0;
-            int afterDisablePercentage = 0;
-            int afterDisableInterval = 0;
-            int afterFatalPercentage = 0;
-            int afterFatalInterval = 0;
-            
-            errno = 0;
-            int beforeGetRet = proc_get_cpumon_params(pid, &beforePercentage, &beforeInterval);
-            int beforeGetErrno = errno;
-            
-            errno = 0;
             int disableRet = proc_disable_cpumon(pid);
-            int disableErrno = errno;
-            
-            errno = 0;
-            int afterDisableGetRet = proc_get_cpumon_params(pid, &afterDisablePercentage, &afterDisableInterval);
-            int afterDisableGetErrno = errno;
-            
-            int fatalRet = 0;
-            int fatalErrno = 0;
-            int defaultsRet = 0;
-            int defaultsErrno = 0;
+            int setRet = -999;
+            int resumeRet = -999;
             
             if (percentage > 0 && interval > 0){
-                errno = 0;
-                fatalRet = proc_set_cpumon_params_fatal(pid, percentage, interval);
-                fatalErrno = errno;
-                if (fatalRet == 0){
+                setRet = proc_set_cpumon_params_fatal(pid, percentage, interval);
+                if (setRet == 0){
                     HBLogDebug(@"Monitoring pid %d with percentage %d%% and interval %ds", pid, percentage, interval);
                 }
             }else{
-                errno = 0;
-                defaultsRet = proc_set_cpumon_defaults(pid);
-                defaultsErrno = errno;
-                if (defaultsRet == 0){
+                setRet = proc_set_cpumon_defaults(pid);
+                if (setRet == 0){
                     HBLogDebug(@"Restore CPU limits for pid: %d", pid);
                 }
             }
             
-            errno = 0;
-            int afterFatalGetRet = proc_get_cpumon_params(pid, &afterFatalPercentage, &afterFatalInterval);
-            int afterFatalGetErrno = errno;
+            resumeRet = proc_resume_cpumon(pid);
             
-            errno = 0;
-            int resumeRet = proc_resume_cpumon(pid);
-            int resumeErrno = errno;
-            
-            write_termdebug_state(@{
+            VDTProbeRecord(@"runningboardd.monitorSyscall", @{
                 @"pid": @(pid),
                 @"name": name_from_pid(pid) ?: @"",
-                @"requestedPercentage": @(percentage),
-                @"requestedInterval": @(interval),
-                @"beforeGetRet": @(beforeGetRet),
-                @"beforeGetErrno": @(beforeGetErrno),
-                @"beforePercentage": @(beforePercentage),
-                @"beforeInterval": @(beforeInterval),
+                @"percentage": @(percentage),
+                @"interval": @(interval),
                 @"disableRet": @(disableRet),
-                @"disableErrno": @(disableErrno),
-                @"afterDisableGetRet": @(afterDisableGetRet),
-                @"afterDisableGetErrno": @(afterDisableGetErrno),
-                @"afterDisablePercentage": @(afterDisablePercentage),
-                @"afterDisableInterval": @(afterDisableInterval),
-                @"fatalRet": @(fatalRet),
-                @"fatalErrno": @(fatalErrno),
-                @"defaultsRet": @(defaultsRet),
-                @"defaultsErrno": @(defaultsErrno),
-                @"afterFatalGetRet": @(afterFatalGetRet),
-                @"afterFatalGetErrno": @(afterFatalGetErrno),
-                @"afterFatalPercentage": @(afterFatalPercentage),
-                @"afterFatalInterval": @(afterFatalInterval),
-                @"resumeRet": @(resumeRet),
-                @"resumeErrno": @(resumeErrno)
+                @"setRet": @(setRet),
+                @"resumeRet": @(resumeRet)
             });
         }
     }
@@ -168,16 +124,31 @@ void throttle_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages
         pid_t pid = [pids[idx] intValue];
         if (pid > 0){
             int percentage = [percentages[idx] intValue];
+            int setRet = 0;
+            int clearRet = 0;
             
             if (percentage > 0){
-                if (proc_setcpu_percentage(pid, PROC_SETCPU_ACTION_THROTTLE, percentage) == 0){
+                errno = 0;
+                setRet = proc_setcpu_percentage(pid, PROC_SETCPU_ACTION_THROTTLE, percentage);
+                if (setRet == 0){
                     HBLogDebug(@"Throttled pid %d with percentage %d%% ", pid, percentage);
                 }
             }else{
-                if (proc_clear_cpulimits(pid) == 0){
+                errno = 0;
+                clearRet = proc_clear_cpulimits(pid);
+                if (clearRet == 0){
                     HBLogDebug(@"Restored CPU limits for pid %d ", pid);
                 }
             }
+            
+            VDTProbeRecord(@"runningboardd.throttleSyscall", @{
+                @"pid": @(pid),
+                @"name": name_from_pid(pid) ?: @"",
+                @"requestedPercentage": @(percentage),
+                @"setRet": @(setRet),
+                @"setErrno": @(errno),
+                @"clearRet": @(clearRet)
+            });
         }
     }
 }
@@ -201,6 +172,15 @@ void received_new_proc(pid_t pid){
         violationPolicy = (VDTViolationPolicy)[valueForProcessConfigKeyWithPrefs(daemonName, @"violationPolicy", @(VDTViolationPolicyMonitorAndTerminate), VDTConfigTypeDaemon, prefs) unsignedLongValue];
 
     }
+    
+    VDTProbeRecord(@"runningboardd.receivedNewProcResolved", @{
+        @"pid": @(pid),
+        @"name": name_from_pid(pid) ?: @"",
+        @"bundleIdentifier": appProxy.bundleIdentifier ?: @"",
+        @"percentage": @(percentage),
+        @"interval": @(interval),
+        @"violationPolicy": @(violationPolicy)
+    });
     
     switch (violationPolicy) {
         case VDTViolationPolicyMonitorAndTerminate:

@@ -23,10 +23,5 @@ Vedette_FILES = $(wildcard *.xm) $(wildcard *.mm)
 Vedette_CFLAGS = -fobjc-arc -I$(THEOS_PROJECT_DIR)
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-
-after-stage::
-	mkdir -p $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries
-	cp $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/Vedette.dylib $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/VedetteRB.dylib
-
 SUBPROJECTS += vedetteprefs
 include $(THEOS_MAKE_PATH)/aggregate.mk

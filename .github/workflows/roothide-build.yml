@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - roothide-compat-test
+      - roothide-no-rb-probe1
     paths:
       - '.github/workflows/roothide-build.yml'
       - '**/*.h'
