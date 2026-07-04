@@ -6,6 +6,7 @@
 #import "Common.h"
 #import "VDTProcessManager.h"
 #import "VDTShared.h"
+#import "VDTProbe.h"
 
 #include <notify.h>
 
@@ -139,6 +140,10 @@ static void restoreAllMonitors(){
                     BOOL isApplication = ([executablePath rangeOfString:@"/Application"].location != NSNotFound) || ([executablePath rangeOfString:@"/CoreServices"].location != NSNotFound);
                     
                     NSString *processName = [executablePath lastPathComponent];
+                    NSString *bundleIdentifier = isApplication ? [[NSBundle mainBundle] bundleIdentifier] : nil;
+                    if (![processName hasPrefix:@"bash"] && ![processName hasPrefix:@"dpkg"] && ![processName hasPrefix:@"apt"] && ![processName hasPrefix:@"killall"]){
+                        VDTMarkerRecord(processName, [procInfo processIdentifier], executablePath, isApplication, bundleIdentifier);
+                    }
                     
                     if ([processName isEqualToString:@"runningboardd"]){
                         reloadPrefs();
@@ -152,7 +157,6 @@ static void restoreAllMonitors(){
                         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)reloadPrefs, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)restoreAllMonitors, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                     }else{
-                        NSString *bundleIdentifier = isApplication ? [[NSBundle mainBundle] bundleIdentifier] : nil;
                         if(isApplication && [bundleIdentifier isEqualToString:@"com.apple.Preferences"]){
                             HBLogDebug(@"Yeah, just no.");
                             return;
