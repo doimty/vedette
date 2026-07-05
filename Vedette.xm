@@ -58,101 +58,113 @@ static void VedetteRestoreAllMonitorsCallback(CFNotificationCenterRef center,
     restoreAllMonitors();
 }
 
+static NSArray* safeConfigArray(NSDictionary *source, NSString *key){
+    id configs = source[key];
+    return [configs isKindOfClass:[NSArray class]] ? configs : @[];
+}
+
+static int positiveIntValue(id value, int defaultValue){
+    if (!value || ![value respondsToSelector:@selector(intValue)]){
+        return defaultValue;
+    }
+    int ret = [value intValue];
+    return ret > 0 ? ret : defaultValue;
+}
+
+static VDTViolationPolicy validViolationPolicy(id value, VDTViolationPolicy defaultValue){
+    if (!value || ![value respondsToSelector:@selector(unsignedLongValue)]){
+        return defaultValue;
+    }
+    VDTViolationPolicy policy = (VDTViolationPolicy)[value unsignedLongValue];
+    switch (policy) {
+        case VDTViolationPolicyMonitorAndTerminate:
+        case VDTViolationPolicyMonitor:
+        case VDTViolationPolicyThrottle:
+        case VDTViolationPolicyNone:
+            return policy;
+        default:
+            return defaultValue;
+    }
+}
+
+static void appendConfigForApply(NSMutableArray *identifiers,
+                                 NSMutableArray *types,
+                                 NSMutableArray *percentages,
+                                 NSMutableArray *intervals,
+                                 NSMutableArray *violationPolicies,
+                                 NSDictionary *config,
+                                 VDTConfigType type,
+                                 BOOL globallyEnabled){
+    if (![config isKindOfClass:[NSDictionary class]]){
+        return;
+    }
+
+    NSString *identifierKey = type == VDTConfigTypeApp ? @"bundleIdentifier" : @"daemonName";
+    NSString *identifier = config[identifierKey];
+    if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0){
+        return;
+    }
+    if (type == VDTConfigTypeApp && [identifier isEqualToString:@"com.apple.Preferences"]){
+        return;
+    }
+
+    BOOL processEnabled = globallyEnabled && [config[@"enabled"] boolValue];
+    int percentage = positiveIntValue(config[@"percentage"], 80);
+    int interval = positiveIntValue(config[@"interval"], 120);
+    VDTViolationPolicy violationPolicy = validViolationPolicy(config[@"violationPolicy"], VDTViolationPolicyMonitorAndTerminate);
+
+    [identifiers addObject:identifier];
+    [types addObject:@(type)];
+    [percentages addObject:@(processEnabled ? percentage : 0)];
+    [intervals addObject:@(processEnabled ? interval : 0)];
+    [violationPolicies addObject:@(processEnabled ? violationPolicy : VDTViolationPolicyNone)];
+}
+
+static void appendConfigsForApply(NSMutableArray *identifiers,
+                                  NSMutableArray *types,
+                                  NSMutableArray *percentages,
+                                  NSMutableArray *intervals,
+                                  NSMutableArray *violationPolicies,
+                                  NSDictionary *sourcePrefs,
+                                  BOOL globallyEnabled){
+    for (NSDictionary *config in safeConfigArray(sourcePrefs, @"appConfigs")){
+        appendConfigForApply(identifiers, types, percentages, intervals, violationPolicies, config, VDTConfigTypeApp, globallyEnabled);
+    }
+    for (NSDictionary *config in safeConfigArray(sourcePrefs, @"daemonConfigs")){
+        appendConfigForApply(identifiers, types, percentages, intervals, violationPolicies, config, VDTConfigTypeDaemon, globallyEnabled);
+    }
+}
+
 static void reloadPrefs(){
     dispatch_async(VedetteApplyQueue(), ^{
-        
         prefs = getPrefs();
-        
+
         id enabledVal = valueForKeyWithPrefs(@"enabled", prefs);
         BOOL enabled = enabledVal ? [enabledVal boolValue] : YES;
-        
-        NSMutableArray *percentages = [NSMutableArray array];
-        NSMutableArray *intervals = [NSMutableArray array];
+
         NSMutableArray *identifiers = [NSMutableArray array];
         NSMutableArray *types = [NSMutableArray array];
+        NSMutableArray *percentages = [NSMutableArray array];
+        NSMutableArray *intervals = [NSMutableArray array];
         NSMutableArray *violationPolicies = [NSMutableArray array];
 
-        NSArray *appConfigs = prefs[@"appConfigs"];
-        HBLogDebug(@"appConfigs: %@", appConfigs);
-        
-        for (NSUInteger idx = 0; idx < appConfigs.count; idx++){
-            NSString *bundleIdentifier = appConfigs[idx][@"bundleIdentifier"];
-            if ([bundleIdentifier isEqualToString:@"com.apple.Preferences"]){
-                continue;
-            }
-            [identifiers addObject:bundleIdentifier];
-            [types addObject:@(VDTConfigTypeApp)];
-            int percentage = [valueForProcessConfigKeyWithPrefs(bundleIdentifier, @"percentage", @80, VDTConfigTypeApp, prefs) intValue];
-            int interval = [valueForProcessConfigKeyWithPrefs(bundleIdentifier, @"interval", @120, VDTConfigTypeApp, prefs) intValue];
-            VDTViolationPolicy violationPolicy = (VDTViolationPolicy)[valueForProcessConfigKeyWithPrefs(bundleIdentifier, @"violationPolicy", @(VDTViolationPolicyMonitorAndTerminate), VDTConfigTypeApp, prefs) unsignedLongValue];
-            BOOL processEnabled = [valueForProcessConfigKeyWithPrefs(bundleIdentifier, @"enabled", @NO, VDTConfigTypeApp, prefs) boolValue];
-            [percentages addObject:@(enabled && processEnabled ? percentage : 0)];
-            [intervals addObject:@(enabled && processEnabled ? interval : 0)];
-            [violationPolicies addObject:@(enabled && processEnabled ? violationPolicy : VDTViolationPolicyNone)];
-        }
-        
-        NSArray *daemonConfigs = prefs[@"daemonConfigs"];
-        HBLogDebug(@"daemonConfigs: %@", daemonConfigs);
-        
-        for (NSUInteger idx = 0; idx < daemonConfigs.count; idx++){
-            NSString *daemonName = daemonConfigs[idx][@"daemonName"];
-            [identifiers addObject:daemonName];
-            [types addObject:@(VDTConfigTypeDaemon)];
-            int percentage = [valueForProcessConfigKeyWithPrefs(daemonName, @"percentage", @80, VDTConfigTypeDaemon, prefs) intValue];
-            int interval = [valueForProcessConfigKeyWithPrefs(daemonName, @"interval", @120, VDTConfigTypeDaemon, prefs) intValue];
-            VDTViolationPolicy violationPolicy = (VDTViolationPolicy)[valueForProcessConfigKeyWithPrefs(daemonName, @"violationPolicy", @(VDTViolationPolicyMonitorAndTerminate), VDTConfigTypeDaemon, prefs) unsignedLongValue];
-            BOOL processEnabled = [valueForProcessConfigKeyWithPrefs(daemonName, @"enabled", @NO, VDTConfigTypeDaemon, prefs) boolValue];
-            [percentages addObject:@(enabled && processEnabled ? percentage : 0)];
-            [intervals addObject:@(enabled && processEnabled ? interval : 0)];
-            [violationPolicies addObject:@(enabled && processEnabled ? violationPolicy : VDTViolationPolicyNone)];
-        }
-        
-        NSIndexSet *monitorIndices = [violationPolicies indexesOfObjectsWithOptions:NSEnumerationConcurrent passingTest:^(NSNumber *violationPolicy, NSUInteger idx, BOOL *stop) {
-            return [violationPolicy unsignedLongValue] == VDTViolationPolicyMonitorAndTerminate;
-        }];
-                
-        NSArray *pids = pids_with_identifier_and_type([identifiers objectsAtIndexes:monitorIndices], [types objectsAtIndexes:monitorIndices]);
-        monitor_pids(pids, [percentages objectsAtIndexes:monitorIndices], [intervals objectsAtIndexes:monitorIndices]);
-        HBLogDebug(@"Monitor ** pids: %@ ** %@ ** %@", pids, [percentages objectsAtIndexes:monitorIndices], [intervals objectsAtIndexes:monitorIndices]);
-        
-        [identifiers removeObjectsAtIndexes:monitorIndices];
-        [types removeObjectsAtIndexes:monitorIndices];
-        [percentages removeObjectsAtIndexes:monitorIndices];
-        [intervals removeObjectsAtIndexes:monitorIndices];
-
-        pids = pids_with_identifier_and_type(identifiers, types);
-        throttle_pids(pids, percentages);
+        appendConfigsForApply(identifiers, types, percentages, intervals, violationPolicies, prefs, enabled);
+        apply_process_configs(identifiers, types, percentages, intervals, violationPolicies);
     });
 }
 
 static void restoreAllMonitors(){
     dispatch_async(VedetteApplyQueue(), ^{
-        //restore_all_monitors();
         NSDictionary *tmpPrefs = getTempPrefs();
+
         NSMutableArray *identifiers = [NSMutableArray array];
         NSMutableArray *types = [NSMutableArray array];
-        NSArray *appConfigs = tmpPrefs[@"appConfigs"];
-        if (appConfigs.count > 0){
-            [identifiers addObjectsFromArray:[appConfigs valueForKey:@"bundleIdentifier"]];
-        }
-        NSArray *daemonConfigs = tmpPrefs[@"daemonConfigs"];
-        if (daemonConfigs.count > 0){
-            [identifiers addObjectsFromArray:[daemonConfigs valueForKey:@"daemonName"]];
-        }
-        NSMutableArray *zeroesArray = [NSMutableArray array];
-        for (NSUInteger idx = 0; idx < identifiers.count; idx++){
-            [zeroesArray addObject:@0];
-            if (idx < appConfigs.count){
-                [types addObject:@(VDTConfigTypeApp)];
-            }else{
-                [types addObject:@(VDTConfigTypeDaemon)];
-            }
-        }
-        
-        //Restore all monitors and cpu limits
-        NSArray *pids = pids_with_identifier_and_type(identifiers, types);
-        monitor_pids(pids, zeroesArray, zeroesArray);
-        throttle_pids(pids, zeroesArray);
+        NSMutableArray *percentages = [NSMutableArray array];
+        NSMutableArray *intervals = [NSMutableArray array];
+        NSMutableArray *violationPolicies = [NSMutableArray array];
+
+        appendConfigsForApply(identifiers, types, percentages, intervals, violationPolicies, tmpPrefs, NO);
+        apply_process_configs(identifiers, types, percentages, intervals, violationPolicies);
 
         [[NSFileManager defaultManager] removeItemAtPath:PREFS_PATH_TMP error:nil];
     });
@@ -181,7 +193,10 @@ static void restoreAllMonitors(){
                             uint64_t pid = 0;
                             notify_get_state(token, &pid);
                             if (pid > 0){
-                                received_new_proc((pid_t)pid);
+                                dispatch_async(VedetteApplyQueue(), ^{
+                                    prefs = getPrefs();
+                                    received_new_proc((pid_t)pid);
+                                });
                             }
                         });
                         static int notify_rescan_token = 0;

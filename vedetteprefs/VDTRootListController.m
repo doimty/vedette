@@ -86,7 +86,7 @@
         
         //Reddit
         PSSpecifier *redditSpec = [PSSpecifier preferenceSpecifierNamed:@"Reddit" target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-        [redditSpec setProperty:@"Twitter" forKey:@"label"];
+        [redditSpec setProperty:@"Reddit" forKey:@"label"];
         [redditSpec setButtonAction:@selector(reddit)];
         [redditSpec setProperty:[UIImage imageWithContentsOfFile:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle/Reddit.png")] forKey:@"iconImage"];
         [rootSpecifiers addObject:redditSpec];
@@ -173,10 +173,9 @@
     UIAlertAction *yesAction = [UIAlertAction actionWithTitle:@"Yes" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
         
         NSError *error = nil;
-        [[NSFileManager defaultManager] removeItemAtPath:PREFS_PATH_TMP error:nil];
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        [fileManager removeItemAtPath:PREFS_PATH_TMP error:nil];
 
-        [[NSFileManager defaultManager] copyItemAtPath:PREFS_PATH toPath:PREFS_PATH_TMP error:&error];
-        
         void (^errorAlert)(NSError *) = ^(NSError *err){
             UIAlertController *alertFailed = [UIAlertController alertControllerWithTitle:@"Vedette" message:[NSString stringWithFormat:@"Failed to reset. %@", err.localizedDescription] preferredStyle:UIAlertControllerStyleAlert];
             UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"Ok" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
@@ -185,22 +184,24 @@
             
             [self presentViewController:alertFailed animated:YES completion:nil];
         };
-        
-        if (error){
-            errorAlert(error);
-            return;
+
+        if ([fileManager fileExistsAtPath:PREFS_PATH]){
+            [fileManager copyItemAtPath:PREFS_PATH toPath:PREFS_PATH_TMP error:&error];
+            if (error){
+                errorAlert(error);
+                return;
+            }
+
+            [fileManager removeItemAtPath:PREFS_PATH error:&error];
+            if (error){
+                errorAlert(error);
+                return;
+            }
         }
-        
-        [[NSFileManager defaultManager] removeItemAtPath:PREFS_PATH error:&error];
-        
-        if (error){
-            errorAlert(error);
-            return;
-        }else{
-            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), (CFStringRef)PREFS_CHANGED_NN, NULL, NULL, YES);
-            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, NULL, YES);
-            [self reloadSpecifiers];
-        }
+
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), (CFStringRef)PREFS_CHANGED_NN, NULL, NULL, YES);
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, NULL, YES);
+        [self reloadSpecifiers];
     }];
     
     UIAlertAction *noAction = [UIAlertAction actionWithTitle:@"No" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {

@@ -10,170 +10,235 @@
 NSDictionary *prefs;
 
 static LSApplicationProxy* appproxy_from_bundle_path(NSString *path){
+    if (![path isKindOfClass:[NSString class]] || path.length == 0){
+        return nil;
+    }
     return [objc_getClass("LSApplicationProxy") applicationProxyForBundleURL:[NSURL fileURLWithPath:path]];
 }
 
 static LSApplicationProxy* appproxy_from_pid(pid_t pid){
-    char pathBuffer[PROC_PIDPATHINFO_MAXSIZE];
-    proc_pidpath(pid, pathBuffer, sizeof(pathBuffer));
-    NSString *possibleBundlePath = [NSString stringWithUTF8String:pathBuffer].stringByDeletingLastPathComponent;
+    char pathBuffer[PROC_PIDPATHINFO_MAXSIZE] = {0};
+    int ret = proc_pidpath(pid, pathBuffer, sizeof(pathBuffer));
+    if (ret <= 0 || pathBuffer[0] == '\0'){
+        return nil;
+    }
+    NSString *path = [NSString stringWithUTF8String:pathBuffer];
+    if (![path isKindOfClass:[NSString class]] || path.length == 0){
+        return nil;
+    }
+    NSString *possibleBundlePath = path.stringByDeletingLastPathComponent;
     return appproxy_from_bundle_path(possibleBundlePath);
 }
 
 static NSString* name_from_pid(pid_t pid){
-    char nameBuffer[256];
-    proc_name(pid, nameBuffer, sizeof(nameBuffer));
+    char nameBuffer[256] = {0};
+    int ret = proc_name(pid, nameBuffer, sizeof(nameBuffer));
+    if (ret <= 0 || nameBuffer[0] == '\0'){
+        return nil;
+    }
     return [NSString stringWithUTF8String:nameBuffer];
 }
 
-/*
-static NSArray* all_running_pids(){
-    int n = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-    int *buffer = (int *)malloc(sizeof(int)*n);
-    int k = proc_listpids(PROC_ALL_PIDS, 0, buffer, n*sizeof(int));
-    
-    NSMutableArray *pids = [NSMutableArray array];
-    for (int i = 0; i < k; i++) {
-        int pid = buffer[i];
-        if (pid == 0) continue;
-        [pids addObject:@(pid)];
-    }
-    return pids;
+static NSArray* configsForType(VDTConfigType type, NSDictionary *currentPrefs){
+    id configs = currentPrefs[type == VDTConfigTypeApp ? @"appConfigs" : @"daemonConfigs"];
+    return [configs isKindOfClass:[NSArray class]] ? configs : @[];
 }
-*/
 
-NSArray* pids_with_identifier_and_type(NSArray <NSString *>*identifiers, NSArray <NSNumber *> *types){
-    if (identifiers.count == 0) {
-        return @[];
+static NSDictionary* configForIdentifier(NSString *identifier, VDTConfigType type, NSDictionary *currentPrefs){
+    if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0){
+        return nil;
     }
-
-    int bufferSize = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-    if (bufferSize <= 0) {
-        return @[];
-    }
-
-    int *buffer = (int *)malloc((size_t)bufferSize);
-    if (buffer == NULL) {
-        return @[];
-    }
-
-    int bytesUsed = proc_listpids(PROC_ALL_PIDS, 0, buffer, bufferSize);
-    if (bytesUsed <= 0) {
-        free(buffer);
-        return @[];
-    }
-
-    int pidCount = bytesUsed / (int)sizeof(int);
-    NSMutableArray *pids = [NSMutableArray array];
-    for (int i = 0; i < pidCount; i++) {
-        int pid = buffer[i];
-        if (pid == 0) continue;
-        
-        LSApplicationProxy *appProxy = appproxy_from_pid(pid);
-        
-        for (NSUInteger idx = 0; idx < identifiers.count; idx++){
-            if ([types[idx] unsignedLongValue] == VDTConfigTypeApp){
-                if (appProxy.bundleIdentifier){
-                    if ([appProxy.bundleIdentifier isEqualToString:identifiers[idx]]){
-                        [pids addObject:@(pid)];
-                    }
-                }
-            }else if ([types[idx] unsignedLongValue] == VDTConfigTypeDaemon && !appProxy.bundleIdentifier){
-                NSString *daemonName = name_from_pid(pid);
-                if ([daemonName isEqualToString:identifiers[idx]]){
-                    [pids addObject:@(pid)];
-                }
-            }
+    NSString *identifierKey = type == VDTConfigTypeApp ? @"bundleIdentifier" : @"daemonName";
+    for (id entry in configsForType(type, currentPrefs)){
+        if (![entry isKindOfClass:[NSDictionary class]]){
+            continue;
+        }
+        NSString *candidate = ((NSDictionary *)entry)[identifierKey];
+        if ([candidate isKindOfClass:[NSString class]] && [candidate isEqualToString:identifier]){
+            return (NSDictionary *)entry;
         }
     }
-    free(buffer);
-    return pids; // only existed pids are returned
+    return nil;
 }
 
-void monitor_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages, NSArray <NSNumber *> *intervals){
-    
-    for (NSUInteger idx = 0; idx < pids.count; idx++){
-        pid_t pid = [pids[idx] intValue];
-        if (pid > 0){
-            int percentage = [percentages[idx] intValue];
-            int interval = [intervals[idx] intValue];
-            
+static int intValueOrDefault(id value, int defaultValue){
+    if (!value || ![value respondsToSelector:@selector(intValue)]){
+        return defaultValue;
+    }
+    return [value intValue];
+}
+
+static int positiveIntValueOrDefault(id value, int defaultValue){
+    int ret = intValueOrDefault(value, defaultValue);
+    return ret > 0 ? ret : defaultValue;
+}
+
+static VDTViolationPolicy policyValueOrDefault(id value, VDTViolationPolicy defaultValue){
+    if (!value || ![value respondsToSelector:@selector(unsignedLongValue)]){
+        return defaultValue;
+    }
+    VDTViolationPolicy policy = (VDTViolationPolicy)[value unsignedLongValue];
+    switch (policy) {
+        case VDTViolationPolicyNone:
+        case VDTViolationPolicyMonitor:
+        case VDTViolationPolicyMonitorAndTerminate:
+        case VDTViolationPolicyThrottle:
+            return policy;
+        default:
+            return defaultValue;
+    }
+}
+
+static void clear_monitor_for_pid(pid_t pid){
+    proc_disable_cpumon(pid);
+    proc_set_cpumon_defaults(pid);
+    proc_resume_cpumon(pid);
+}
+
+static void clear_all_limits_for_pid(pid_t pid){
+    clear_monitor_for_pid(pid);
+    proc_clear_cpulimits(pid);
+}
+
+static void apply_policy_to_pid(pid_t pid, VDTViolationPolicy policy, int percentage, int interval){
+    if (pid <= 0){
+        return;
+    }
+
+    switch (policy) {
+        case VDTViolationPolicyMonitorAndTerminate:{
+            proc_clear_cpulimits(pid);
             proc_disable_cpumon(pid);
-            
             if (percentage > 0 && interval > 0){
                 if (proc_set_cpumon_params_fatal(pid, percentage, interval) == 0){
                     HBLogDebug(@"Monitoring pid %d with percentage %d%% and interval %ds", pid, percentage, interval);
                 }
             }else{
-                if (proc_set_cpumon_defaults(pid) == 0){
-                    HBLogDebug(@"Restore CPU limits for pid: %d", pid);
-                }
+                proc_set_cpumon_defaults(pid);
             }
-            
             proc_resume_cpumon(pid);
+            break;
         }
-    }
-}
-
-void throttle_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages){
-    
-    for (NSUInteger idx = 0; idx < pids.count; idx++){
-        pid_t pid = [pids[idx] intValue];
-        if (pid > 0){
-            int percentage = [percentages[idx] intValue];
-            
+        case VDTViolationPolicyMonitor:
+        case VDTViolationPolicyThrottle:{
+            clear_monitor_for_pid(pid);
             if (percentage > 0){
                 if (proc_setcpu_percentage(pid, PROC_SETCPU_ACTION_THROTTLE, percentage) == 0){
                     HBLogDebug(@"Throttled pid %d with percentage %d%% ", pid, percentage);
                 }
             }else{
-                if (proc_clear_cpulimits(pid) == 0){
-                    HBLogDebug(@"Restored CPU limits for pid %d ", pid);
-                }
+                proc_clear_cpulimits(pid);
             }
+            break;
+        }
+        case VDTViolationPolicyNone:
+        default:
+            clear_all_limits_for_pid(pid);
+            break;
+    }
+}
+
+static void enumerate_running_pids(void (^handler)(pid_t pid)){
+    int bufferSize = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+    if (bufferSize <= 0){
+        return;
+    }
+
+    int *buffer = (int *)malloc((size_t)bufferSize);
+    if (buffer == NULL){
+        return;
+    }
+
+    int bytesUsed = proc_listpids(PROC_ALL_PIDS, 0, buffer, bufferSize);
+    if (bytesUsed <= 0){
+        free(buffer);
+        return;
+    }
+
+    int pidCount = bytesUsed / (int)sizeof(int);
+    for (int i = 0; i < pidCount; i++){
+        pid_t pid = (pid_t)buffer[i];
+        if (pid > 0){
+            handler(pid);
         }
     }
+    free(buffer);
+}
+
+void apply_process_configs(NSArray <NSString *>*identifiers, NSArray <NSNumber *> *types, NSArray <NSNumber *> *percentages, NSArray <NSNumber *> *intervals, NSArray <NSNumber *> *violationPolicies){
+    NSUInteger configCount = MIN(MIN(identifiers.count, types.count), MIN(percentages.count, MIN(intervals.count, violationPolicies.count)));
+    if (configCount == 0){
+        return;
+    }
+
+    enumerate_running_pids(^(pid_t pid) {
+        LSApplicationProxy *appProxy = appproxy_from_pid(pid);
+        NSString *pidIdentifier = nil;
+        VDTConfigType pidType = VDTConfigTypeDaemon;
+
+        if (appProxy.bundleIdentifier.length > 0){
+            pidIdentifier = appProxy.bundleIdentifier;
+            pidType = VDTConfigTypeApp;
+        }else{
+            pidIdentifier = name_from_pid(pid);
+            pidType = VDTConfigTypeDaemon;
+        }
+
+        if (![pidIdentifier isKindOfClass:[NSString class]] || pidIdentifier.length == 0){
+            return;
+        }
+
+        for (NSUInteger idx = 0; idx < configCount; idx++){
+            NSString *identifier = identifiers[idx];
+            if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0){
+                continue;
+            }
+            if ([types[idx] unsignedLongValue] != pidType){
+                continue;
+            }
+            if (![pidIdentifier isEqualToString:identifier]){
+                continue;
+            }
+
+            int percentage = intValueOrDefault(percentages[idx], 0);
+            int interval = intValueOrDefault(intervals[idx], 0);
+            VDTViolationPolicy policy = policyValueOrDefault(violationPolicies[idx], VDTViolationPolicyNone);
+            apply_policy_to_pid(pid, policy, percentage, interval);
+            break;
+        }
+    });
 }
 
 void received_new_proc(pid_t pid){
-    
-    int percentage = 80;
-    int interval = 120;
-    
+    NSDictionary *currentPrefs = prefs ?: getPrefs();
+    id enabledVal = valueForKeyWithPrefs(@"enabled", currentPrefs);
+    BOOL globallyEnabled = enabledVal ? [enabledVal boolValue] : YES;
+
     LSApplicationProxy *appProxy = appproxy_from_pid(pid);
-    VDTViolationPolicy violationPolicy = VDTViolationPolicyMonitorAndTerminate;
-    
-    if (appProxy.bundleIdentifier){ //isApplication
-        percentage = [valueForProcessConfigKeyWithPrefs(appProxy.bundleIdentifier, @"percentage", @80, VDTConfigTypeApp, prefs) intValue];
-        interval = [valueForProcessConfigKeyWithPrefs(appProxy.bundleIdentifier, @"interval", @120, VDTConfigTypeApp, prefs) intValue];
-        violationPolicy = (VDTViolationPolicy)[valueForProcessConfigKeyWithPrefs(appProxy.bundleIdentifier, @"violationPolicy", @(VDTViolationPolicyMonitorAndTerminate), VDTConfigTypeApp, prefs) unsignedLongValue];
-    }else{ //isDaemon
-        NSString *daemonName = name_from_pid(pid);
-        percentage = [valueForProcessConfigKeyWithPrefs(daemonName, @"percentage", @80, VDTConfigTypeDaemon, prefs) intValue];
-        interval = [valueForProcessConfigKeyWithPrefs(daemonName, @"interval", @120, VDTConfigTypeDaemon, prefs) intValue];
-        violationPolicy = (VDTViolationPolicy)[valueForProcessConfigKeyWithPrefs(daemonName, @"violationPolicy", @(VDTViolationPolicyMonitorAndTerminate), VDTConfigTypeDaemon, prefs) unsignedLongValue];
+    NSString *identifier = nil;
+    VDTConfigType type = VDTConfigTypeDaemon;
 
+    if (appProxy.bundleIdentifier.length > 0){
+        identifier = appProxy.bundleIdentifier;
+        type = VDTConfigTypeApp;
+    }else{
+        identifier = name_from_pid(pid);
+        type = VDTConfigTypeDaemon;
     }
-    
-    switch (violationPolicy) {
-        case VDTViolationPolicyMonitorAndTerminate:
-            monitor_pids(@[@(pid)], @[@(percentage)], @[@(interval)]);
-            break;
-        case VDTViolationPolicyThrottle:
-            throttle_pids(@[@(pid)], @[@(percentage)]);
-            break;
-        default:
-            break;
-    }
-}
 
-/*
-void restore_all_monitors(){
-    NSArray *pids = all_running_pids();
-    NSMutableArray *zerosArray = [NSMutableArray array];
-    for (NSUInteger idx = 0; idx < pids.count; idx++){
-        [zerosArray addObject:@0];
+    NSDictionary *config = configForIdentifier(identifier, type, currentPrefs);
+    if (!config){
+        return;
     }
-    monitor_pids(pids, zerosArray, zerosArray);
+
+    BOOL processEnabled = globallyEnabled && [config[@"enabled"] boolValue];
+    if (!processEnabled){
+        apply_policy_to_pid(pid, VDTViolationPolicyNone, 0, 0);
+        return;
+    }
+
+    int percentage = positiveIntValueOrDefault(config[@"percentage"], 80);
+    int interval = positiveIntValueOrDefault(config[@"interval"], 120);
+    VDTViolationPolicy violationPolicy = policyValueOrDefault(config[@"violationPolicy"], VDTViolationPolicyMonitorAndTerminate);
+    apply_policy_to_pid(pid, violationPolicy, percentage, interval);
 }
-*/

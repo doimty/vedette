@@ -91,6 +91,7 @@
         [maxCPUUsageSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
         [maxCPUUsageSpec setPlaceholder:@"80"];
         [maxCPUUsageSpec setProperty:@"percentage" forKey:@"key"];
+        [maxCPUUsageSpec setProperty:@80 forKey:@"default"];
         [maxCPUUsageSpec setProperty:@"Percentage" forKey:@"label"];
         [maxCPUUsageSpec setProperty:PREFS_CHANGED_NN forKey:@"PostNotification"];
         [maxCPUUsageSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
@@ -102,6 +103,7 @@
         [intervalSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
         [intervalSpec setPlaceholder:@"120"];
         [intervalSpec setProperty:@"interval" forKey:@"key"];
+        [intervalSpec setProperty:@120 forKey:@"default"];
         [intervalSpec setProperty:@"Interval" forKey:@"label"];
         [intervalSpec setProperty:PREFS_CHANGED_NN forKey:@"PostNotification"];
         [intervalSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
@@ -116,9 +118,24 @@
 
 - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier*)specifier{
     NSString *key = [specifier propertyForKey:@"key"];
+    __block id normalizedValue = value;
+
+    if ([key isEqualToString:@"percentage"]){
+        NSInteger percentage = [value integerValue];
+        if (percentage < 1){
+            percentage = 80;
+        }
+        normalizedValue = @(percentage);
+    }else if ([key isEqualToString:@"interval"]){
+        NSInteger interval = [value integerValue];
+        if (interval < 1){
+            interval = 120;
+        }
+        normalizedValue = @(interval);
+    }
     
     void (^setValueBlock)() = ^{
-        setValueForProcessConfigKey([self validIdentifier], key, value, [self configurationType]);
+        setValueForProcessConfigKey([self validIdentifier], key, normalizedValue, [self configurationType]);
         
         UIViewController *parentController = (UIViewController *)[self valueForKey:@"_parentController"];
         
@@ -137,7 +154,7 @@
     };
     
     if ([key isEqualToString:@"enabled"]){
-        if ([self shouldAskForConsent:[self validIdentifier]] && [value boolValue]){
+        if ([self shouldAskForConsent:[self validIdentifier]] && [normalizedValue boolValue]){
             [self presentConsentPromptForProcess:[self validIdentifier] block:setValueBlock];
             return;
         }else{
@@ -145,7 +162,7 @@
             return;
         }
     }else if ([key isEqualToString:@"violationPolicy"]){
-        switch ([value unsignedLongValue]) {
+        switch ([normalizedValue unsignedLongValue]) {
             case VDTViolationPolicyMonitorAndTerminate:
                 [_intervalSpecifier setProperty:@YES forKey:@"enabled"];
                 break;

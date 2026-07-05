@@ -14,11 +14,8 @@ extern NSDictionary *prefs;
 extern "C" {
 #endif
 
-NSArray* pids_with_identifier_and_type(NSArray <NSString *>*identifiers, NSArray <NSNumber *> *types);
-void monitor_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages, NSArray <NSNumber *> *intervals);
-void throttle_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages);
+void apply_process_configs(NSArray <NSString *>*identifiers, NSArray <NSNumber *> *types, NSArray <NSNumber *> *percentages, NSArray <NSNumber *> *intervals, NSArray <NSNumber *> *violationPolicies);
 void received_new_proc(pid_t pid);
-//void restore_all_monitors();
 
 #ifdef __cplusplus
 }

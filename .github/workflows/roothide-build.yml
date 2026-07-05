@@ -7,6 +7,7 @@ on:
       - roothide-compat-test
       - roothide-stable-codefix6
       - roothide-stable-codefix7
+      - roothide-stable-codefix8
     paths:
       - '.github/workflows/roothide-build.yml'
       - '**/*.h'
