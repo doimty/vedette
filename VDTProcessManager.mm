@@ -80,10 +80,11 @@ static VDTViolationPolicy policyValueOrDefault(id value, VDTViolationPolicy defa
     VDTViolationPolicy policy = (VDTViolationPolicy)[value unsignedLongValue];
     switch (policy) {
         case VDTViolationPolicyNone:
-        case VDTViolationPolicyMonitor:
         case VDTViolationPolicyMonitorAndTerminate:
         case VDTViolationPolicyThrottle:
             return policy;
+        case VDTViolationPolicyMonitor:
+            return VDTViolationPolicyNone;
         default:
             return defaultValue;
     }
@@ -120,6 +121,8 @@ static void apply_policy_to_pid(pid_t pid, VDTViolationPolicy policy, int percen
             break;
         }
         case VDTViolationPolicyMonitor:
+            clear_all_limits_for_pid(pid);
+            break;
         case VDTViolationPolicyThrottle:{
             clear_monitor_for_pid(pid);
             if (percentage > 0){

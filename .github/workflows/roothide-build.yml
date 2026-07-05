@@ -8,6 +8,7 @@ on:
       - roothide-stable-codefix6
       - roothide-stable-codefix7
       - roothide-stable-codefix8
+      - roothide-stable-codefix9
     paths:
       - '.github/workflows/roothide-build.yml'
       - '**/*.h'

@@ -78,10 +78,11 @@ static VDTViolationPolicy validViolationPolicy(id value, VDTViolationPolicy defa
     VDTViolationPolicy policy = (VDTViolationPolicy)[value unsignedLongValue];
     switch (policy) {
         case VDTViolationPolicyMonitorAndTerminate:
-        case VDTViolationPolicyMonitor:
         case VDTViolationPolicyThrottle:
         case VDTViolationPolicyNone:
             return policy;
+        case VDTViolationPolicyMonitor:
+            return VDTViolationPolicyNone;
         default:
             return defaultValue;
     }

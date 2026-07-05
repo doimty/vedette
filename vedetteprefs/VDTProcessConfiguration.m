@@ -162,7 +162,12 @@
             return;
         }
     }else if ([key isEqualToString:@"violationPolicy"]){
-        switch ([normalizedValue unsignedLongValue]) {
+        NSUInteger policy = [normalizedValue unsignedLongValue];
+        if (policy != VDTViolationPolicyMonitorAndTerminate && policy != VDTViolationPolicyThrottle){
+            normalizedValue = [specifier propertyForKey:@"default"] ?: @(VDTViolationPolicyMonitorAndTerminate);
+            policy = [normalizedValue unsignedLongValue];
+        }
+        switch (policy) {
             case VDTViolationPolicyMonitorAndTerminate:
                 [_intervalSpecifier setProperty:@YES forKey:@"enabled"];
                 break;
@@ -181,7 +186,12 @@
     NSString *key = [specifier propertyForKey:@"key"];
     id value = valueForProcessConfigKey([self validIdentifier], key, [specifier propertyForKey:@"default"], [self configurationType]);
     if ([key isEqualToString:@"violationPolicy"]){
-        switch ([value unsignedLongValue]) {
+        NSUInteger policy = [value unsignedLongValue];
+        if (policy != VDTViolationPolicyMonitorAndTerminate && policy != VDTViolationPolicyThrottle){
+            value = [specifier propertyForKey:@"default"] ?: @(VDTViolationPolicyMonitorAndTerminate);
+            policy = [value unsignedLongValue];
+        }
+        switch (policy) {
             case VDTViolationPolicyMonitorAndTerminate:
                 [_intervalSpecifier setProperty:@YES forKey:@"enabled"];
                 break;
