@@ -55,6 +55,9 @@ jobs:
       - name: Install packaging tools
         run: |
           brew update
+          if brew list --versions openssl@1.1 >/dev/null 2>&1; then
+            brew unlink openssl@1.1
+          fi
           brew install dpkg ldid make
 
       - name: Install roothide Theos
