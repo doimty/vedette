@@ -55,8 +55,9 @@ jobs:
       - name: Install packaging tools
         run: |
           brew update
-          if brew list --versions openssl@1.1 >/dev/null 2>&1; then
-            brew unlink openssl@1.1
+          brew_prefix="$(brew --prefix)"
+          if [ -L "$brew_prefix/bin/openssl" ] && [ "$(readlink "$brew_prefix/bin/openssl")" = "$brew_prefix/opt/openssl@1.1/bin/openssl" ]; then
+            unlink "$brew_prefix/bin/openssl"
           fi
           brew install dpkg ldid make
 

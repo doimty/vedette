@@ -83,7 +83,7 @@ class PreferencesUIContracts(unittest.TestCase):
                 # Only reviewed build-metadata and added test gates may differ.
                 wanted = expected.replace(b'# v4.4.0\n', b'# v4.4.0\n        with:\n          fetch-depth: 0\n', 1)
                 wanted = wanted.replace(b'          brew install dpkg ldid make\n',
-                    b'          if brew list --versions openssl@1.1 >/dev/null 2>&1; then\n            brew unlink openssl@1.1\n          fi\n          brew install dpkg ldid make\n', 1)
+                    b'          brew_prefix="$(brew --prefix)"\n          if [ -L "$brew_prefix/bin/openssl" ] && [ "$(readlink "$brew_prefix/bin/openssl")" = "$brew_prefix/opt/openssl@1.1/bin/openssl" ]; then\n            unlink "$brew_prefix/bin/openssl"\n          fi\n          brew install dpkg ldid make\n', 1)
                 wanted = wanted.replace(b'1.1.10', b'1.1.10-1+ui1')
                 wanted = wanted.replace(b'          python3 tests/check_auto_monitor_path.py\n',
                     b'          python3 tests/check_auto_monitor_path.py\n          sh tests/run_list_order_tests.sh\n          python3 -B tests/test_preferences_ui.py\n', 1)
