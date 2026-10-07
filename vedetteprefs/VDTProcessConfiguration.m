@@ -7,16 +7,49 @@
 #import "VDTApplicationListSubcontrollerController.h"
 #import "../VDTShared.h"
 #import "ChoicyPreferences/CHPDaemonListController.h"
+#import "VDTLocalization.h"
+#import "VDTStyle.h"
+#import "VDTHeaderCell.h"
 
 @implementation VDTProcessConfiguration
 
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = VDTLoc(self.class, @"Process rule");
+    self.view.tintColor = VDTAccentColor();
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    VDTStyleTable(self.table);
+}
+
+- (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    if ([[specifier propertyForKey:@"vdtHeader"] boolValue])
+        return UITableViewAutomaticDimension;
+    return [super tableView:tableView heightForRowAtIndexPath:indexPath];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    if (previous && ![previous.preferredContentSizeCategory isEqualToString:self.traitCollection.preferredContentSizeCategory]) {
+        [self.table reloadData];
+    }
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    [super tableView:tableView willDisplayCell:cell forRowAtIndexPath:indexPath];
+    VDTStyleCell(cell);
+}
+
+
 -(void)presentConsentPromptForProcess:(NSString *)process block:(void (^)())understoodBlock{
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"\U000026A0WARNING\U000026A0" message:[NSString stringWithFormat:@"%@ is one of the essential processes for iOS to function properly, if it were to be throttled or terminated, your system might crash. Proceed?", process] preferredStyle:UIAlertControllerStyleAlert];
-    UIAlertAction *yesAction = [UIAlertAction actionWithTitle:@"I Understand" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Essential process") message:[NSString stringWithFormat:VDTLoc(self.class, @"%@ is one of the essential processes for iOS to function properly, if it were to be throttled or terminated, your system might crash. Proceed?"), process] preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertAction *yesAction = [UIAlertAction actionWithTitle:VDTLoc(self.class, @"I Understand") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
         understoodBlock();
     }];
     
-    UIAlertAction *noAction = [UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){
+    UIAlertAction *noAction = [UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel") style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){
         [self reloadSpecifier:_enabledSpecifier animated:YES];
     }];
     
@@ -53,12 +86,14 @@
         BOOL isPreferencesApp = [validIdentifier isEqualToString:@"com.apple.Preferences"];
         
         //Enabled
-        PSSpecifier *monitorEnabledGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"Monitor" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [monitorEnabledGroupSpec setProperty:@"Terminate process when it violates the maximum allowed CPU usage based on the interval." forKey:@"footerText"];
+        PSSpecifier *monitorEnabledGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Rule") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [monitorEnabledGroupSpec setProperty:VDTLoc(self.class, @"Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required.") forKey:@"footerText"];
         [rootSpecifiers addObject:monitorEnabledGroupSpec];
+        [rootSpecifiers addObject:VDTHeaderSpecifier(self.specifier.name ?: validIdentifier,
+            validIdentifier, [self configurationType] == VDTConfigTypeApp ? @"app" : @"gearshape.2")];
     
-        PSSpecifier *monitorEnabledSpec = [PSSpecifier preferenceSpecifierNamed:@"Enabled" target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSwitchCell edit:nil];
-        [monitorEnabledSpec setProperty:@"Enabled" forKey:@"label"];
+        PSSpecifier *monitorEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable this rule") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSwitchCell edit:nil];
+        [monitorEnabledSpec setProperty:VDTLoc(self.class, @"Enable this rule") forKey:@"label"];
         [monitorEnabledSpec setProperty:@"enabled" forKey:@"key"];
         [monitorEnabledSpec setProperty:@NO forKey:@"default"];
         [monitorEnabledSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
@@ -70,11 +105,11 @@
         
         //Violation Policy
         PSSpecifier *violationPolicyGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [violationPolicyGroupSpec setProperty:@"Action for CPU limits violation." forKey:@"footerText"];
+        [violationPolicyGroupSpec setProperty:VDTLoc(self.class, @"Terminate ends the process when its CPU limit is exceeded. Throttle limits CPU time; setting it too low can cause timeouts.") forKey:@"footerText"];
         [rootSpecifiers addObject:violationPolicyGroupSpec];
         
-        PSSpecifier *violationPolicySelectionSpec = [PSSpecifier preferenceSpecifierNamed:@"Violation Policy Selection" target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSegmentCell edit:nil];
-        [violationPolicySelectionSpec setValues:@[@(VDTViolationPolicyMonitorAndTerminate), @(VDTViolationPolicyThrottle)] titles:@[@"Terminate", @"Throttle"]];
+        PSSpecifier *violationPolicySelectionSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Action") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSegmentCell edit:nil];
+        [violationPolicySelectionSpec setValues:@[@(VDTViolationPolicyMonitorAndTerminate), @(VDTViolationPolicyThrottle)] titles:@[VDTLoc(self.class, @"Terminate"), VDTLoc(self.class, @"Throttle")]];
         [violationPolicySelectionSpec setProperty:@(VDTViolationPolicyMonitorAndTerminate) forKey:@"default"];
         [violationPolicySelectionSpec setProperty:@"violationPolicy" forKey:@"key"];
         [violationPolicySelectionSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
@@ -82,27 +117,27 @@
         [rootSpecifiers addObject:violationPolicySelectionSpec];
         
         //CPU Usage Percentage
-        PSSpecifier *maxCPUUsageGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"Parameters" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [maxCPUUsageGroupSpec setProperty:@"Set maximum allowed CPU usage and/or interval (s).\n\nWARNING: If throttle percentage is set to too low, iOS will terminate it regardless due to timeout and not being able to finish tasks on time." forKey:@"footerText"];
+        PSSpecifier *maxCPUUsageGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Limits") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [maxCPUUsageGroupSpec setProperty:VDTLoc(self.class, @"Terminate: 1–100%. Throttle: 1–255%. The interval must be a positive number of seconds and is used only by Terminate. Invalid or empty values disable enforcement.") forKey:@"footerText"];
         [rootSpecifiers addObject:maxCPUUsageGroupSpec];
         
-        PSTextFieldSpecifier* maxCPUUsageSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:@"Percentage" target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSEditTextCell edit:nil];
+        PSTextFieldSpecifier* maxCPUUsageSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"CPU limit (%)") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSEditTextCell edit:nil];
         [maxCPUUsageSpec setKeyboardType:UIKeyboardTypeNumberPad autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
         [maxCPUUsageSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
         [maxCPUUsageSpec setPlaceholder:@"80"];
         [maxCPUUsageSpec setProperty:@"percentage" forKey:@"key"];
-        [maxCPUUsageSpec setProperty:@"Percentage" forKey:@"label"];
+        [maxCPUUsageSpec setProperty:VDTLoc(self.class, @"CPU limit (%)") forKey:@"label"];
         [maxCPUUsageSpec setProperty:PREFS_CHANGED_NN forKey:@"PostNotification"];
         [maxCPUUsageSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
         [rootSpecifiers addObject:maxCPUUsageSpec];
         
         //Interval
-        PSTextFieldSpecifier* intervalSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:@"Interval" target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSEditTextCell edit:nil];
+        PSTextFieldSpecifier* intervalSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Interval (seconds)") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSEditTextCell edit:nil];
         [intervalSpec setKeyboardType:UIKeyboardTypeNumberPad autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
         [intervalSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
         [intervalSpec setPlaceholder:@"120"];
         [intervalSpec setProperty:@"interval" forKey:@"key"];
-        [intervalSpec setProperty:@"Interval" forKey:@"label"];
+        [intervalSpec setProperty:VDTLoc(self.class, @"Interval (seconds)") forKey:@"label"];
         [intervalSpec setProperty:PREFS_CHANGED_NN forKey:@"PostNotification"];
         [intervalSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
         _intervalSpecifier = intervalSpec;

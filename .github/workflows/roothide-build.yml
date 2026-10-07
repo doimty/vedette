@@ -38,6 +38,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - name: Select pinned Xcode 15.4
         run: |
@@ -117,6 +119,8 @@ jobs:
         run: |
           tests/run_process_identity_tests.sh
           python3 tests/check_auto_monitor_path.py
+          sh tests/run_list_order_tests.sh
+          python3 -B tests/test_preferences_ui.py
 
       - name: Build package
         run: |
@@ -133,10 +137,10 @@ jobs:
           test -s /tmp/vedette-build.log
           ! grep -qi 'incompatible arm64e' /tmp/vedette-build.log
           test "$(find packages -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')" = "1"
-          deb="packages/com.udevs.vedette_1.1.10_iphoneos-arm64e.deb"
+          deb="packages/com.udevs.vedette_1.1.10-1+ui1_iphoneos-arm64e.deb"
           test -s "$deb"
           test "$(dpkg-deb -f "$deb" Package)" = "com.udevs.vedette"
-          test "$(dpkg-deb -f "$deb" Version)" = "1.1.10"
+          test "$(dpkg-deb -f "$deb" Version)" = "1.1.10-1+ui1"
           test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
           rm -rf /tmp/vedette-package
           dpkg-deb -x "$deb" /tmp/vedette-package
@@ -156,6 +160,7 @@ jobs:
             test "$(awk '$1 == "minos" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "15.0"
             test "$(awk '$1 == "sdk" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "17.5"
           done
+          python3 -B tests/verify_preferences_resources.py /tmp/vedette-package
           dpkg-deb -e "$deb" /tmp/vedette-control
           for script in /tmp/vedette-control/preinst /tmp/vedette-control/postinst /tmp/vedette-control/prerm /tmp/vedette-control/postrm; do
             test ! -f "$script" || bash -n "$script"

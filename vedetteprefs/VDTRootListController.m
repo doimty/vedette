@@ -5,6 +5,10 @@
 
 #import "VDTRootListController.h"
 #import "../VDTShared.h"
+#import "VDTLocalization.h"
+#import "VDTStyle.h"
+#import "VDTHeaderCell.h"
+#import "VDTAboutListController.h"
 
 @implementation VDTRootListController
 
@@ -13,12 +17,15 @@
         NSMutableArray *rootSpecifiers = [[NSMutableArray alloc] init];
         
         //Tweak
-        PSSpecifier *tweakEnabledGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"Tweak" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        PSSpecifier *tweakEnabledGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
         //[tweakEnabledGroupSpec setProperty:@"Changing this requires a respring using the dedicated \"Apply\" button." forKey:@"footerText"];
+        [tweakEnabledGroupSpec setProperty:VDTLoc(self.class, @"Only individually enabled rules are applied. Turning this off keeps your saved rules.") forKey:@"footerText"];
         [rootSpecifiers addObject:tweakEnabledGroupSpec];
+        [rootSpecifiers addObject:VDTHeaderSpecifier(@"Vedette",
+            VDTLoc(self.class, @"Simple, selective CPU control for apps and daemons."), @"vedette")];
         
-        PSSpecifier *tweakEnabledSpec = [PSSpecifier preferenceSpecifierNamed:@"Enabled" target:self set:@selector(setPreferenceValue:specifier:) get:@selector(readPreferenceValue:) detail:nil cell:PSSwitchCell edit:nil];
-        [tweakEnabledSpec setProperty:@"Enabled" forKey:@"label"];
+        PSSpecifier *tweakEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable Vedette") target:self set:@selector(setPreferenceValue:specifier:) get:@selector(readPreferenceValue:) detail:nil cell:PSSwitchCell edit:nil];
+        [tweakEnabledSpec setProperty:VDTLoc(self.class, @"Enable Vedette") forKey:@"label"];
         [tweakEnabledSpec setProperty:@"enabled" forKey:@"key"];
         [tweakEnabledSpec setProperty:@YES forKey:@"default"];
         [tweakEnabledSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
@@ -26,136 +33,105 @@
         [rootSpecifiers addObject:tweakEnabledSpec];
         
         
+        [tweakEnabledSpec setProperty:VDTSettingsSymbol(@"power") forKey:@"iconImage"];
+
         //Manage
-        PSSpecifier *manageGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"Manage" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        PSSpecifier *manageGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Process rules") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [manageGroupSpec setProperty:VDTLoc(self.class, @"Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity.") forKey:@"footerText"];
         [rootSpecifiers addObject:manageGroupSpec];
         
         //Apps
-        PSSpecifier *altListSpec = [PSSpecifier preferenceSpecifierNamed:@"Applications" target:nil set:@selector(setPreferenceValue:specifier:) get:@selector(readPreferenceValue:) detail:NSClassFromString(@"VDTApplicationListSubcontrollerController") cell:PSLinkListCell edit:nil];
+        PSSpecifier *altListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Applications") target:nil set:@selector(setPreferenceValue:specifier:) get:@selector(readPreferenceValue:) detail:NSClassFromString(@"VDTApplicationListSubcontrollerController") cell:PSLinkListCell edit:nil];
         [altListSpec setProperty:@"VDTProcessConfiguration" forKey:@"subcontrollerClass"];
-        [altListSpec setProperty:@"Applications" forKey:@"label"];
+        [altListSpec setProperty:VDTLoc(self.class, @"Applications") forKey:@"label"];
         [altListSpec setProperty:@[
             @{@"sectionType":@"All"},
         ] forKey:@"sections"];
         [altListSpec setProperty:@YES forKey:@"useSearchBar"];
         [altListSpec setProperty:@YES forKey:@"hideSearchBarWhileScrolling"];
-        [altListSpec setProperty:@YES forKey:@"alphabeticIndexingEnabled"];
+        [altListSpec setProperty:@NO forKey:@"alphabeticIndexingEnabled"];
         [altListSpec setProperty:@NO forKey:@"showIdentifiersAsSubtitle"];
         [altListSpec setProperty:@(VDTConfigTypeApp) forKey:@"configurationType"];
+        [altListSpec setProperty:VDTSettingsSymbol(@"square.grid.2x2") forKey:@"iconImage"];
         [rootSpecifiers addObject:altListSpec];
 
         //Daemons
-        PSSpecifier *daemonListSpec = [PSSpecifier preferenceSpecifierNamed:@"Daemons" target:nil set:nil get:nil detail:NSClassFromString(@"CHPDaemonListController") cell:PSLinkCell edit:nil];
+        PSSpecifier *daemonListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Daemons") target:nil set:nil get:nil detail:NSClassFromString(@"CHPDaemonListController") cell:PSLinkCell edit:nil];
+        [daemonListSpec setProperty:VDTSettingsSymbol(@"gearshape.2") forKey:@"iconImage"];
         [rootSpecifiers addObject:daemonListSpec];
         
         //reset
         PSSpecifier *resetGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [resetGroupSpec setProperty:@"Reset everything to default." forKey:@"footerText"];
+        [resetGroupSpec setProperty:VDTLoc(self.class, @"Remove saved rules and request restoration of system CPU limits.") forKey:@"footerText"];
         [rootSpecifiers addObject:resetGroupSpec];
         
-        PSSpecifier *resetSpec = [PSSpecifier preferenceSpecifierNamed:@"Reset" target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-        [resetSpec setProperty:@"Reset" forKey:@"label"];
+        PSSpecifier *resetSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Reset settings") target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+        [resetSpec setProperty:VDTLoc(self.class, @"Reset settings") forKey:@"label"];
         [resetSpec setButtonAction:@selector(reset)];
+        [resetSpec setProperty:VDTSettingsSymbol(@"arrow.counterclockwise") forKey:@"iconImage"];
         [rootSpecifiers addObject:resetSpec];
         
-        //blsnk group
-        PSSpecifier *blankSpecGroup = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [rootSpecifiers addObject:blankSpecGroup];
-        
-        //Support Dev
-        PSSpecifier *supportDevGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"Development" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [rootSpecifiers addObject:supportDevGroupSpec];
-        
-        PSSpecifier *supportDevSpec = [PSSpecifier preferenceSpecifierNamed:@"Support Development" target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-        [supportDevSpec setProperty:@"Support Development" forKey:@"label"];
-        [supportDevSpec setButtonAction:@selector(donation)];
-        [supportDevSpec setProperty:[UIImage imageWithContentsOfFile:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle/PayPal.png")] forKey:@"iconImage"];
-        [rootSpecifiers addObject:supportDevSpec];
-        
-        
-        //Contact
-        PSSpecifier *contactGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"Contact" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [rootSpecifiers addObject:contactGroupSpec];
-        
-        //Twitter
-        PSSpecifier *twitterSpec = [PSSpecifier preferenceSpecifierNamed:@"Twitter" target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-        [twitterSpec setProperty:@"Twitter" forKey:@"label"];
-        [twitterSpec setButtonAction:@selector(twitter)];
-        [twitterSpec setProperty:[UIImage imageWithContentsOfFile:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle/Twitter.png")] forKey:@"iconImage"];
-        [rootSpecifiers addObject:twitterSpec];
-        
-        //Reddit
-        PSSpecifier *redditSpec = [PSSpecifier preferenceSpecifierNamed:@"Reddit" target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-        [redditSpec setProperty:@"Twitter" forKey:@"label"];
-        [redditSpec setButtonAction:@selector(reddit)];
-        [redditSpec setProperty:[UIImage imageWithContentsOfFile:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle/Reddit.png")] forKey:@"iconImage"];
-        [rootSpecifiers addObject:redditSpec];
-        
-        //udevs
-        PSSpecifier *createdByGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [createdByGroupSpec setProperty:@"Created by udevs" forKey:@"footerText"];
-        [createdByGroupSpec setProperty:@1 forKey:@"footerAlignment"];
-        [rootSpecifiers addObject:createdByGroupSpec];
-        
+        PSSpecifier *aboutGroup = [PSSpecifier emptyGroupSpecifier];
+        [aboutGroup setProperty:VDTLoc(self.class, @"Built on Vedette by udevs. Interface by doimty.") forKey:@"footerText"];
+        [rootSpecifiers addObject:aboutGroup];
+        PSSpecifier *about = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"About Vedette")
+            target:nil set:nil get:nil detail:VDTAboutListController.class cell:PSLinkCell edit:nil];
+        [about setProperty:VDTSettingsSymbol(@"info.circle") forKey:@"iconImage"];
+        [rootSpecifiers addObject:about];
+
         _specifiers = rootSpecifiers;
     }
     
     return _specifiers;
 }
 
--(void)viewDidLoad  {
+-(void)viewDidLoad {
     [super viewDidLoad];
-    
-    
-    CGRect frame = CGRectMake(0,0,self.table.bounds.size.width,170);
-    CGRect Imageframe = CGRectMake(0,10,self.table.bounds.size.width,80);
-    
-    
-    UIView *headerView = [[UIView alloc] initWithFrame:frame];
-    headerView.backgroundColor = [UIColor colorWithRed: 0.20 green: 0.60 blue: 0.60 alpha: 1.00];
-    
-    
-    UIImage *headerImage = [[UIImage alloc]
-                            initWithContentsOfFile:[[NSBundle bundleWithPath:VDT_JBROOT_PATH("/Library/PreferenceBundles/VedettePrefs.bundle")] pathForResource:@"Vedette512" ofType:@"png"]];
-    UIImageView *imageView = [[UIImageView alloc] initWithFrame:Imageframe];
-    [imageView setImage:headerImage];
-    [imageView setContentMode:UIViewContentModeScaleAspectFit];
-    [imageView setAutoresizingMask:UIViewAutoresizingFlexibleWidth];
-    [headerView addSubview:imageView];
-    
-    CGRect labelFrame = CGRectMake(0,imageView.frame.origin.y + 90 ,self.table.bounds.size.width,80);
-    UIFont *font = [UIFont fontWithName:@"HelveticaNeue-Light" size:40];
-    UILabel *headerLabel = [[UILabel alloc] initWithFrame:labelFrame];
-    [headerLabel setText:@"Vedette"];
-    [headerLabel setFont:font];
-    [headerLabel setTextColor:[UIColor blackColor]];
-    headerLabel.textAlignment = NSTextAlignmentCenter;
-    [headerLabel setContentMode:UIViewContentModeScaleAspectFit];
-    [headerLabel setAutoresizingMask:UIViewAutoresizingFlexibleWidth];
-    [headerView addSubview:headerLabel];
-    
-    self.table.tableHeaderView = headerView;
-    
-    self.respringBtn = [[UIBarButtonItem alloc] initWithTitle:@"Respring" style:UIBarButtonItemStylePlain target:self action:@selector(_reallyRespring)];
+    self.title = @"Vedette";
+    self.view.tintColor = VDTAccentColor();
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    VDTStyleTable(self.table);
+    self.respringBtn = [[UIBarButtonItem alloc] initWithTitle:VDTLoc(self.class, @"Respring")
+        style:UIBarButtonItemStylePlain target:self action:@selector(confirmRespring)];
     self.navigationItem.rightBarButtonItem = self.respringBtn;
+}
+
+- (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    if ([[specifier propertyForKey:@"vdtHeader"] boolValue])
+        return UITableViewAutomaticDimension;
+    return [super tableView:tableView heightForRowAtIndexPath:indexPath];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    if (previous && ![previous.preferredContentSizeCategory isEqualToString:self.traitCollection.preferredContentSizeCategory]) {
+        [self.table reloadData];
+    }
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    [super tableView:tableView willDisplayCell:cell forRowAtIndexPath:indexPath];
+    VDTStyleCell(cell);
+}
+
+- (void)confirmRespring {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Respring")
+        message:VDTLoc(self.class, @"Restart the system interface? This is not required for ordinary rule changes.")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel") style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Respring") style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [self _reallyRespring];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 -(void)_reallyRespring{
     NSURL *relaunchURL = [NSURL URLWithString:@"prefs:root=Vedette"];
     SBSRelaunchAction *restartAction = [NSClassFromString(@"SBSRelaunchAction") actionWithReason:@"RestartRenderServer" options:4 targetURL:relaunchURL];
     [[NSClassFromString(@"FBSSystemService") sharedService] sendActions:[NSSet setWithObject:restartAction] withResult:nil];
-}
-
-- (void)donation {
-    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://www.paypal.me/udevs"] options:@{} completionHandler:nil];
-}
-
-- (void)twitter {
-    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://twitter.com/udevs9"] options:@{} completionHandler:nil];
-}
-
-- (void)reddit {
-    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://www.reddit.com/user/h4roldj"] options:@{} completionHandler:nil];
 }
 
 - (id)readPreferenceValue:(PSSpecifier*)specifier {
@@ -168,9 +144,9 @@
 
 -(void)reset{
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Vedette" message:@"Reset everything back to default?" preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Vedette" message:VDTLoc(self.class, @"Remove all saved rules and request restoration of system defaults?") preferredStyle:UIAlertControllerStyleAlert];
     
-    UIAlertAction *yesAction = [UIAlertAction actionWithTitle:@"Yes" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+    UIAlertAction *yesAction = [UIAlertAction actionWithTitle:VDTLoc(self.class, @"Reset settings") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
         
         NSError *error = nil;
         [[NSFileManager defaultManager] removeItemAtPath:PREFS_PATH_TMP error:nil];
@@ -178,8 +154,8 @@
         [[NSFileManager defaultManager] copyItemAtPath:PREFS_PATH toPath:PREFS_PATH_TMP error:&error];
         
         void (^errorAlert)(NSError *) = ^(NSError *err){
-            UIAlertController *alertFailed = [UIAlertController alertControllerWithTitle:@"Vedette" message:[NSString stringWithFormat:@"Failed to reset. %@", err.localizedDescription] preferredStyle:UIAlertControllerStyleAlert];
-            UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"Ok" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            UIAlertController *alertFailed = [UIAlertController alertControllerWithTitle:@"Vedette" message:[NSString stringWithFormat:VDTLoc(self.class, @"Failed to reset. %@"), err.localizedDescription] preferredStyle:UIAlertControllerStyleAlert];
+            UIAlertAction *okAction = [UIAlertAction actionWithTitle:VDTLoc(self.class, @"OK") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
             }];
             [alertFailed addAction:okAction];
             
@@ -203,7 +179,7 @@
         }
     }];
     
-    UIAlertAction *noAction = [UIAlertAction actionWithTitle:@"No" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+    UIAlertAction *noAction = [UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel") style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
     }];
     
     [alert addAction:yesAction];

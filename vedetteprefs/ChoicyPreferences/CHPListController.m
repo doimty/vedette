@@ -20,8 +20,27 @@
 
 #import "CHPListController.h"
 #import "../../VDTShared.h"
+#import "../VDTLocalization.h"
+#import "../VDTStyle.h"
 
 @implementation CHPListController
+
+- (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
+
+- (void)viewDidLoad
+{
+	[super viewDidLoad];
+	if ([self topTitle]) self.title = [self topTitle];
+	self.view.tintColor = VDTAccentColor();
+	VDTStyleTable(self.table);
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+	UITableViewCell *cell = [super tableView:tableView cellForRowAtIndexPath:indexPath];
+	VDTStyleCell(cell);
+	return cell;
+}
 
 //Must be overwritten by subclass
 - (NSString*)topTitle
@@ -37,8 +56,11 @@
 
 - (void)applySearchControllerHideWhileScrolling:(BOOL)hideWhileScrolling
 {
+	if (_searchController) return;
 	_searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
 	_searchController.searchResultsUpdater = self;
+	_searchController.searchBar.placeholder = VDTLoc(self.class, @"Search");
+	self.definesPresentationContext = YES;
 	if (@available(iOS 9.1, *)) _searchController.obscuresBackgroundDuringPresentation = NO;
 
 	if (@available(iOS 11.0, *))
@@ -57,7 +79,9 @@
 
 - (void)updateSearchResultsForSearchController:(UISearchController *)searchController
 {
-	_searchKey = searchController.searchBar.text;
+	NSString *query = [searchController.searchBar.text copy] ?: @"";
+	if ([_searchKey isEqualToString:query]) return;
+	_searchKey = query;
 	[self reloadSpecifiers];
 }
 
