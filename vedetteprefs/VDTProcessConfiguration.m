@@ -37,9 +37,11 @@
     }
 }
 
-- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
-    [super tableView:tableView willDisplayCell:cell forRowAtIndexPath:indexPath];
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    // PSListController may omit optional willDisplayCell on iOS 15.
+    UITableViewCell *cell = [super tableView:tableView cellForRowAtIndexPath:indexPath];
     VDTStyleCell(cell);
+    return cell;
 }
 
 

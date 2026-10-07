@@ -33,6 +33,7 @@ def verify(package):
         assert tables[locale] == expected, 'Packaged translation differs: ' + locale
     validate_keys(DYNAMIC_KEYS, tables['en'], tables['zh-Hans'])
     binary = (bundle / 'VedettePrefs').read_bytes()
+    assert b'tableView:willDisplayCell:forRowAtIndexPath:' not in binary, 'Crashing optional-delegate selector remains in UI binary'
     for symbol in (b'VDTHeaderCell', b'VDTAboutListController', b'VDTApplicationListSubcontrollerController', b'CHPDaemonListController', b'vdtHeader', b'Enabled Configurations'):
         assert symbol in binary, 'Missing UI implementation marker: ' + repr(symbol)
     assert (bundle / 'Vedette@3x.png').is_file(), 'Missing own icon'

@@ -125,6 +125,7 @@ jobs:
           python3 tests/check_auto_monitor_path.py
           sh tests/run_list_order_tests.sh
           python3 -B tests/test_preferences_ui.py
+          python3 -B tests/test_ios15_cell_lifecycle.py
 
       - name: Build package
         run: |
@@ -141,10 +142,10 @@ jobs:
           test -s /tmp/vedette-build.log
           ! grep -qi 'incompatible arm64e' /tmp/vedette-build.log
           test "$(find packages -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')" = "1"
-          deb="packages/com.udevs.vedette_1.1.10-1+ui1_iphoneos-arm64e.deb"
+          deb="packages/com.udevs.vedette_1.1.10-1+ui2_iphoneos-arm64e.deb"
           test -s "$deb"
           test "$(dpkg-deb -f "$deb" Package)" = "com.udevs.vedette"
-          test "$(dpkg-deb -f "$deb" Version)" = "1.1.10-1+ui1"
+          test "$(dpkg-deb -f "$deb" Version)" = "1.1.10-1+ui2"
           test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
           rm -rf /tmp/vedette-package
           dpkg-deb -x "$deb" /tmp/vedette-package
