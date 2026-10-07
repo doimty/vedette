@@ -78,15 +78,15 @@ class PreferencesUIContracts(unittest.TestCase):
             expected = subprocess.check_output(['git', 'show', BASELINE + ':' + name], cwd=ROOT)
             actual = (ROOT / name).read_bytes()
             if name == 'control':
-                self.assertEqual(actual, expected.replace(b'Version: 1.1.10\n', b'Version: 1.1.10-1+ui2\n'), name)
+                self.assertEqual(actual, expected.replace(b'Version: 1.1.10\n', b'Version: 1.1.10-1+ui3\n'), name)
             elif name == '.github/workflows/roothide-build.yml':
                 # Only reviewed build-metadata and added test gates may differ.
                 wanted = expected.replace(b'# v4.4.0\n', b'# v4.4.0\n        with:\n          fetch-depth: 0\n', 1)
                 wanted = wanted.replace(b'          brew install dpkg ldid make\n',
                     b'          brew_prefix="$(brew --prefix)"\n          if [ -L "$brew_prefix/bin/openssl" ] && [ "$(readlink "$brew_prefix/bin/openssl")" = "$brew_prefix/opt/openssl@1.1/bin/openssl" ]; then\n            unlink "$brew_prefix/bin/openssl"\n          fi\n          brew install dpkg ldid make\n', 1)
-                wanted = wanted.replace(b'1.1.10', b'1.1.10-1+ui2')
+                wanted = wanted.replace(b'1.1.10', b'1.1.10-1+ui3')
                 wanted = wanted.replace(b'          python3 tests/check_auto_monitor_path.py\n',
-                    b'          python3 tests/check_auto_monitor_path.py\n          sh tests/run_list_order_tests.sh\n          python3 -B tests/test_preferences_ui.py\n          python3 -B tests/test_ios15_cell_lifecycle.py\n', 1)
+                    b'          python3 tests/check_auto_monitor_path.py\n          sh tests/run_list_order_tests.sh\n          python3 -B tests/test_preferences_ui.py\n          python3 -B tests/test_ios15_cell_lifecycle.py\n          python3 -B tests/test_compact_ui.py\n          python3 -B tests/test_process_action_ui.py\n', 1)
                 wanted = wanted.replace(b'          dpkg-deb -e "$deb" /tmp/vedette-control\n',
                     b'          python3 -B tests/verify_preferences_resources.py /tmp/vedette-package\n          dpkg-deb -e "$deb" /tmp/vedette-control\n', 1)
                 self.assertEqual(actual, wanted, name)

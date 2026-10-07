@@ -98,11 +98,26 @@
 
 - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
 
+// Small local section spacing; optional delegates are implemented without super.
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    return VDTCompactSectionHeight(self, section, NO);
+}
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    return VDTCompactSectionHeight(self, section, YES);
+}
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    return VDTCompactSectionView(self, tableView, section, NO);
+}
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
+    return VDTCompactSectionView(self, tableView, section, YES);
+}
+
+
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
     if ([[specifier propertyForKey:@"vdtHeader"] boolValue])
         return UITableViewAutomaticDimension;
-    return [super tableView:tableView heightForRowAtIndexPath:indexPath];
+    return VDTCompactRowHeight(tableView);
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {

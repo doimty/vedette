@@ -10,6 +10,7 @@
 #import "VDTLocalization.h"
 #import "VDTStyle.h"
 #import "VDTHeaderCell.h"
+#import <Preferences/PSListItemsController.h>
 
 @implementation VDTProcessConfiguration
 
@@ -23,10 +24,27 @@
 
 - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
 
+// Small local section spacing; optional delegates are implemented without super.
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    return VDTCompactSectionHeight(self, section, NO);
+}
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    return VDTCompactSectionHeight(self, section, YES);
+}
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    return VDTCompactSectionView(self, tableView, section, NO);
+}
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
+    return VDTCompactSectionView(self, tableView, section, YES);
+}
+
+
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
     if ([[specifier propertyForKey:@"vdtHeader"] boolValue])
         return UITableViewAutomaticDimension;
+    if (specifier.cellType == PSSwitchCell || specifier.cellType == PSLinkListCell)
+        return VDTCompactRowHeight(tableView);
     return [super tableView:tableView heightForRowAtIndexPath:indexPath];
 }
 
@@ -105,12 +123,14 @@
         [rootSpecifiers addObject:monitorEnabledSpec];
         
         
-        //Violation Policy
-        PSSpecifier *violationPolicyGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [violationPolicyGroupSpec setProperty:VDTLoc(self.class, @"Terminate ends the process when its CPU limit is exceeded. Throttle limits CPU time; setting it too low can cause timeouts.") forKey:@"footerText"];
-        [rootSpecifiers addObject:violationPolicyGroupSpec];
-        
-        PSSpecifier *violationPolicySelectionSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Action") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSegmentCell edit:nil];
+        // Keep the action selector and its parameters in one native group.
+        PSSpecifier *maxCPUUsageGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Limits") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        NSString *actionHelp = VDTLoc(self.class, @"Terminate ends the process when its CPU limit is exceeded. Throttle limits CPU time; setting it too low can cause timeouts.");
+        NSString *parameterHelp = VDTLoc(self.class, @"Terminate: 1–100%. Throttle: 1–255%. The interval must be a positive number of seconds and is used only by Terminate. Invalid or empty values disable enforcement.");
+        [maxCPUUsageGroupSpec setProperty:[NSString stringWithFormat:@"%@\n%@", actionHelp, parameterHelp] forKey:@"footerText"];
+        [rootSpecifiers addObject:maxCPUUsageGroupSpec];
+
+        PSSpecifier *violationPolicySelectionSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Action") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:[PSListItemsController class] cell:PSLinkListCell edit:nil];
         [violationPolicySelectionSpec setValues:@[@(VDTViolationPolicyMonitorAndTerminate), @(VDTViolationPolicyThrottle)] titles:@[VDTLoc(self.class, @"Terminate"), VDTLoc(self.class, @"Throttle")]];
         [violationPolicySelectionSpec setProperty:@(VDTViolationPolicyMonitorAndTerminate) forKey:@"default"];
         [violationPolicySelectionSpec setProperty:@"violationPolicy" forKey:@"key"];
@@ -119,9 +139,6 @@
         [rootSpecifiers addObject:violationPolicySelectionSpec];
         
         //CPU Usage Percentage
-        PSSpecifier *maxCPUUsageGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Limits") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [maxCPUUsageGroupSpec setProperty:VDTLoc(self.class, @"Terminate: 1–100%. Throttle: 1–255%. The interval must be a positive number of seconds and is used only by Terminate. Invalid or empty values disable enforcement.") forKey:@"footerText"];
-        [rootSpecifiers addObject:maxCPUUsageGroupSpec];
         
         PSTextFieldSpecifier* maxCPUUsageSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"CPU limit (%)") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSEditTextCell edit:nil];
         [maxCPUUsageSpec setKeyboardType:UIKeyboardTypeNumberPad autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
