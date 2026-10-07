@@ -66,6 +66,20 @@ CGFloat VDTCompactSectionHeight(PSListController *controller, NSInteger section,
 @end
 
 @implementation VDTCompactSectionLabel
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    // UIKit may populate these legacy labels during layout/reuse. Our caption
+    // owns all section text; suppress only these two built-in alternatives.
+    self.textLabel.text = nil;
+    self.textLabel.attributedText = nil;
+    self.textLabel.hidden = YES;
+    self.textLabel.isAccessibilityElement = NO;
+    self.detailTextLabel.text = nil;
+    self.detailTextLabel.attributedText = nil;
+    self.detailTextLabel.hidden = YES;
+    self.detailTextLabel.isAccessibilityElement = NO;
+}
+
 - (instancetype)initWithReuseIdentifier:(NSString *)identifier {
     self = [super initWithReuseIdentifier:identifier];
     if (!self) return nil;

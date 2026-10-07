@@ -6,7 +6,7 @@ Base: ui2 `cd0b34807c031d2e179f1ae397ea8c6847be35e3` (user confirmed home, app a
 
 ## Scope
 - User asks whether CPU/efficiency can improve: read-only CPU audit first, not automatic tighter throttling, no new sampling/IPC/timers.
-- Current authorization: push this candidate on the new `feat/compact-prefs` branch and run the roothide cloud build as `1.1.10-1+ui3`. No device install/restart, APT publication or CPU-feature implementation. Keep the stable ui2 worktree and package intact.
+- Current authorization: push the compact UI on `feat/compact-prefs`; ui4 includes the observed ui3 section-overlap fix and user-requested own package/Bundle IDs. Preserve legacy rule/notification compatibility, see PACKAGE_IDENTITY.md and SECTION_TEXT_FIX.md. No device install/restart, APT publication or CPU-feature implementation. Keep stable ui2 intact.
 
 ## Hypothesis
 The header has 20pt top/bottom padding and 48pt icon; native section spacing and standard Preferences row sizes produce the visible blank space. Setting only estimatedRowHeight would not change real row heights. Use explicitly scaled compact rows and small automatic-size section labels without negative content insets or forcing all cells to a clipping fixed height.

@@ -35,7 +35,10 @@ int main(void) {
     def test_other_source_exactly_frozen(self):
         paths=subprocess.check_output(['git','ls-tree','-r','--name-only',BASE],cwd=ROOT,text=True).splitlines()
         for path in paths:
-            if path not in ALLOWED | RELEASE_GATES:
+            if path == 'vedetteprefs/Resources/Info.plist':
+                original = subprocess.check_output(['git','show',BASE+':'+path],cwd=ROOT)
+                self.assertEqual((ROOT/path).read_bytes(), original.replace(b'com.udevs.vedetteprefs', b'com.doimty.vedetteprefs'), path)
+            elif path not in ALLOWED | RELEASE_GATES:
                 self.assertEqual((ROOT/path).read_bytes(),subprocess.check_output(['git','show',BASE+':'+path],cwd=ROOT),path)
 
     def test_real_delegates_not_only_estimated_height(self):

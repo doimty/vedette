@@ -23,6 +23,7 @@ def verify(package):
     bundle = package / 'Library/PreferenceBundles/VedettePrefs.bundle'
     assert bundle.is_dir(), 'Missing preference bundle'
     info = load_plist(bundle / 'Info.plist')
+    assert info['CFBundleIdentifier'] == 'com.doimty.vedetteprefs'
     assert info['NSPrincipalClass'] == 'VDTRootListController'
     assert info['CFBundleDevelopmentRegion'] == 'en'
     assert set(info['CFBundleLocalizations']) == {'en', 'zh-Hans'}

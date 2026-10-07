@@ -1,9 +1,11 @@
-Package: com.udevs.vedette
+Package: com.doimty.vedette
 Name: Vedette
-Version: 1.1.10-1+ui3
+Version: 1.1.10-1+ui4
 Architecture: iphoneos-arm
 Description: Monitor CPU hogging processes
-Maintainer: udevs
+Conflicts: com.udevs.vedette
+Replaces: com.udevs.vedette
+Maintainer: doimty
 Author: udevs
 Section: Tweaks
 Depends: roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist

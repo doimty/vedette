@@ -24,6 +24,15 @@
 }
 
 
+// This controller supplies its own caption views; do not also populate
+// UITableViewHeaderFooterView's built-in labels through inherited titles.
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return nil;
+}
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    return nil;
+}
+
 // Small local section spacing; optional delegates are implemented without super.
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     return VDTCompactSectionHeight(self, section, NO);
