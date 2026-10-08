@@ -58,7 +58,7 @@ class EfficiencyContracts(unittest.TestCase):
         expected=subprocess.check_output(['git','show',BASE+':VDTProcessManager.mm'],cwd=ROOT)
         wanted=expected.replace(b'    int operationErrno = errno;',b'#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;\n#endif')
         self.assertNotEqual(wanted,expected)
-        self.assertEqual((ROOT/'VDTProcessManager.mm').read_bytes(),wanted)
+        self.assertEqual(without_nice('VDTProcessManager.mm',(ROOT/'VDTProcessManager.mm').read_bytes()),wanted)
         source=wanted.decode()
         self.assertEqual(source.count('#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;'),1)
         self.assertGreaterEqual(source.count('@"errno": @(operationErrno)'),3)

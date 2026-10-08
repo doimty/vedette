@@ -17,7 +17,7 @@ class NiceContracts(unittest.TestCase):
         for name in ['VDTProcessManager.mm','VDTProcessManager.h','VDTProcessIdentity.c','VDTProcessIdentity.h',
             'VDTPolicyTransition.c','VDTPolicyTransition.h','Common.h','VDTShared.mm','VDTShared.h',
             'Vedette.plist','vedetteprefs/VDTActionListController.m','layout/DEBIAN/postrm']:
-            self.assertEqual((ROOT/name).read_bytes(),baseline(name),name)
+            self.assertEqual(without_nice(name,(ROOT/name).read_bytes()),baseline(name),name)
     def test_nice_is_independent_and_never_spawns_a_service(self):
         runtime=source('VDTNiceRuntime.mm'); shared=source('VDTNiceShared.mm')
         for forbidden in ['vdt_apply_target(', 'proc_setcpu', 'memorystatus_control', 'NSTimer', 'dispatch_source_create', 'fork(', 'posix_spawn', 'system(']:

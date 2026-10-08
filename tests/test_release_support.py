@@ -25,7 +25,7 @@ class ReleaseSupport(unittest.TestCase):
         for name in old_files:
             if (name.startswith('tests/') or name in NAMES):continue
             if Path(name).suffix in ('.xm','.mm','.m','.c','.h','.plist') or name.startswith('layout/'):
-                self.assertEqual((ROOT/name).read_bytes(),subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT),name)
+                self.assertEqual(without_release(name,(ROOT/name).read_bytes()),subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT),name)
     def test_two_staged_schemes_keep_arch_and_dependencies_separate(self):
         with tempfile.TemporaryDirectory() as td:
             for scheme in ('roothide','rootless'):
@@ -42,7 +42,7 @@ class ReleaseSupport(unittest.TestCase):
             stage=Path(td)/'stage';fixture(stage,'rootless');before=(stage/'DEBIAN/control').read_bytes()
             with self.assertRaises(ValueError):stage_module.stage_release(stage,'roothide')
             self.assertEqual((stage/'DEBIAN/control').read_bytes(),before)
-            (stage/'DEBIAN/control').write_bytes(before.replace(b'1.1.12-1',b'1.1.11-1+nice2'))
+            (stage/'DEBIAN/control').write_bytes(before.replace(b'1.1.12-2',b'1.1.11-1+nice2'))
             with self.assertRaises(ValueError):stage_module.stage_release(stage,'rootless')
     def test_rootless_archive_repack_preserves_bytes_and_modes(self):
         with tempfile.TemporaryDirectory() as td:
@@ -62,8 +62,8 @@ class ReleaseSupport(unittest.TestCase):
         with self.assertRaises(AssertionError):verify_tool(roothide,'rootless')
         with self.assertRaises(AssertionError):verify_tool(rootless,'roothide')
     def test_stable_version_upgrades_all_candidate_versions(self):
-        for version in ('1.1.10-1+ui21','1.1.11-1+nice1','1.1.11-1+nice2'):
-            subprocess.run(['dpkg','--compare-versions','1.1.12-1','gt',version],check=True)
+        for version in ('1.1.12-1','1.1.10-1+ui21','1.1.11-1+nice1','1.1.11-1+nice2'):
+            subprocess.run(['dpkg','--compare-versions','1.1.12-2','gt',version],check=True)
         text=(ROOT/'control').read_text();self.assertIn('CPU 限制和 nice 调度优先级',text)
         self.assertIn('https://doimty.github.io/depictions/com.doimty.vedette/',text)
     def test_rootless_hooks_fail_closed_without_jbroot_command(self):

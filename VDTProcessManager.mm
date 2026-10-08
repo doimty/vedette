@@ -9,6 +9,7 @@
 #import "PrivateHeaders.h"
 #import "VDTProcessIdentity.h"
 #import "VDTPolicyTransition.h"
+#import "VDTSpringBoardIdentity.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -293,11 +294,25 @@ static NSDictionary *target_for_pid(pid_t pid,
     NSString *matchedName = nil;
     NSString *fallbackProcComm = nil;
 
+    // Only the canonical system executable may use this reserved daemon rule.
+    // Explicit SpringBoard entries win (including disabled entries), so a
+    // separately hand-written App rule cannot silently re-enable that target.
+    if (VDTSpringBoardPathMatches(executablePath.UTF8String)) {
+        for (NSDictionary *config in daemonConfigs) {
+            NSString *identifier = vdt_nonEmptyString(config[VDTConfigIdentifierKey]);
+            if (VDTSpringBoardRuleMatches(identifier.UTF8String, executablePath.UTF8String)) {
+                matched = config;
+                matchedName = identifier;
+                break;
+            }
+        }
+    }
+
     // A verified App identity is authoritative even when that App has no App
     // config. It must never fall through to an unrelated daemon entry that
     // happens to share the executable filename.
     BOOL resolvedAsApplication = NO;
-    if (executablePath) {
+    if (executablePath && !matched) {
         NSString *bundlePath = application_bundle_path_for_executable(executablePath);
         resolvedAsApplication = bundlePath != nil;
 
@@ -327,7 +342,8 @@ static NSDictionary *target_for_pid(pid_t pid,
         for (NSDictionary *config in daemonConfigs) {
             NSString *configuredName = config[VDTConfigIdentifierKey];
             const char *configured = configuredName.UTF8String;
-            if (!configured) continue;
+            // Never fall back to basename/p_comm for the reserved system rule.
+            if (!configured || VDTSpringBoardRuleName(configured)) continue;
             if (VDTProcessNameMatches(configured,
                                       hasExecutableName ? executableName : NULL,
                                       hasProcComm ? procComm : NULL)) {

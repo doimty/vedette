@@ -1,5 +1,7 @@
 # Vedette 1.1.12 正式双环境发布计划
 
+> 修订2：用户随后要求放开 SpringBoard。当前交付版本为 `1.1.12-2`，只额外开放唯一系统入口与严格完整路径匹配；CPU/nice 状态机、确认提示和默认开关不变，细节见 [SPRINGBOARD_PLAN.md](SPRINGBOARD_PLAN.md) 与 [SPRINGBOARD_REPORT.md](SPRINGBOARD_REPORT.md)。下文保留最初-1方案记录，-1未发布到APT源，不再作为最终交付。
+
 ## 范围与授权
 - 用户确认nice2“测试了一切正常”，并要求改正式版本/包描述、同步编译arm64版、发布到doimty.github.io、下架旧Vedette。
 - 源码基线 `de411f7917d529de91c947312ce3cf6eb07bf161`（nice2），隔离分支 `release/1.1.12`。稳定版本选 `1.1.12-1`，已用dpkg比较确认高于nice2，避免删除后缀导致降级。

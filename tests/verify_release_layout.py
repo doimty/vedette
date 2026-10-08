@@ -5,7 +5,7 @@ import hashlib,io,json,plistlib,subprocess,sys,tarfile,tempfile
 from inspect_release_macho import inspect
 from verify_nice_tool import verify_tool
 ROOT=Path(__file__).resolve().parents[1]
-VERSION='1.1.12-1'
+VERSION='1.1.12-2'
 DESCRIPTION='按应用与守护进程独立管理 CPU 限制和 nice 调度优先级'
 
 def read_archive(deb,area):
@@ -51,6 +51,9 @@ def verify(deb,scheme):
             info[name]=inspect(p,scheme)
     permissions=verify_tool(files[tool],scheme)
     assert b'VDTProbeRecordImpl' not in files[prefix+names[0]],'Release diagnostic emitter present'
+    system_path=b'/System/Library/CoreServices/SpringBoard.app/SpringBoard'
+    assert system_path in files[prefix+names[0]],'missing strict system resolver in runtime'
+    assert system_path in files[prefix+names[1]],'missing system list entry in preferences'
     return {'scheme':scheme,'version':VERSION,'package':deb.name,'sha256':hashlib.sha256(deb.read_bytes()).hexdigest(),
         'bytes':deb.stat().st_size,'control':fields,'mach_o':info,'tool_signing':permissions,
         'payload_records':meta,'control_records':control_meta,'runtime_installed_or_executed':False}

@@ -44,7 +44,7 @@ jobs:
       THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
       PACKAGE_ARCH: ${{ matrix.package_arch }}
       PACKAGE_PREFIX: ${{ matrix.prefix }}
-      PACKAGE_VERSION: 1.1.12-1
+      PACKAGE_VERSION: 1.1.12-2
       FINALPACKAGE: 1
       PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
 
@@ -146,6 +146,7 @@ jobs:
           python3 -B tests/test_diagnostic_preprocess.py
           make -f Makefile.tests test-nice STORE_RUNNER=sudo
           sudo bash tests/run_nice_native_tests.sh
+          sudo bash tests/run_springboard_native_tests.sh
 
       - name: Build package
         run: |

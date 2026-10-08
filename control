@@ -1,6 +1,6 @@
 Package: com.doimty.vedette
 Name: Vedette
-Version: 1.1.12-1
+Version: 1.1.12-2
 Architecture: iphoneos-arm
 Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级
 Conflicts: com.udevs.vedette

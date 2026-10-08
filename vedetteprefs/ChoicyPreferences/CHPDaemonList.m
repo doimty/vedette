@@ -21,6 +21,7 @@
 #import "CHPDaemonList.h"
 #import "CHPDaemonInfo.h"
 #import "../../Common.h"
+#import "../../VDTSpringBoardIdentity.h"
 
 #import <dirent.h>
 
@@ -85,6 +86,14 @@
 
 	NSMutableArray* daemonListM = [NSMutableArray new];
 
+	// Known system entry, not an assertion that it is currently running. This
+	// remains available when LaunchDaemons/LaunchServices omit SpringBoard.
+	// Seed first so later discovery cannot replace it with a same-named binary.
+	CHPDaemonInfo* springBoard = [[CHPDaemonInfo alloc] init];
+	springBoard.executablePath = @VDT_SPRINGBOARD_EXECUTABLE;
+	springBoard.plistIdentifier = @VDT_SPRINGBOARD_LAUNCHD_ID;
+	[daemonListM addObject:springBoard];
+
 	for(NSURL* daemonPlistURL in daemonPlists)
 	{
 		NSDictionary* daemonDictionary = [NSDictionary dictionaryWithContentsOfURL:daemonPlistURL];
@@ -104,7 +113,7 @@
 
 		info.plistIdentifier = [daemonPlistURL lastPathComponent].stringByDeletingPathExtension;
 
-		if(info.executablePath && [[NSFileManager defaultManager] fileExistsAtPath:info.executablePath] && ![info.plistIdentifier hasSuffix:@"Jetsam"] && ![info.plistIdentifier hasSuffix:@"SimulateCrash"] && ![info.plistIdentifier hasSuffix:@"_v2"] && ![info.plistIdentifier isEqualToString:@"com.apple.SpringBoard"]) //Filter out some useless entries
+		if(info.executablePath && [[NSFileManager defaultManager] fileExistsAtPath:info.executablePath] && ![info.plistIdentifier hasSuffix:@"Jetsam"] && ![info.plistIdentifier hasSuffix:@"SimulateCrash"] && ![info.plistIdentifier hasSuffix:@"_v2"]) //Filter out some useless entries
 		{
 			if(![self daemonList:daemonListM containsDisplayName:info.displayName])
 			{
