@@ -35,7 +35,12 @@ def verify(package):
     validate_keys(DYNAMIC_KEYS, tables['en'], tables['zh-Hans'])
     binary = (bundle / 'VedettePrefs').read_bytes()
     assert b'tableView:willDisplayCell:forRowAtIndexPath:' not in binary, 'Crashing optional-delegate selector remains in UI binary'
-    for symbol in (b'VDTHeaderCell', b'VDTAboutListController', b'VDTApplicationListSubcontrollerController', b'CHPDaemonListController', b'vdtHeader', b'Enabled Configurations', b'VDTCompactSectionLabel', b'PSListItemsController'):
+    assert b'VDTCompactSectionLabel' not in binary, 'Compact-only custom section view must not reappear in ui2.1 baseline'
+    assert b'VDTProbeRecordImpl' not in binary, 'Release diagnostic-only implementation remains in Preferences bundle'
+    tweak = package / 'Library/MobileSubstrate/DynamicLibraries/Vedette.dylib'
+    assert tweak.is_file(), 'Missing injected CPU-control library'
+    assert b'VDTProbeRecordImpl' not in tweak.read_bytes(), 'Release diagnostic-only logger remains in injected library'
+    for symbol in (b'VDTHeaderCell', b'VDTAboutListController', b'VDTApplicationListSubcontrollerController', b'CHPDaemonListController', b'vdtHeader', b'Enabled Configurations', b'VDTActionListController'):
         assert symbol in binary, 'Missing UI implementation marker: ' + repr(symbol)
     assert (bundle / 'Vedette@3x.png').is_file(), 'Missing own icon'
     print('Actual preferences resources: en/zh-Hans', len(tables['en']), 'keys each, bundle info/icon/UI markers passed')

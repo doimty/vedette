@@ -67,6 +67,18 @@ static NSMutableDictionary<NSString *, NSDictionary *> *managed_process_targets(
     return targets;
 }
 
+// This snapshot is confined to vedette_serial_queue. It contains only the
+// validated configuration, never a PID-lifetime proof; target identity is
+// still rechecked immediately before each policy syscall.
+static NSArray<NSDictionary *> *normalized_configs_snapshot;
+
+static NSArray<NSDictionary *> *current_normalized_configs_sync(void){
+    if (!normalized_configs_snapshot){
+        normalized_configs_snapshot = [vdt_configs_from_prefs(VDTGetPrefs()) copy];
+    }
+    return normalized_configs_snapshot;
+}
+
 static NSString *target_instance_key(NSDictionary *target){
     NSNumber *pid = [target[VDTTargetPidKey] isKindOfClass:[NSNumber class]] ? target[VDTTargetPidKey] : nil;
     NSNumber *seconds = [target[VDTTargetStartSecondsKey] isKindOfClass:[NSNumber class]] ? target[VDTTargetStartSecondsKey] : nil;
@@ -171,7 +183,7 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
 }
 
 static void reconcile_unreported_processes_sync(){
-    NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(VDTGetPrefs());
+    NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs);
     NSMutableSet<NSString *> *liveInstances = [NSMutableSet set];
 
@@ -202,8 +214,7 @@ static void schedule_launch_catch_up_sync(){
 }
 
 static void handle_reported_pid_sync(pid_t pid){
-    NSDictionary *prefs = VDTGetPrefs();
-    NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(prefs);
+    NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
     NSArray<NSDictionary *> *targets = vdt_targets_for_pid(pid, configs);
 
     if (targets.count == 0) {
@@ -220,9 +231,10 @@ static void handle_reported_pid_sync(pid_t pid){
 // Core prefs reload logic. Must be called on vedette_serial_queue.
 static void reloadPrefsSync(){
     NSDictionary *newPrefs = getPrefs();
-    VDTSetPrefs(newPrefs);
-
     NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);
+    VDTSetPrefs(newPrefs);
+    normalized_configs_snapshot = [configs copy];
+
     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs);
     HBLogDebug(@"Vedette configs: %@", configs);
     HBLogDebug(@"Vedette targets: %@", targets);

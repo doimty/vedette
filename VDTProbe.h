@@ -7,6 +7,7 @@
 #define VDTProbe_h
 
 #import <Foundation/Foundation.h>
+#import "VDTDiagnostics.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,8 +16,10 @@ extern "C" {
 void VDTMarkerRecord(NSString *processName, pid_t pid, NSString *executablePath, BOOL isApplication, NSString *bundleIdentifier);
 void VDTNotifyPostRecord(NSString *processName, pid_t pid, NSString *identifier, BOOL isApplication);
 
-// Diagnostic probe logging for debug builds.
-void VDTProbeRecord(NSString *label, NSDictionary *info);
+// Diagnostic payloads are call-site lazy: Release does not construct dictionaries.
+void VDTProbeRecordImpl(NSString *label, NSDictionary *info);
+#define VDTProbeRecord(label, ...) \
+    VDT_DIAGNOSTIC_CALL(VDTProbeRecordImpl, label, __VA_ARGS__)
 
 #ifdef __cplusplus
 }

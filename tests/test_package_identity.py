@@ -9,6 +9,7 @@ def parse(text):
     return dict((k,v.strip()) for k,v in (l.split(':',1) for l in text.splitlines() if ':' in l))
 def require_ids(control,info):
     assert control['Package']=='com.doimty.vedette'
+    assert control['Version']=='1.1.10-1+ui21'
     assert control['Conflicts']=='com.udevs.vedette'
     assert control['Replaces']=='com.udevs.vedette'
     assert control['Maintainer']=='doimty'
@@ -28,8 +29,15 @@ class OwnIdentifiers(unittest.TestCase):
             broken=parse((ROOT/'control').read_text());del broken[field]
             with self.assertRaises((AssertionError,KeyError)):require_ids(broken,info)
     def test_legacy_configuration_channel_and_loader_paths_preserved(self):
-        for file in ('Common.h','VDTShared.h','VDTShared.mm','Vedette.xm','VDTProbe.mm',
-                     'Makefile','vedetteprefs/Makefile','layout/DEBIAN/postinst','layout/DEBIAN/postrm'):
+        common=(ROOT/'Common.h').read_bytes()
+        self.assertEqual(common,subprocess.check_output(['git','show',BASE+':Common.h'],cwd=ROOT))
+        runtime=(ROOT/'Vedette.xm').read_text()
+        self.assertIn('current_normalized_configs_sync()',runtime)
+        self.assertIn('PREFS_CHANGED_NN',runtime)
+        probe=(ROOT/'VDTProbe.mm').read_text()
+        self.assertIn('@"/var/mobile/Library/Preferences/com.udevs.vedette.marker.plist"',probe)
+        self.assertIn('@"/tmp/com.udevs.vedette.marker.plist"',probe)
+        for file in ('VDTShared.h','VDTShared.mm','Makefile','vedetteprefs/Makefile','layout/DEBIAN/postinst','layout/DEBIAN/postrm'):
             with self.subTest(file=file):
                 self.assertEqual((ROOT/file).read_bytes(),subprocess.check_output(['git','show',BASE+':'+file],cwd=ROOT))
 

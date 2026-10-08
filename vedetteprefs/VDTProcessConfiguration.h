@@ -12,5 +12,6 @@
     PSSpecifier *_intervalSpecifier;
     PSSpecifier *_enabledSpecifier;
 }
-
+- (void)setProcessConfigValue:(id)value specifier:(PSSpecifier *)specifier;
+- (id)readProcessConfigValue:(PSSpecifier *)specifier;
 @end

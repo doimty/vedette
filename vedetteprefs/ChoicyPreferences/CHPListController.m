@@ -27,42 +27,6 @@
 
 - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
 
-- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    return VDTCompactRowHeight(tableView);
-}
-
-- (void)traitCollectionDidChange:(UITraitCollection *)previous {
-    [super traitCollectionDidChange:previous];
-    if (previous && ![previous.preferredContentSizeCategory isEqualToString:self.traitCollection.preferredContentSizeCategory]) {
-        [self.table reloadData];
-    }
-}
-
-
-// This controller supplies its own caption views; do not also populate
-// UITableViewHeaderFooterView's built-in labels through inherited titles.
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return nil;
-}
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return nil;
-}
-
-// Small local section spacing; optional delegates are implemented without super.
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
-    return VDTCompactSectionHeight(self, section, NO);
-}
-- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
-    return VDTCompactSectionHeight(self, section, YES);
-}
-- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
-    return VDTCompactSectionView(self, tableView, section, NO);
-}
-- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
-    return VDTCompactSectionView(self, tableView, section, YES);
-}
-
-
 - (void)viewDidLoad
 {
 	[super viewDidLoad];

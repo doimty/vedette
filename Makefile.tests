@@ -1,0 +1,26 @@
+# CPU / UI-only 2.1 regressions; no device/App frameworks required.
+CC ?= cc
+CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror
+
+.PHONY: test-cpu test-ui test
+
+test-cpu:
+	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
+	  $(CC) $(CFLAGS) -I. tests/test_diagnostics_lazy.c -o "$$bin"; "$$bin"
+	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
+	  $(CC) $(CFLAGS) -DVDT_DIAGNOSTICS_ENABLED=1 -I. tests/test_diagnostics_lazy.c -o "$$bin"; "$$bin"
+	@python3 -B tests/test_efficiency_contracts.py
+	@python3 -B tests/test_diagnostic_preprocess.py
+
+
+test-ui:
+	@python3 -B tests/test_ui21_baseline.py
+	@python3 -B tests/test_process_action_ui21.py
+	@python3 -B tests/test_section_text.py
+	@python3 -B tests/test_preferences_ui.py
+	@python3 -B tests/test_ios15_cell_lifecycle.py
+	@python3 -B tests/test_package_identity.py
+	@sh tests/run_list_order_tests.sh
+
+
+test: test-cpu test-ui

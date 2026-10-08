@@ -100,7 +100,11 @@ def check_launch_gate_and_catch_up() -> None:
     if not (tracked < disabled < policy_apply):
         fail("launch deduplication or disabled-config gate occurs after policy application")
 
-    require(reconcile, r"vdt_configs_from_prefs\s*\(VDTGetPrefs\(\)\)", "catch-up config snapshot")
+    config_cache = extract_function(TWEAK, "static NSArray<NSDictionary *> *current_normalized_configs_sync")
+    require(config_cache, r"if\s*\(!normalized_configs_snapshot\).*?vdt_configs_from_prefs\s*\(VDTGetPrefs\(\)\)", "cold config snapshot fill")
+    require(reconcile, r"current_normalized_configs_sync\s*\(\)", "reused catch-up config snapshot")
+    require(handler, r"current_normalized_configs_sync\s*\(\)", "reused fast-path config snapshot")
+    forbid(reconcile, "vdt_configs_from_prefs", "per-scan config re-normalization")
     require(reconcile, r"vdt_resolve_targets\s*\(configs\)", "catch-up target scan")
     require(reconcile, r"retire_targets_without_active_config\s*\(configs\)", "deleted-config retirement retry")
     require(reconcile, r"apply_launch_target_if_needed\s*\(target\)", "catch-up application gate")

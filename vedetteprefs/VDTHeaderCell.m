@@ -6,7 +6,7 @@
 
 static UIFont *VDTTitleFont(void) {
     return [[UIFontMetrics metricsForTextStyle:UIFontTextStyleTitle2]
-        scaledFontForFont:[UIFont systemFontOfSize:20 weight:UIFontWeightSemibold]];
+        scaledFontForFont:[UIFont systemFontOfSize:22 weight:UIFontWeightSemibold]];
 }
 static UIFont *VDTSubtitleFont(void) {
     return [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
@@ -40,8 +40,8 @@ PSSpecifier *VDTHeaderSpecifier(NSString *title, NSString *subtitle, NSString *s
     self.brandIcon.layer.cornerRadius = 11;
     self.brandIcon.clipsToBounds = YES;
     self.brandIcon.isAccessibilityElement = NO;
-    [self.brandIcon.widthAnchor constraintEqualToConstant:40].active = YES;
-    [self.brandIcon.heightAnchor constraintEqualToConstant:40].active = YES;
+    [self.brandIcon.widthAnchor constraintEqualToConstant:48].active = YES;
+    [self.brandIcon.heightAnchor constraintEqualToConstant:48].active = YES;
     self.brandTitle = [UILabel new];
     self.brandSubtitle = [UILabel new];
     self.brandTitle.font = VDTTitleFont();
@@ -65,8 +65,8 @@ PSSpecifier *VDTHeaderSpecifier(NSString *title, NSString *subtitle, NSString *s
     [NSLayoutConstraint activateConstraints:@[
         [row.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
         [row.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [row.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:12],
-        [row.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-12]
+        [row.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:20],
+        [row.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-20]
     ]];
     [self updateHeader:specifier];
     return self;

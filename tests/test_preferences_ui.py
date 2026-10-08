@@ -78,7 +78,7 @@ class PreferencesUIContracts(unittest.TestCase):
             expected = subprocess.check_output(['git', 'show', BASELINE + ':' + name], cwd=ROOT)
             actual = (ROOT / name).read_bytes()
             if name == 'control':
-                wanted = expected.replace(b'Version: 1.1.10\n', b'Version: 1.1.10-1+ui4\n')
+                wanted = expected.replace(b'Version: 1.1.10\n', b'Version: 1.1.10-1+ui21\n')
                 wanted = wanted.replace(b'Package: com.udevs.vedette\n', b'Package: com.doimty.vedette\n')
                 wanted = wanted.replace(b'Maintainer: udevs\n', b'Conflicts: com.udevs.vedette\nReplaces: com.udevs.vedette\nMaintainer: doimty\n')
                 self.assertEqual(actual, wanted, name)
@@ -88,14 +88,29 @@ class PreferencesUIContracts(unittest.TestCase):
                 wanted = wanted.replace(b'          brew install dpkg ldid make\n',
                     b'          brew_prefix="$(brew --prefix)"\n          if [ -L "$brew_prefix/bin/openssl" ] && [ "$(readlink "$brew_prefix/bin/openssl")" = "$brew_prefix/opt/openssl@1.1/bin/openssl" ]; then\n            unlink "$brew_prefix/bin/openssl"\n          fi\n          brew install dpkg ldid make\n', 1)
                 wanted = wanted.replace(b'com.udevs.vedette', b'com.doimty.vedette')
-                wanted = wanted.replace(b'1.1.10', b'1.1.10-1+ui4')
+                wanted = wanted.replace(b'1.1.10', b'1.1.10-1+ui21')
                 wanted = wanted.replace(b'          python3 tests/check_auto_monitor_path.py\n',
-                    b'          python3 tests/check_auto_monitor_path.py\n          sh tests/run_list_order_tests.sh\n          python3 -B tests/test_preferences_ui.py\n          python3 -B tests/test_ios15_cell_lifecycle.py\n          python3 -B tests/test_compact_ui.py\n          python3 -B tests/test_process_action_ui.py\n          python3 -B tests/test_section_text.py\n          python3 -B tests/test_package_identity.py\n', 1)
+                    b'          python3 tests/check_auto_monitor_path.py\n          sh tests/run_list_order_tests.sh\n          python3 -B tests/test_preferences_ui.py\n          python3 -B tests/test_ios15_cell_lifecycle.py\n          python3 -B tests/test_ui21_baseline.py\n          python3 -B tests/test_process_action_ui21.py\n          python3 -B tests/test_section_text.py\n          python3 -B tests/test_efficiency_contracts.py\n          python3 -B tests/test_diagnostic_preprocess.py\n', 1)
                 wanted = wanted.replace(b'          dpkg-deb -e "$deb" /tmp/vedette-control\n',
                     b'          python3 -B tests/verify_preferences_resources.py /tmp/vedette-package\n          dpkg-deb -e "$deb" /tmp/vedette-control\n', 1)
+                wanted = wanted.replace(b'          test "$(dpkg-deb -f "$deb" Package)" = "com.doimty.vedette"\n          test "$(dpkg-deb -f "$deb" Version)" = "1.1.10-1+ui21"\n          test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"\n',
+                    b'          test "$(dpkg-deb -f "$deb" Package)" = "com.doimty.vedette"\n          test "$(dpkg-deb -f "$deb" Version)" = "1.1.10-1+ui21"\n          test "$(dpkg-deb -f "$deb" Conflicts)" = "com.udevs.vedette"\n          test "$(dpkg-deb -f "$deb" Replaces)" = "com.udevs.vedette"\n          test "$(dpkg-deb -f "$deb" Maintainer)" = "doimty"\n          test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"\n', 1)
                 self.assertEqual(actual, wanted, name)
-            else:
-                self.assertEqual(actual, expected, name)
+            elif name == 'VDTProbe.h':
+                self.assertEqual(actual, expected.replace(b'#import <Foundation/Foundation.h>\n', b'#import <Foundation/Foundation.h>\n#import "VDTDiagnostics.h"\n', 1).replace(b'// Diagnostic probe logging for debug builds.\nvoid VDTProbeRecord(NSString *label, NSDictionary *info);', b'// Diagnostic payloads are call-site lazy: Release does not construct dictionaries.\nvoid VDTProbeRecordImpl(NSString *label, NSDictionary *info);\n#define VDTProbeRecord(label, ...) \\\n    VDT_DIAGNOSTIC_CALL(VDTProbeRecordImpl, label, __VA_ARGS__)', 1), name)
+            elif name == 'VDTProbe.mm':
+                self.assertEqual(actual, expected.replace(b'void VDTProbeRecord(NSString *label, NSDictionary *info){\n    HBLogDebug(@"[VDTProbe] %@: %@", label, info);\n}', b'#if VDT_DIAGNOSTICS_ENABLED\nvoid VDTProbeRecordImpl(NSString *label, NSDictionary *info){\n    HBLogDebug(@"[VDTProbe] %@: %@", label, info);\n}\n#endif', 1), name)
+            elif name == 'Vedette.xm':
+                wanted = expected.replace(b'static NSString *target_instance_key(NSDictionary *target){', b'// This snapshot is confined to vedette_serial_queue. It contains only the\n// validated configuration, never a PID-lifetime proof; target identity is\n// still rechecked immediately before each policy syscall.\nstatic NSArray<NSDictionary *> *normalized_configs_snapshot;\n\nstatic NSArray<NSDictionary *> *current_normalized_configs_sync(void){\n    if (!normalized_configs_snapshot){\n        normalized_configs_snapshot = [vdt_configs_from_prefs(VDTGetPrefs()) copy];\n    }\n    return normalized_configs_snapshot;\n}\n\nstatic NSString *target_instance_key(NSDictionary *target){', 1)
+                marker = b'static void reconcile_unreported_processes_sync(){'
+                prefix, suffix = wanted.split(marker, 1)
+                suffix = suffix.replace(b'NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(VDTGetPrefs());', b'NSArray<NSDictionary *> *configs = current_normalized_configs_sync();', 1)
+                wanted = prefix + marker + suffix
+                wanted = wanted.replace(b'    NSDictionary *prefs = VDTGetPrefs();\n    NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(prefs);', b'    NSArray<NSDictionary *> *configs = current_normalized_configs_sync();', 1)
+                wanted = wanted.replace(b'    NSDictionary *newPrefs = getPrefs();\n    VDTSetPrefs(newPrefs);\n\n    NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);', b'    NSDictionary *newPrefs = getPrefs();\n    NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);\n    VDTSetPrefs(newPrefs);\n    normalized_configs_snapshot = [configs copy];', 1)
+                wanted = wanted.replace(b'normalized_configs_snapshot = [configs copy];\n    NSArray<NSDictionary *> *targets', b'normalized_configs_snapshot = [configs copy];\n    NSArray<NSDictionary *> *targets', 1)
+                actual = actual.replace(b'normalized_configs_snapshot = [configs copy];\n\n    NSArray<NSDictionary *> *targets', b'normalized_configs_snapshot = [configs copy];\n    NSArray<NSDictionary *> *targets', 1)
+                self.assertEqual(actual, wanted, name)
         for name in ['vedetteprefs/Makefile', 'vedetteprefs/ChoicyPreferences/CHPDaemonList.m']:
             expected = subprocess.check_output(['git', 'show', BASELINE + ':' + name], cwd=ROOT)
             self.assertEqual((ROOT / name).read_bytes(), expected, name)

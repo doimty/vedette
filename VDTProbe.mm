@@ -131,6 +131,8 @@ void VDTNotifyPostRecord(NSString *processName, pid_t pid, NSString *identifier,
     });
 }
 
-void VDTProbeRecord(NSString *label, NSDictionary *info){
+#if VDT_DIAGNOSTICS_ENABLED
+void VDTProbeRecordImpl(NSString *label, NSDictionary *info){
     HBLogDebug(@"[VDTProbe] %@: %@", label, info);
 }
+#endif
