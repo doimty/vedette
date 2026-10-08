@@ -32,7 +32,7 @@ def expected_release(name,data):
         change(OLD_TARGET,'TARGET := iphone:clang:16.5:15.0\n')
         change('ifeq ($(THEOS_PACKAGE_SCHEME),roothide)\nVedettePrefs_LDFLAGS += -F$(THEOS)/sdks/iPhoneOS16.5.sdk/System/Library/PrivateFrameworks\nendif\n','VedettePrefs_LDFLAGS += -F$(THEOS)/sdks/iPhoneOS16.5.sdk/System/Library/PrivateFrameworks\n')
     elif name=='control':
-        change('Version: 1.1.11-1+nice2','Version: 1.1.12-2')
+        change('Version: 1.1.11-1+nice2','Version: 1.1.12-3')
         change('Description: Monitor CPU hogging processes','Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级')
         change('Depends: roothide,','Depends: firmware (>= 15.0), roothide,')
         change('https://udevsharold.github.io/repo/depictions/com.udevs.vedette/icon/icon.png','https://doimty.github.io/icons/com.doimty.vedette.png')
@@ -40,7 +40,7 @@ def expected_release(name,data):
     elif name=='.github/workflows/roothide-build.yml':
         change('name: Build Vedette roothide','name: Build Vedette rootless and roothide')
         change('    name: Package (roothide)\n    runs-on: macos-14\n',MATRIX)
-        change('      THEOS_PACKAGE_SCHEME: roothide\n','      THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}\n      PACKAGE_ARCH: ${{ matrix.package_arch }}\n      PACKAGE_PREFIX: ${{ matrix.prefix }}\n      PACKAGE_VERSION: 1.1.12-2\n')
+        change('      THEOS_PACKAGE_SCHEME: roothide\n','      THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}\n      PACKAGE_ARCH: ${{ matrix.package_arch }}\n      PACKAGE_PREFIX: ${{ matrix.prefix }}\n      PACKAGE_VERSION: 1.1.12-3\n')
         change('mkdir -p "$THEOS/vendor/include/AltList" "$THEOS/vendor/lib" "$THEOS/vendor/lib/iphone/roothide"','mkdir -p "$THEOS/vendor/include/AltList" "$THEOS/vendor/lib" "$THEOS/vendor/lib/iphone/$THEOS_PACKAGE_SCHEME"')
         change('cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/iphone/roothide/"','cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/iphone/$THEOS_PACKAGE_SCHEME/"')
         change('make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide TARGET=','make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME" TARGET=')
@@ -60,6 +60,8 @@ def expected_release(name,data):
     return text.encode()
 
 def without_release(name,actual):
+    from softremove_delta import without_softremove
+    actual=without_softremove(name,actual)
     from springboard_delta import without_springboard
     actual=without_springboard(name,actual)
     if name not in NAMES: return actual

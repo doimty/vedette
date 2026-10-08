@@ -1,5 +1,7 @@
 # Vedette nice1 本地实现报告
 
+> 卸载策略更新（1.1.12-3）：下文所述的“恢复失败阻止卸载”已改为**尽力恢复、失败只警告**，见 [UNINSTALL_BEST_EFFORT.md](UNINSTALL_BEST_EFFORT.md)。其余 nice 语义、原值记录和读写前身份校验保持不变。
+
 > 云构建阶段（2026-10-08）：用户已明确授权提交、推送新分支 `feat/nice-priority` 并执行 GitHub Actions。下文是提交前本地验证快照，不把它当成最终云构建回执；云端与成品结果以本次 Actions 和交付目录的 build.json 为准。仍未授权安装或真实 nice 调参。
 
 ## 结论与交付状态

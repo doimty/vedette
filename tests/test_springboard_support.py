@@ -3,6 +3,7 @@
 from pathlib import Path
 import os,subprocess,tempfile,unittest
 from springboard_delta import ROOT,BASE,FILES,without_springboard
+from release_delta import without_release
 class SpringBoardSupport(unittest.TestCase):
     def test_exact_scope_preserves_original_cpu_and_ui_behavior(self):
         for name in FILES:
@@ -12,7 +13,8 @@ class SpringBoardSupport(unittest.TestCase):
         for name in ['Vedette.xm','VDTPolicyTransition.c','VDTProcessIdentity.c','VDTNiceRuntime.mm','VDTNicePolicy.c',
                      'VDTNiceShared.mm','VDTNiceStore.c','vedetteprefs/VDTProcessConfiguration.m','vedetteprefs/VDTNicePreferences.m',
                      'vedetteprefs/ChoicyPreferences/CHPDaemonListController.m','layout/DEBIAN/prerm','nicectl/Entitlements.plist']:
-            self.assertEqual((ROOT/name).read_bytes(),subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT),name)
+            expected=subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT)
+            self.assertEqual(without_release(name,(ROOT/name).read_bytes()),expected,name)
     def test_reserved_row_is_unique_and_not_an_enabled_rule(self):
         source=(ROOT/'vedetteprefs/ChoicyPreferences/CHPDaemonList.m').read_text()
         self.assertEqual(source.count('[daemonListM addObject:springBoard]'),1)

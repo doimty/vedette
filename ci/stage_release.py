@@ -16,7 +16,7 @@ def stage_release(stage,scheme):
     control=stage/'DEBIAN/control'
     if not control.is_file() or control.is_symlink(): raise ValueError('missing/unsafe staged control')
     text=control.read_text();fields=dict(line.split(':',1) for line in text.splitlines() if ':' in line)
-    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.12-2':
+    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.12-3':
         raise ValueError('wrong staged package/version')
     if fields.get('Architecture','').strip()!=ARCH[scheme]: raise ValueError('staged scheme/architecture mismatch')
     old='Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist'

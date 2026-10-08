@@ -42,7 +42,7 @@ class ReleaseSupport(unittest.TestCase):
             stage=Path(td)/'stage';fixture(stage,'rootless');before=(stage/'DEBIAN/control').read_bytes()
             with self.assertRaises(ValueError):stage_module.stage_release(stage,'roothide')
             self.assertEqual((stage/'DEBIAN/control').read_bytes(),before)
-            (stage/'DEBIAN/control').write_bytes(before.replace(b'1.1.12-2',b'1.1.11-1+nice2'))
+            (stage/'DEBIAN/control').write_bytes(before.replace(b'1.1.12-3',b'1.1.11-1+nice2'))
             with self.assertRaises(ValueError):stage_module.stage_release(stage,'rootless')
     def test_rootless_archive_repack_preserves_bytes_and_modes(self):
         with tempfile.TemporaryDirectory() as td:
@@ -62,8 +62,8 @@ class ReleaseSupport(unittest.TestCase):
         with self.assertRaises(AssertionError):verify_tool(roothide,'rootless')
         with self.assertRaises(AssertionError):verify_tool(rootless,'roothide')
     def test_stable_version_upgrades_all_candidate_versions(self):
-        for version in ('1.1.12-1','1.1.10-1+ui21','1.1.11-1+nice1','1.1.11-1+nice2'):
-            subprocess.run(['dpkg','--compare-versions','1.1.12-2','gt',version],check=True)
+        for version in ('1.1.12-2','1.1.12-1','1.1.10-1+ui21','1.1.11-1+nice1','1.1.11-1+nice2'):
+            subprocess.run(['dpkg','--compare-versions','1.1.12-3','gt',version],check=True)
         text=(ROOT/'control').read_text();self.assertIn('CPU 限制和 nice 调度优先级',text)
         self.assertIn('https://doimty.github.io/depictions/com.doimty.vedette/',text)
     def test_rootless_hooks_fail_closed_without_jbroot_command(self):
@@ -79,10 +79,12 @@ class ReleaseSupport(unittest.TestCase):
                 for code in ('0','23'):
                     if log.exists():log.unlink()
                     env={**os.environ,'PATH':str(tools)+':'+os.environ['PATH'],'FIXTURE_LOG':str(log),'FIXTURE_EXIT':code}
-                    result=subprocess.run(['bash',str(path),'remove'],env=env,capture_output=True)
-                    self.assertEqual(result.returncode==0,code=='0')
+                    action='configure' if name=='postinst' else 'remove'
+                    result=subprocess.run(['bash',str(path),action],env=env,capture_output=True)
+                    self.assertEqual(result.returncode,0,'advisory control failure must not fail dpkg')
                     calls=log.read_text().splitlines()
                     self.assertEqual(calls[0],'resume' if name=='postinst' else 'restore-for-removal')
-                    self.assertEqual('kill' in calls,name=='postinst' and code=='0')
+                    self.assertEqual('kill' in calls,name=='postinst')
+                    if code!='0':self.assertIn(b'continuing package removal' if name=='prerm' else b'continuing package configuration',result.stderr)
 
 if __name__=='__main__':unittest.main(verbosity=2)

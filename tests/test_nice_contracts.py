@@ -64,8 +64,8 @@ class NiceContracts(unittest.TestCase):
         self.assertIn('notify_cancel(_notifyToken)',ui)
         self.assertIn('__weak VDTNicePreferences',ui)
         self.assertIn('VDTNiceParseValue(value, &parsed) ? @(parsed) : @0',ui)
-    def test_removal_is_root_request_not_public_signal_authority(self):
-        cli=source('nicectl/main.mm'); runtime=source('VDTNiceRuntime.mm')
+    def test_removal_is_best_effort_and_does_not_block_package_removal(self):
+        cli=source('nicectl/main.mm'); runtime=source('VDTNiceRuntime.mm'); prerm=source('layout/DEBIAN/prerm'); rootless=source('layout-rootless/DEBIAN/prerm')
         self.assertIn('getuid() != 0 || geteuid() != 0',cli)
         self.assertIn('VDT_NICE_REQUEST',cli)
         self.assertIn('receipt[@"restoreNonce"] isEqual:nonce',cli)
@@ -74,8 +74,15 @@ class NiceContracts(unittest.TestCase):
         self.assertNotIn('setpriority(',cli)
         self.assertIn('paused = YES;',runtime)
         self.assertIn('paused || ![rule[@"enabled"] boolValue]',runtime)
-        self.assertIn('"$ctl" restore-for-removal',source('layout/DEBIAN/prerm'))
-        self.assertNotIn('killall',source('layout/DEBIAN/prerm'))
+        self.assertIn('"$ctl" restore-for-removal',prerm)
+        self.assertIn('"$ctl" restore-for-removal',rootless)
+        self.assertNotIn('killall',prerm+rootless)
+        for script in (prerm,rootless,source('layout/DEBIAN/postinst'),source('layout-rootless/DEBIAN/postinst')):
+            self.assertNotIn('exit 1',script)
+            self.assertIn('continuing package',script)
+        self.assertIn('continue_after_nice_failure',prerm)
+        self.assertIn('continue_after_nice_failure',rootless)
+        self.assertIn('never leave dpkg half-configured',source('layout/DEBIAN/postinst'))
     def test_archive_negative_controls(self):
         def fixture(uid=0,mode=0o755,kind=tarfile.REGTYPE,duplicate=False):
             out=io.BytesIO()
@@ -120,10 +127,16 @@ class NiceContracts(unittest.TestCase):
             self.assertEqual(log.read_text().splitlines(),['restore-for-removal'])
             self.assertEqual(run('prerm','upgrade').returncode,0)
             self.assertEqual(log.read_text().splitlines(),['restore-for-removal'])
-            env['NICE_TEST_EXIT']='13';self.assertNotEqual(run('prerm','remove').returncode,0)
-            log.unlink();self.assertNotEqual(run('postinst','configure').returncode,0)
-            self.assertEqual(log.read_text().splitlines(),['resume'])
-            log.unlink();env['NICE_TEST_EXIT']='0';self.assertEqual(run('postinst','configure').returncode,0)
+            env['NICE_TEST_EXIT']='13';failed_remove=run('prerm','remove');self.assertEqual(failed_remove.returncode,0)
+            self.assertIn(b'continuing package removal',failed_remove.stderr)
+            self.assertEqual(log.read_text().splitlines(),['restore-for-removal','restore-for-removal'])
+            log.unlink()
+            # A failing resume must not leave the package half-configured either.
+            failed_configure=run('postinst','configure');self.assertEqual(failed_configure.returncode,0)
+            self.assertIn(b'continuing package configuration',failed_configure.stderr)
+            self.assertEqual(log.read_text().splitlines(),['resume','kill'])
+            log.unlink();env['NICE_TEST_EXIT']='0'
+            self.assertEqual(run('postinst','configure').returncode,0)
             self.assertEqual(log.read_text().splitlines(),['resume','kill'])
     def test_cloud_native_execution_is_explicit(self):
         w=source('.github/workflows/roothide-build.yml'); runner=source('tests/run_nice_native_tests.sh')

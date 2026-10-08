@@ -1,19 +1,22 @@
 #!/bin/bash
-set -eu
-# Upgrades preserve the journal for the new runtime. Actual removal must wait
-# for an authenticated, quiesced runtime receipt; failure leaves records intact.
+set -u
+# Best effort: a reboot or process exit restores kernel nice automatically.
+# Never delete the journal here; diagnostics remain available after removal.
+continue_after_nice_failure() {
+    echo "Vedette: nice restoration/control failed (errno=$1); continuing package removal." >&2
+}
 case "${1:-}" in
     remove|deconfigure)
         if ! command -v jbroot >/dev/null 2>&1; then
-            echo 'Vedette: cannot resolve roothide path; removal stopped.' >&2
-            exit 1
+            echo 'Vedette: cannot resolve roothide path; continuing package removal.' >&2
+        else
+            ctl="$(jbroot)/usr/libexec/vedette-nicectl"
+            if [ ! -x "$ctl" ]; then
+                echo 'Vedette: nice restoration tool missing; continuing package removal.' >&2
+            else
+                "$ctl" restore-for-removal || continue_after_nice_failure "$?"
+            fi
         fi
-        ctl="$(jbroot)/usr/libexec/vedette-nicectl"
-        if [ ! -x "$ctl" ]; then
-            echo 'Vedette: nice restoration tool missing; removal stopped.' >&2
-            exit 1
-        fi
-        "$ctl" restore-for-removal
         ;;
 esac
 exit 0

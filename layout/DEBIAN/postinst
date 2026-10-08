@@ -1,12 +1,16 @@
 #!/bin/bash
-
-# A prior failed removal intentionally pauses fresh nice writes. Installation
-# resumes the new runtime, without discarding any original-value journal.
+set -u
+# Resume is advisory. A control failure must never leave dpkg half-configured;
+# the journal stays on disk and the runtime reloads it on the next launch.
 if command -v jbroot >/dev/null 2>&1; then
-    "$(jbroot)/usr/libexec/vedette-nicectl" resume || exit 1
+    ctl="$(jbroot)/usr/libexec/vedette-nicectl"
+    if [ -x "$ctl" ]; then
+        "$ctl" resume || echo "Vedette: nice resume failed (errno=$?); continuing package configuration." >&2
+    else
+        echo 'Vedette: nice control tool missing; continuing package configuration.' >&2
+    fi
 else
-    echo 'Vedette: cannot resolve nice control path.' >&2
-    exit 1
+    echo 'Vedette: cannot resolve nice control path; continuing package configuration.' >&2
 fi
 
 echo "Killing runningboardd..."

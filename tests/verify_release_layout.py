@@ -5,7 +5,7 @@ import hashlib,io,json,plistlib,subprocess,sys,tarfile,tempfile
 from inspect_release_macho import inspect
 from verify_nice_tool import verify_tool
 ROOT=Path(__file__).resolve().parents[1]
-VERSION='1.1.12-2'
+VERSION='1.1.12-3'
 DESCRIPTION='按应用与守护进程独立管理 CPU 限制和 nice 调度优先级'
 
 def read_archive(deb,area):
