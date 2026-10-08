@@ -8,6 +8,7 @@ import re
 import subprocess
 import unittest
 from pathlib import Path
+from nice_delta import without_nice
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFS = ROOT / 'vedetteprefs'
@@ -76,7 +77,7 @@ class PreferencesUIContracts(unittest.TestCase):
             if name.startswith('vedetteprefs/') or name.startswith('tests/'):
                 continue
             expected = subprocess.check_output(['git', 'show', BASELINE + ':' + name], cwd=ROOT)
-            actual = (ROOT / name).read_bytes()
+            actual = without_nice(name, (ROOT / name).read_bytes())
             if name == 'control':
                 wanted = expected.replace(b'Version: 1.1.10\n', b'Version: 1.1.10-1+ui21\n')
                 wanted = wanted.replace(b'Package: com.udevs.vedette\n', b'Package: com.doimty.vedette\n')
@@ -113,7 +114,7 @@ class PreferencesUIContracts(unittest.TestCase):
                 self.assertEqual(actual, wanted, name)
         for name in ['vedetteprefs/Makefile', 'vedetteprefs/ChoicyPreferences/CHPDaemonList.m']:
             expected = subprocess.check_output(['git', 'show', BASELINE + ':' + name], cwd=ROOT)
-            self.assertEqual((ROOT / name).read_bytes(), expected, name)
+            self.assertEqual(without_nice(name, (ROOT / name).read_bytes()), expected, name)
 
     def test_native_cards_not_global_appearance(self):
         for path in ['VDTRootListController.m', 'VDTProcessConfiguration.m', 'VDTAboutListController.m',

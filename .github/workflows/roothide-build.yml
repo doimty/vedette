@@ -131,6 +131,8 @@ jobs:
           python3 -B tests/test_section_text.py
           python3 -B tests/test_efficiency_contracts.py
           python3 -B tests/test_diagnostic_preprocess.py
+          make -f Makefile.tests test-nice STORE_RUNNER=sudo
+          sudo bash tests/run_nice_native_tests.sh
 
       - name: Build package
         run: |
@@ -147,10 +149,10 @@ jobs:
           test -s /tmp/vedette-build.log
           ! grep -qi 'incompatible arm64e' /tmp/vedette-build.log
           test "$(find packages -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')" = "1"
-          deb="packages/com.doimty.vedette_1.1.10-1+ui21_iphoneos-arm64e.deb"
+          deb="packages/com.doimty.vedette_1.1.11-1+nice1_iphoneos-arm64e.deb"
           test -s "$deb"
           test "$(dpkg-deb -f "$deb" Package)" = "com.doimty.vedette"
-          test "$(dpkg-deb -f "$deb" Version)" = "1.1.10-1+ui21"
+          test "$(dpkg-deb -f "$deb" Version)" = "1.1.11-1+nice1"
           test "$(dpkg-deb -f "$deb" Conflicts)" = "com.udevs.vedette"
           test "$(dpkg-deb -f "$deb" Replaces)" = "com.udevs.vedette"
           test "$(dpkg-deb -f "$deb" Maintainer)" = "doimty"
@@ -164,7 +166,12 @@ jobs:
           test "${dylib#/tmp/vedette-package}" = "/Library/MobileSubstrate/DynamicLibraries/Vedette.dylib"
           test "${prefs_binary#/tmp/vedette-package}" = "/Library/PreferenceBundles/VedettePrefs.bundle/VedettePrefs"
           otool -D "$dylib" | grep -q '@loader_path/.jbroot/'
-          for binary in "$dylib" "$prefs_binary"; do
+          python3 -B tests/verify_nice_archive.py "$deb"
+          nicectl="/tmp/vedette-package/usr/libexec/vedette-nicectl"
+          test -x "$nicectl"
+          nm -u "$dylib" | grep -q '_setpriority'
+          ! nm -u "$nicectl" | grep -q '_setpriority'
+          for binary in "$dylib" "$prefs_binary" "$nicectl"; do
             lipo "$binary" -verify_arch arm64 arm64e
             otool -l "$binary" > /tmp/vedette-load-commands.txt
             grep -q 'LC_DYLD_CHAINED_FIXUPS' /tmp/vedette-load-commands.txt

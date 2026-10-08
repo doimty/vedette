@@ -4,13 +4,20 @@
 #import "VDTListPresentation.h"
 #import "VDTListOrder.h"
 #import "VDTLocalization.h"
+#import "../VDTNiceShared.h"
+#import <CoreFoundation/CoreFoundation.h>
 
 BOOL VDTListConfigurationEnabled(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
     id value = valueForProcessConfigKeyWithPrefs(identifier, @"enabled", nil, type, prefs);
-    // boolValue is not supported by arrays, dictionaries or NSNull. Keep the
-    // existing NSNumber/NSString boolValue semantics for valid stored switches.
-    return ([value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[NSString class]])
+    // Preserve the legacy CPU switch's NSNumber/NSString boolValue semantics.
+    BOOL cpuEnabled = ([value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[NSString class]])
         ? [value boolValue] : NO;
+    // Nice is intentionally stricter: only an actual CFBoolean true enables pinning.
+    id niceValue = valueForProcessConfigKeyWithPrefs(identifier, VDT_NICE_ENABLED_KEY, @NO, type, prefs);
+    BOOL niceEnabled = [niceValue isKindOfClass:[NSNumber class]]
+        && CFGetTypeID((__bridge CFTypeRef)niceValue) == CFBooleanGetTypeID()
+        && CFBooleanGetValue((__bridge CFBooleanRef)niceValue);
+    return cpuEnabled || niceEnabled;
 }
 
 static int VDTCompareListNames(size_t left, size_t right, void *context) {

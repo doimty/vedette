@@ -23,4 +23,12 @@ test-ui:
 	@sh tests/run_list_order_tests.sh
 
 
-test: test-cpu test-ui
+test-nice:
+	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
+	  $(CC) $(CFLAGS) -I. VDTNicePolicy.c tests/test_nice_policy.c -o "$$bin"; "$$bin"
+	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
+	  $(CC) $(CFLAGS) -I. VDTNiceStore.c tests/test_nice_store.c -o "$$bin"; $(STORE_RUNNER) "$$bin"
+	@python3 -B tests/test_nice_contracts.py
+
+
+test: test-cpu test-ui test-nice

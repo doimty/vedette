@@ -3,6 +3,7 @@
 from pathlib import Path
 import subprocess
 import unittest
+from nice_delta import without_nice
 
 ROOT=Path(__file__).resolve().parents[1]
 UI2='cd0b34807c031d2e179f1ae397ea8c6847be35e3'
@@ -25,7 +26,7 @@ class UI21(unittest.TestCase):
   wanted=old.replace(b'#import "VDTHeaderCell.h"\n',b'#import "VDTHeaderCell.h"\n#import "VDTActionListController.h"\n',1)
   wanted=wanted.replace(b'detail:nil cell:PSSegmentCell edit:nil];',b'detail:[VDTActionListController class] cell:PSLinkListCell edit:nil];',1)
   wanted=wanted.replace(b'[rootSpecifiers addObject:violationPolicyGroupSpec];\n        \n        PSSpecifier *violationPolicySelectionSpec',b'[rootSpecifiers addObject:violationPolicyGroupSpec];\n\n        PSSpecifier *violationPolicySelectionSpec',1)
-  self.assertEqual((ROOT/path).read_bytes(),wanted)
+  self.assertEqual(without_nice(path,(ROOT/path).read_bytes()),wanted)
   self.assertTrue((ROOT/'vedetteprefs/VDTActionListController.m').is_file())
  def test_user_owned_ids_and_legacy_rules(self):
   info=(ROOT/'vedetteprefs/Resources/Info.plist').read_text();control=(ROOT/'control').read_text()

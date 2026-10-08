@@ -1,5 +1,6 @@
 from pathlib import Path
 import re,subprocess,unittest
+from nice_delta import without_nice
 ROOT=Path(__file__).resolve().parents[1]
 BASE='cd0b34807c031d2e179f1ae397ea8c6847be35e3'
 CPU_FROZEN=['VDTProcessIdentity.c','VDTProcessIdentity.h','VDTPolicyTransition.c','VDTPolicyTransition.h','VDTShared.mm','VDTShared.h','PrivateHeaders.h','libproc/libproc_internal.h','Vedette.plist','layout/DEBIAN/postinst','layout/DEBIAN/postrm']
@@ -65,6 +66,6 @@ class EfficiencyContracts(unittest.TestCase):
     def test_cpu_runtime_binary_source_freeze(self):
         for name in CPU_FROZEN:
             with self.subTest(file=name):
-                self.assertEqual((ROOT/name).read_bytes(),subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT))
+                self.assertEqual(without_nice(name,(ROOT/name).read_bytes()),subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT))
 
 if __name__=='__main__':unittest.main(verbosity=2)

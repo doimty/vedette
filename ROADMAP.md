@@ -1,5 +1,11 @@
 # Vedette 开发路线图
 
+## 当前独立批次：N1 nice（2026-10-08）
+
+用户已明确当前要加的是按目标设置 nice，而非前后台/Jetsam/全局VM。基于 ui21 `2994f24` 的隔离分支 `feat/nice-priority` 已有本地候选 `1.1.11-1+nice1`：独立开关与 -20…20、原值/待写意图持久化、回读与恢复回执、nice-only 手动重试和受检卸载握手。原CPU执行/身份模块保持字节冻结；nice不会自动启用CPU规则。无周期轮询或新daemon。
+
+本地 C/存储/旧回归已通过，iOS SDK仅做双架构语法检查；Foundation宿主执行、Apple链接打包和实际runningboardd权限未验证。未commit/push/CI/安装。详见 [NICE_PLAN.md](NICE_PLAN.md)、[NICE_REPORT.md](NICE_REPORT.md)。旧CPU批量恢复R1缺口不在此批修复范围；下方为ui21及其历史路线记录，不应当作nice已发布状态。
+
 更新：2026-10-08。视觉以已通过用户真机反馈的 ui2 (`cd0b34807c031d2e179f1ae397ea8c6847be35e3`) 为基线。新候选 `feat/ui21-cpu-efficiency` 恢复 ui2 的页面间距/分组；仅把大分段策略控件改为普通选择行，并做两项限定 CPU 开销优化。未构建/安装前不宣称 ui21 已通过设备验收。
 
 本文件区分已实现、当前 ui21 候选与未来规划。**列入路线图不代表已实现或已获准发布；不加入占位 Hook、常驻任务或隐藏开关。**

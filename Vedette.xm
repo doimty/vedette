@@ -8,6 +8,8 @@
 #import "VDTShared.h"
 #import "VDTProbe.h"
 #import "VDTProcessIdentity.h"
+#import "VDTNiceRuntime.h"
+#import "VDTNiceShared.h"
 
 #include <limits.h>
 #include <notify.h>
@@ -106,6 +108,8 @@ static BOOL target_has_enabled_policy(NSDictionary *target){
 }
 
 static void apply_launch_target_if_needed(NSDictionary *target){
+    // Nice has independent success/retry tracking; CPU dedup must not hide it.
+    vdt_nice_apply(target);
     NSString *instanceKey = target_instance_key(target);
     if (!instanceKey || [tracked_process_instances() containsObject:instanceKey]) return;
 
@@ -188,6 +192,7 @@ static void reconcile_unreported_processes_sync(){
     NSMutableSet<NSString *> *liveInstances = [NSMutableSet set];
 
     retire_targets_without_active_config(configs);
+    vdt_nice_reconcile();
     for (NSDictionary *target in targets) {
         NSString *instanceKey = target_instance_key(target);
         if (instanceKey) [liveInstances addObject:instanceKey];
@@ -197,6 +202,7 @@ static void reconcile_unreported_processes_sync(){
     // Forget exited instances so a reused PID with a new start-time token is
     // independently eligible on the next launch signal.
     [tracked_process_instances() intersectSet:liveInstances];
+    vdt_nice_publish();
 }
 
 static void schedule_launch_catch_up_sync(){
@@ -234,14 +240,17 @@ static void reloadPrefsSync(){
     NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);
     VDTSetPrefs(newPrefs);
     normalized_configs_snapshot = [configs copy];
+    vdt_nice_reload(newPrefs);
 
     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs);
     HBLogDebug(@"Vedette configs: %@", configs);
     HBLogDebug(@"Vedette targets: %@", targets);
 
     retire_targets_without_active_config(configs);
+    vdt_nice_reconcile();
     [tracked_process_instances() removeAllObjects];
     for (NSDictionary *target in targets) {
+        vdt_nice_apply(target);
         NSString *instanceKey = target_instance_key(target);
         if (!instanceKey) continue;
 
@@ -256,6 +265,7 @@ static void reloadPrefsSync(){
         }
         if (success) [tracked_process_instances() addObject:instanceKey];
     }
+    vdt_nice_publish();
 }
 
 // Async wrapper — safe to call from any context (CFNotificationCallback, etc.)
@@ -267,6 +277,11 @@ static void reloadPrefs(){
 
 static void restoreAllMonitors(){
     dispatch_async(vedette_serial_queue(), ^{
+        // Nice restore follows the CURRENT saved settings, never a public
+        // notification alone. Its durable records do not depend on the CPU temp file.
+        vdt_nice_reload(getPrefs());
+        vdt_nice_reconcile();
+        vdt_nice_publish();
         // Force every entry from the uninstall snapshot to disabled, so each
         // resolved target takes the restore path and hands the process back to
         // the system. The previous implementation inferred app-vs-daemon from an
@@ -314,6 +329,27 @@ static void restoreAllMonitorsCallback(CFNotificationCenterRef center,
     restoreAllMonitors();
 }
 
+// Explicit nice-only retry. One bounded event debounce; never a polling loop,
+// and never calls the CPU policy execution path.
+static BOOL nice_refresh_scheduled;
+static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
+                                CFStringRef name, const void *object, CFDictionaryRef userInfo){
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+    dispatch_async(vedette_serial_queue(), ^{
+        if (nice_refresh_scheduled) return;
+        nice_refresh_scheduled = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), vedette_serial_queue(), ^{
+            NSDictionary *prefs = getPrefs();
+            vdt_nice_reload(prefs);
+            vdt_nice_reconcile();
+            for (NSDictionary *target in vdt_resolve_targets(vdt_configs_from_prefs(prefs)))
+                vdt_nice_apply(target);
+            vdt_nice_publish();
+            nice_refresh_scheduled = NO;
+        });
+    });
+}
+
 static NSString *current_executable_path(pid_t pid){
     char path[PROC_PIDPATHINFO_MAXSIZE];
     if (!VDTCopyProcessInfoString(pid, path, sizeof(path), proc_pidpath)) return nil;
@@ -329,6 +365,8 @@ static NSString *current_executable_path(pid_t pid){
 
             if (isRunningBoard) {
                 reloadPrefs();
+                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RETRY_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RESTORE_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                 notify_register_dispatch(NOTIFY_PID_NN,
                                          &notify_pid_token,
                                          dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),

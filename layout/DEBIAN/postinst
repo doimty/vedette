@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# A prior failed removal intentionally pauses fresh nice writes. Installation
+# resumes the new runtime, without discarding any original-value journal.
+if command -v jbroot >/dev/null 2>&1; then
+    "$(jbroot)/usr/libexec/vedette-nicectl" resume || exit 1
+else
+    echo 'Vedette: cannot resolve nice control path.' >&2
+    exit 1
+fi
+
 echo "Killing runningboardd..."
 killall -9 runningboardd || true
 

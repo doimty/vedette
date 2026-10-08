@@ -11,6 +11,7 @@
 #import "VDTStyle.h"
 #import "VDTHeaderCell.h"
 #import "VDTActionListController.h"
+#import "VDTNicePreferences.h"
 
 @implementation VDTProcessConfiguration
 
@@ -81,6 +82,14 @@
     return [[[self specifier] propertyForKey:@"configurationType"] unsignedLongValue];
 }
 
+- (NSString *)vdtNiceIdentifier { return [self validIdentifier]; }
+- (VDTConfigType)vdtNiceConfigurationType { return [self configurationType]; }
+
+- (VDTNicePreferences *)vdtNicePreferences {
+    if (!_nicePreferences) _nicePreferences = [[VDTNicePreferences alloc] initWithOwner:self];
+    return _nicePreferences;
+}
+
 - (NSArray *)specifiers {
     if (!_specifiers) {
         NSMutableArray *rootSpecifiers = [[NSMutableArray alloc] init];
@@ -95,8 +104,8 @@
         [rootSpecifiers addObject:VDTHeaderSpecifier(self.specifier.name ?: validIdentifier,
             validIdentifier, [self configurationType] == VDTConfigTypeApp ? @"app" : @"gearshape.2")];
     
-        PSSpecifier *monitorEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable this rule") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSwitchCell edit:nil];
-        [monitorEnabledSpec setProperty:VDTLoc(self.class, @"Enable this rule") forKey:@"label"];
+        PSSpecifier *monitorEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable CPU limits") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSwitchCell edit:nil];
+        [monitorEnabledSpec setProperty:VDTLoc(self.class, @"Enable CPU limits") forKey:@"label"];
         [monitorEnabledSpec setProperty:@"enabled" forKey:@"key"];
         [monitorEnabledSpec setProperty:@NO forKey:@"default"];
         [monitorEnabledSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
@@ -145,7 +154,9 @@
         [intervalSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
         _intervalSpecifier = intervalSpec;
         [rootSpecifiers addObject:intervalSpec];
-        
+
+        // Keep the nice controls independent from the legacy CPU rule editor.
+        [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];
         _specifiers = rootSpecifiers;
     }
     
