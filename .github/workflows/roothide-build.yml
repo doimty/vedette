@@ -143,17 +143,17 @@ jobs:
           test -d "$system_sdk"
           make clean TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log
-          python3 -B tests/canonicalize_nice_deb.py packages/com.doimty.vedette_1.1.11-1+nice1_iphoneos-arm64e.deb
+          python3 -B tests/canonicalize_nice_deb.py packages/com.doimty.vedette_1.1.11-1+nice2_iphoneos-arm64e.deb
 
       - name: Verify roothide artifact
         run: |
           test -s /tmp/vedette-build.log
           ! grep -qi 'incompatible arm64e' /tmp/vedette-build.log
           test "$(find packages -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')" = "1"
-          deb="packages/com.doimty.vedette_1.1.11-1+nice1_iphoneos-arm64e.deb"
+          deb="packages/com.doimty.vedette_1.1.11-1+nice2_iphoneos-arm64e.deb"
           test -s "$deb"
           test "$(dpkg-deb -f "$deb" Package)" = "com.doimty.vedette"
-          test "$(dpkg-deb -f "$deb" Version)" = "1.1.11-1+nice1"
+          test "$(dpkg-deb -f "$deb" Version)" = "1.1.11-1+nice2"
           test "$(dpkg-deb -f "$deb" Conflicts)" = "com.udevs.vedette"
           test "$(dpkg-deb -f "$deb" Replaces)" = "com.udevs.vedette"
           test "$(dpkg-deb -f "$deb" Maintainer)" = "doimty"

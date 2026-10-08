@@ -66,7 +66,7 @@ def expected_nice(name, base):
         nonlocal s
         assert s.count(old)==count,(name,old,s.count(old))
         s=s.replace(old,new)
-    if name=='control': change('Version: 1.1.10-1+ui21','Version: 1.1.11-1+nice1')
+    if name=='control': change('Version: 1.1.10-1+ui21','Version: 1.1.11-1+nice2')
     elif name=='Makefile': change('SUBPROJECTS += vedetteprefs\n','SUBPROJECTS += vedetteprefs nicectl\n')
     elif name=='layout/DEBIAN/postinst': change('#!/bin/bash\n\n','#!/bin/bash\n\n'+INSTALL)
     elif name=='vedetteprefs/Makefile':
@@ -78,9 +78,9 @@ def expected_nice(name, base):
         change('[rootSpecifiers addObject:intervalSpec];\n        \n        _specifiers',
                '[rootSpecifiers addObject:intervalSpec];\n\n        // Keep the nice controls independent from the legacy CPU rule editor.\n        [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];\n        _specifiers')
     elif name=='.github/workflows/roothide-build.yml':
-        s=s.replace('1.1.10-1+ui21','1.1.11-1+nice1')
+        s=s.replace('1.1.10-1+ui21','1.1.11-1+nice2')
         package_line='          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log\n'
-        change(package_line,package_line+'          python3 -B tests/canonicalize_nice_deb.py packages/com.doimty.vedette_1.1.11-1+nice1_iphoneos-arm64e.deb\n')
+        change(package_line,package_line+'          python3 -B tests/canonicalize_nice_deb.py packages/com.doimty.vedette_1.1.11-1+nice2_iphoneos-arm64e.deb\n')
         change('          python3 -B tests/test_diagnostic_preprocess.py\n','          python3 -B tests/test_diagnostic_preprocess.py\n'+CI_TESTS)
         change('          for binary in "$dylib" "$prefs_binary"; do\n',CI_ARTIFACT+'          for binary in "$dylib" "$prefs_binary" "$nicectl"; do\n')
     elif name=='Vedette.xm':

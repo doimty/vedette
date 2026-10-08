@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check numeric ownership/mode of the new root-run removal handshake files."""
 import io, posixpath, subprocess, sys, tarfile
+from verify_nice_tool import verify_tool
 
 def validate(data, required):
     found={}
@@ -21,8 +22,14 @@ def validate(data, required):
     assert set(found)==set(required), 'required entries missing'
 
 def main(deb):
-    validate(subprocess.check_output(['dpkg-deb','--fsys-tarfile',deb]),{'usr/libexec/vedette-nicectl':0o755})
+    data=subprocess.check_output(['dpkg-deb','--fsys-tarfile',deb])
+    validate(data,{'usr/libexec/vedette-nicectl':0o755})
     validate(subprocess.check_output(['dpkg-deb','--ctrl-tarfile',deb]),{'prerm':0o755,'postinst':0o755})
+    with tarfile.open(fileobj=io.BytesIO(data),mode='r:*') as archive:
+        matches=[entry for entry in archive if entry.name.removeprefix('./')=='usr/libexec/vedette-nicectl']
+        assert len(matches)==1
+        slices=verify_tool(archive.extractfile(matches[0]).read())
+    print('nice tool: both slices have four signed RootHide permissions; code and entitlement hashes passed')
     print('nice archive: numeric ownership, regular entries, executable modes passed')
 
 if __name__=='__main__':

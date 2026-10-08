@@ -1,6 +1,6 @@
 Package: com.doimty.vedette
 Name: Vedette
-Version: 1.1.11-1+nice1
+Version: 1.1.11-1+nice2
 Architecture: iphoneos-arm
 Description: Monitor CPU hogging processes
 Conflicts: com.udevs.vedette
