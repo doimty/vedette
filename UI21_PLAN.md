@@ -1,27 +1,25 @@
 # Vedette ui2.1 delivery plan
 
-Base: verified ui2 source `cd0b34807c031d2e179f1ae397ea8c6847be35e3`; user confirmed its visual design is preferable to ui3 compact spacing. New independent branch `feat/ui21-cpu-efficiency`. User authorized “ui2.1 + CPU optimization”; this candidate assigns version `1.1.10-1+ui21`, retains own package/bundle IDs and legacy data channels, and contains two bounded CPU-efficiency changes.
+Base: verified ui2 source `cd0b34807c031d2e179f1ae397ea8c6847be35e3`; user confirmed its visual design is preferable to ui3 compact spacing. New branch `feat/ui21-cpu-efficiency`; candidate version `1.1.10-1+ui21`. User initially authorized “提交云端”. The generated commits will stay on `feat/ui21-cpu-efficiency`; cloud-build only. Device install/restart and APT publish are not authorized.
 
-## Assumptions and scope
+## Scope / assumptions
 
-- Restore all ui2 visual source on root, app list, daemon list, about and header/layout; do not keep ui3 44pt list density, compact custom section headers/footers or row truncation.
-- The sole UI change atop ui2 is replace the visually dominant PSSegmentCell with a normal `PSLinkListCell` → `VDTActionListController` backed by `PSListItemsController`, preserving both enum values, order, default and owner configuration callbacks.
-- CPU E1: compile-time lazy diagnostics; Release callsites do not evaluate label/payload, Debug keeps fields.
-- CPU E2: cache validated config normalization within runningboardd's serial queue; publish snapshot only on config reload. Every actual PID-lifetime/security check remains.
-- Do not change CPU thresholds, syscall transition order, automatic two-stage scan/debounce, retirement, recovery, preference file paths, Darwin notification names, disabled entry semantics or mode defaults.
-- No device install/restart, APT repository publication, CPU sampling instrumentation, or new automatic foreground/battery/temperature features.
+- Restore ui2 root, app/daemon lists, about, header, styling, grouping and whitespace. Only details row changes: giant PSSegmentCell → normal PSLinkListCell into VDTActionListController, which delegates reads/writes to the originating VDTProcessConfiguration.
+- Keep package com.doimty.vedette and Preferences bundle com.doimty.vedetteprefs; Conflicts/Replaces the old package. Legacy file paths and Darwin notification names remain unchanged, preserving existing rules. Author udevs remains credited.
+- E1 compile-time lazy diagnostic macro; Release arguments not evaluated/logger implementation omitted, Debug unchanged.
+- E2 reuse validated config snapshot in runningboardd serial queue; publish after each prefs reload. No PID identity caching.
+- No new foreground/background or temperature features. No CPU thresholds, scan timing, transition order, recovery semantics, process identity guards or two-stage reconciliation changed.
+- No device install/restart or APT publication authorization.
 
-## Contracts / failure signals
+## Success / failure criteria
 
-1. UI source files except VDTProcessConfiguration must match ui2 byte-for-byte; in process screen only imported action controller, choice cell/class and generic values/title metadata may differ. Original write callback tail and `PREFS_CHANGED_NN` remain untouched.
-2. Action picker with no owning VDTProcessConfiguration must not write to a fallback defaults domain. If owner exists, uses same read/set methods.
-3. Release diagnostic expressions have zero side effects and no logger symbol; Debug evaluates payload once per call and preserves existing event labels/data. Objective-C dictionary commas remain one expression.
-4. Re-normalization occurs only on cold-cache fallback or prefs reload. Every change reloads and replaces snapshot before scanning. Restore-all remains an explicit separate source from old temp prefs.
-5. Backend safety paths and C suites byte-identical/pass. No UID, full process identity, launch debounce, retry, restore or strong kill changes.
-6. Validate new package ID and both bundle ID/package conflict replacement against the prior ID; old plist path/notification channels remain byte-identical to avoid losing existing rules.
+1. Visual source (except action cell/controller) matches user-approved ui2 byte-for-byte; does not contain ui3 custom compact section view.
+2. Action picker reads/writes only through its parent process controller; no fallback defaults. Enum/value/default/key and original mutation/notification tail unchanged.
+3. Release macro side effects zero, Debug emitter/payload work. ObjC dictionary comma expansion remains valid.
+4. Config cache only on serial control side: cold fallback/current snapshot or explicit reload generation. Restore-all still consumes the prior temp plist.
+5. CPU manager/policy/identity/shared config/libproc/filter/install scripts remain frozen; all native safety tests pass.
+6. Actual package name/control ID, own Preferences bundle ID, old package replacement metadata and localized resources are verified.
 
-## Validation commands
+## Validation / boundary
 
-`make -f Makefile.tests test`; `python3 -B tests/test_preferences_ui.py`; `python3 -B tests/test_ios15_cell_lifecycle.py`; `python3 -B tests/test_package_identity.py`; `git diff --check`.
-
-Apple/UIKit/Preferences host compilation unavailable in iSH. Cloud Xcode 17.5/SDK17.5 ARM64+arm64e build and actual-deb metadata/resource validation are required. Device validation still required for PSListItemsController owner callbacks and Dynamic Type. Existing Frida attach timeout prevents claiming a runtime UI test.
+`make -f Makefile.tests test`, `python3 -B tests/check_auto_monitor_path.py`, `bash tests/run_process_identity_tests.sh`, and `git diff --check` must pass. Apple Clang/Xcode and the real installed package are only checked in GitHub Actions. Frida process enumeration works, but attaching to Settings timed out; source tests cannot claim the picker was exercised natively. Cloud build/package success is not user-device visual acceptance.

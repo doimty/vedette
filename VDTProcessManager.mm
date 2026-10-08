@@ -576,7 +576,9 @@ BOOL vdt_apply_target(NSDictionary *rawTarget){
     errno = 0;
     VDTPolicyTransitionResult result = VDTApplyPolicyTransition(
         pid, mode, percentage, interval, &operations);
+#if VDT_DIAGNOSTICS_ENABLED
     int operationErrno = errno;
+#endif
 
     if (result.identityRejected) {
         VDTProbeRecord(@"runningboardd.targetSkipped", @{

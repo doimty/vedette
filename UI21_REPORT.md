@@ -2,6 +2,8 @@
 
 ## 状态
 
+用户已授权提交并推送新分支进行云构建。尚未实际提交/推送时，本段记录为状态；云端成功与设备验收将分别更新。无安装/重启授权。
+
 以 ui2 `cd0b34807c031d2e179f1ae397ea8c6847be35e3` 为视觉基线，当前分支 `feat/ui21-cpu-efficiency`，候选包版本 `1.1.10-1+ui21`，自有包/Bundles仍为 `com.doimty.vedette` / `com.doimty.vedetteprefs`。**本报告记录本地候选，尚未 commit、push、云构建或安装；用户设备仍运行先前安装的版本。**
 
 ## UI: 保留 ui2，只轻改策略入口

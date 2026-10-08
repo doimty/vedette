@@ -2,7 +2,7 @@ from pathlib import Path
 import re,subprocess,unittest
 ROOT=Path(__file__).resolve().parents[1]
 BASE='cd0b34807c031d2e179f1ae397ea8c6847be35e3'
-CPU_FROZEN=['VDTProcessManager.mm','VDTProcessIdentity.c','VDTProcessIdentity.h','VDTPolicyTransition.c','VDTPolicyTransition.h','VDTShared.mm','VDTShared.h','PrivateHeaders.h','libproc/libproc_internal.h','Vedette.plist','layout/DEBIAN/postinst','layout/DEBIAN/postrm']
+CPU_FROZEN=['VDTProcessIdentity.c','VDTProcessIdentity.h','VDTPolicyTransition.c','VDTPolicyTransition.h','VDTShared.mm','VDTShared.h','PrivateHeaders.h','libproc/libproc_internal.h','Vedette.plist','layout/DEBIAN/postinst','layout/DEBIAN/postrm']
 
 class EfficiencyContracts(unittest.TestCase):
     def test_diagnostic_macro_runs_release_and_debug_side_effect_fixtures(self):
@@ -15,6 +15,9 @@ class EfficiencyContracts(unittest.TestCase):
         h=(ROOT/'VDTProbe.h').read_text(); impl=(ROOT/'VDTProbe.mm').read_text()
         self.assertIn('VDT_DIAGNOSTIC_CALL(VDTProbeRecordImpl, label, __VA_ARGS__)',h)
         self.assertIn('void VDTProbeRecordImpl(',impl)
+        pm=(ROOT/'VDTProcessManager.mm').read_text()
+        self.assertIn('#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;\n#endif',pm)
+        self.assertNotIn('operationErrno = errno;', pm.replace('#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;\n#endif',''))
         callsites=[]
         for file in ['Vedette.xm','VDTProcessManager.mm']:
             s=(ROOT/file).read_text();callsites += re.findall(r'VDTProbeRecord\s*\(',s)
@@ -50,6 +53,15 @@ class EfficiencyContracts(unittest.TestCase):
         self.assertIn('retirementFailed',pm)
         self.assertIn('identityIsCurrent(pid, operations, &result)',policy)
         self.assertNotIn('CFBundleIdentifier',s[s.index('// Every other injected process self-reports'):])
+    def test_errno_snapshot_is_compiled_only_for_diagnostics(self):
+        expected=subprocess.check_output(['git','show',BASE+':VDTProcessManager.mm'],cwd=ROOT)
+        wanted=expected.replace(b'    int operationErrno = errno;',b'#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;\n#endif')
+        self.assertNotEqual(wanted,expected)
+        self.assertEqual((ROOT/'VDTProcessManager.mm').read_bytes(),wanted)
+        source=wanted.decode()
+        self.assertEqual(source.count('#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;'),1)
+        self.assertGreaterEqual(source.count('@"errno": @(operationErrno)'),3)
+
     def test_cpu_runtime_binary_source_freeze(self):
         for name in CPU_FROZEN:
             with self.subTest(file=name):
