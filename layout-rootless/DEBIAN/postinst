@@ -1,0 +1,13 @@
+#!/bin/bash
+set -eu
+# Rootless counterpart of the RootHide resume gate. Never discard the journal.
+ctl=/var/jb/usr/libexec/vedette-nicectl
+if [ ! -x "$ctl" ]; then
+    echo 'Vedette: nice restoration tool missing; configuration stopped.' >&2
+    exit 1
+fi
+"$ctl" resume
+
+echo "Killing runningboardd..."
+killall -9 runningboardd || true
+exit 0

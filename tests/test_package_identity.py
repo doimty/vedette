@@ -10,7 +10,7 @@ def parse(text):
     return dict((k,v.strip()) for k,v in (l.split(':',1) for l in text.splitlines() if ':' in l))
 def require_ids(control,info):
     assert control['Package']=='com.doimty.vedette'
-    assert control['Version']=='1.1.11-1+nice2'
+    assert control['Version']=='1.1.12-1'
     assert control['Conflicts']=='com.udevs.vedette'
     assert control['Replaces']=='com.udevs.vedette'
     assert control['Maintainer']=='doimty'

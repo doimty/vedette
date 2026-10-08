@@ -21,17 +21,21 @@ def validate(data, required):
                 found[name]=True
     assert set(found)==set(required), 'required entries missing'
 
-def main(deb):
+def main(deb, scheme='roothide'):
+    assert scheme in ('rootless','roothide'), 'unsupported scheme'
+    toolpath=('var/jb/' if scheme=='rootless' else '')+'usr/libexec/vedette-nicectl'
+    expected_arch='iphoneos-arm64' if scheme=='rootless' else 'iphoneos-arm64e'
+    assert subprocess.check_output(['dpkg-deb','-f',deb,'Architecture'],text=True).strip()==expected_arch
     data=subprocess.check_output(['dpkg-deb','--fsys-tarfile',deb])
-    validate(data,{'usr/libexec/vedette-nicectl':0o755})
+    validate(data,{toolpath:0o755})
     validate(subprocess.check_output(['dpkg-deb','--ctrl-tarfile',deb]),{'prerm':0o755,'postinst':0o755})
     with tarfile.open(fileobj=io.BytesIO(data),mode='r:*') as archive:
-        matches=[entry for entry in archive if entry.name.removeprefix('./')=='usr/libexec/vedette-nicectl']
+        matches=[entry for entry in archive if entry.name.removeprefix('./')==toolpath]
         assert len(matches)==1
-        slices=verify_tool(archive.extractfile(matches[0]).read())
-    print('nice tool: both slices have four signed RootHide permissions; code and entitlement hashes passed')
+        slices=verify_tool(archive.extractfile(matches[0]).read(),scheme)
+    print('nice tool: both slices have four signed permissions; code and entitlement hashes passed ('+scheme+')')
     print('nice archive: numeric ownership, regular entries, executable modes passed')
 
 if __name__=='__main__':
-    if len(sys.argv)!=2: raise SystemExit('usage: verify_nice_archive.py <deb>')
-    main(sys.argv[1])
+    if len(sys.argv) not in (2,3): raise SystemExit('usage: verify_nice_archive.py <deb> [roothide|rootless]')
+    main(sys.argv[1],sys.argv[2] if len(sys.argv)==3 else 'roothide')

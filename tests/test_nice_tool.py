@@ -2,15 +2,16 @@
 """Negative controls for real slice/CodeDirectory entitlement verification."""
 from pathlib import Path
 import hashlib,plistlib,struct,subprocess,unittest
+from release_delta import without_release
 from verify_nice_tool import EXPECTED_ENTITLEMENTS,ROOT_HIDE_DEPENDENCY,verify_tool
 ROOT=Path(__file__).resolve().parents[1]
 BASE='430e89c28a6d00493da34b721fdd1580e3f9a1cb'
 
-def thin(sub,rights=None,bound=True,code_good=True):
+def thin(sub,rights=None,bound=True,code_good=True,dependency=ROOT_HIDE_DEPENDENCY):
     if rights is None:rights=EXPECTED_ENTITLEMENTS
     xml=plistlib.dumps(rights,sort_keys=True)
     entitlement=struct.pack('>II',0xfade7171,8+len(xml))+xml
-    name=ROOT_HIDE_DEPENDENCY.encode()+b'\0';length=(24+len(name)+7)//8*8
+    name=dependency.encode()+b'\0';length=(24+len(name)+7)//8*8
     load=struct.pack('<6I',0xc,length,24,0,0,0)+name+bytes(length-24-len(name))
     ident=b'fixture\0';hashoff=44+len(ident)+5*32;cdlen=hashoff+32
     sigsize=28+cdlen+len(entitlement);start=32+len(load)+16
@@ -22,8 +23,8 @@ def thin(sub,rights=None,bound=True,code_good=True):
     sig=struct.pack('>3I4I',0xfade0cc0,sigsize,2,0,28,5,28+len(cd))+bytes(cd)+entitlement
     return code+sig
 
-def fat(second_rights=None,bound=True,code_good=True):
-    slices=[thin(0),thin(0x80000002,second_rights,bound,code_good)]
+def fat(second_rights=None,bound=True,code_good=True,dependency=ROOT_HIDE_DEPENDENCY):
+    slices=[thin(0,dependency=dependency),thin(0x80000002,second_rights,bound,code_good,dependency)]
     first=48;second=first+len(slices[0])
     return (struct.pack('>2I',0xcafebabe,2)+struct.pack('>5I',0x100000c,0,first,len(slices[0]),0)+
         struct.pack('>5I',0x100000c,0x80000002,second,len(slices[1]),0)+b''.join(slices))
@@ -57,6 +58,6 @@ class RootHideToolTests(unittest.TestCase):
             'Vedette.xm','VDTProcessManager.mm','VDTPolicyTransition.c','VDTProcessIdentity.c','layout/DEBIAN/postinst','layout/DEBIAN/prerm','layout/DEBIAN/postrm']
         frozen += [str(p.relative_to(ROOT)) for p in (ROOT/'vedetteprefs').rglob('*') if p.is_file()]
         for file in frozen:
-            with self.subTest(file=file):self.assertEqual((ROOT/file).read_bytes(),subprocess.check_output(['git','show',BASE+':'+file],cwd=ROOT))
+            with self.subTest(file=file):self.assertEqual(without_release(file,(ROOT/file).read_bytes()),subprocess.check_output(['git','show',BASE+':'+file],cwd=ROOT))
 
 if __name__=='__main__':unittest.main(verbosity=2)

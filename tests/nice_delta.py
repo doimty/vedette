@@ -101,6 +101,8 @@ def expected_nice(name, base):
         change('            if (isRunningBoard) {\n                reloadPrefs();\n','            if (isRunningBoard) {\n                reloadPrefs();\n'+listeners)
     return s.encode()
 def without_nice(name, actual):
+    from release_delta import without_release
+    actual=without_release(name,actual)
     if name not in NAMES: return actual
     base=subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT)
     assert actual==expected_nice(name,base),f'Unexpected change outside exact nice delta: {name}'

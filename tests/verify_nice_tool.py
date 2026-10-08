@@ -53,7 +53,8 @@ def verify_signature(data, start, size):
     assert directories and any(d['slot']==0 for d in directories), 'missing primary CodeDirectory'
     return {'entitlements':rights,'directories':directories}
 
-def verify_tool(data):
+def verify_tool(data, scheme='roothide'):
+    assert scheme in ('rootless','roothide'), 'unsupported scheme'
     assert data[:4]==b'\xca\xfe\xba\xbe' and u32(data,4)==2, 'expected dual-architecture tool'
     result=[]; spans=[]
     for i in range(2):
@@ -78,7 +79,11 @@ def verify_tool(data):
                 signatures.append(verify_signature(b,sigstart,sigsize))
             pos+=length
         assert pos==32+cmdsize and len(signatures)==1, 'missing/duplicate code signature'
-        assert ROOT_HIDE_DEPENDENCY in deps, 'standard RootHide dependency changed'
+        if scheme=='roothide':
+            assert ROOT_HIDE_DEPENDENCY in deps, 'standard RootHide dependency changed'
+        else:
+            assert not any('libroothide' in d for d in deps), 'rootless tool links RootHide runtime'
+            assert '/usr/lib/libSystem.B.dylib' in deps, 'rootless tool lacks system runtime'
         result.append({'arch':'arm64e' if sub&0xffffff==2 else 'arm64','dependencies':deps,**signatures[0]})
     assert {r['arch'] for r in result}=={'arm64','arm64e'}, 'missing architecture'
     return result

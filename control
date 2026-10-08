@@ -1,13 +1,13 @@
 Package: com.doimty.vedette
 Name: Vedette
-Version: 1.1.11-1+nice2
+Version: 1.1.12-1
 Architecture: iphoneos-arm
-Description: Monitor CPU hogging processes
+Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级
 Conflicts: com.udevs.vedette
 Replaces: com.udevs.vedette
 Maintainer: doimty
 Author: udevs
 Section: Tweaks
-Depends: roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist
-Icon: https://udevsharold.github.io/repo/depictions/com.udevs.vedette/icon/icon.png
-Depiction: https://udevsharold.github.io/repo/depictions/?p=com.udevs.vedette
+Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist
+Icon: https://doimty.github.io/icons/com.doimty.vedette.png
+Depiction: https://doimty.github.io/depictions/com.doimty.vedette/

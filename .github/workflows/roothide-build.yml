@@ -1,4 +1,4 @@
-name: Build Vedette roothide
+name: Build Vedette rootless and roothide
 
 on:
   workflow_dispatch:
@@ -26,12 +26,25 @@ on:
 
 jobs:
   package:
-    name: Package (roothide)
+    name: Package (${{ matrix.scheme }})
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheme: roothide
+            package_arch: iphoneos-arm64e
+            prefix: ''
+          - scheme: rootless
+            package_arch: iphoneos-arm64
+            prefix: '/var/jb'
 
     env:
       THEOS: ${{ github.workspace }}/theos
-      THEOS_PACKAGE_SCHEME: roothide
+      THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+      PACKAGE_PREFIX: ${{ matrix.prefix }}
+      PACKAGE_VERSION: 1.1.12-1
       FINALPACKAGE: 1
       PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
 
@@ -114,9 +127,9 @@ jobs:
           test "$(git -C /tmp/AltList rev-parse HEAD)" = "9db09f92eff0404ae7fa9c2fe6c25ba13d5e02d7"
           make -C /tmp/AltList clean THEOS_PACKAGE_SCHEME=rootless SDKVERSION=16.5
           make -C /tmp/AltList FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless SDKVERSION=16.5
-          mkdir -p "$THEOS/vendor/include/AltList" "$THEOS/vendor/lib" "$THEOS/vendor/lib/iphone/roothide"
+          mkdir -p "$THEOS/vendor/include/AltList" "$THEOS/vendor/lib" "$THEOS/vendor/lib/iphone/$THEOS_PACKAGE_SCHEME"
           cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/"
-          cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/iphone/roothide/"
+          cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/iphone/$THEOS_PACKAGE_SCHEME/"
           cp /tmp/AltList/*.h "$THEOS/vendor/include/AltList/"
 
       - name: Run host regression tests
@@ -142,33 +155,37 @@ jobs:
           system_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
           test -d "$system_sdk"
           make clean TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk"
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log
-          python3 -B tests/canonicalize_nice_deb.py packages/com.doimty.vedette_1.1.11-1+nice2_iphoneos-arm64e.deb
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME" TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log
+          python3 -B tests/canonicalize_nice_deb.py "packages/com.doimty.vedette_${PACKAGE_VERSION}_${PACKAGE_ARCH}.deb" "$THEOS_PACKAGE_SCHEME"
 
-      - name: Verify roothide artifact
+      - name: Verify package artifact
         run: |
           test -s /tmp/vedette-build.log
           ! grep -qi 'incompatible arm64e' /tmp/vedette-build.log
           test "$(find packages -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')" = "1"
-          deb="packages/com.doimty.vedette_1.1.11-1+nice2_iphoneos-arm64e.deb"
+          deb="packages/com.doimty.vedette_${PACKAGE_VERSION}_${PACKAGE_ARCH}.deb"
           test -s "$deb"
           test "$(dpkg-deb -f "$deb" Package)" = "com.doimty.vedette"
-          test "$(dpkg-deb -f "$deb" Version)" = "1.1.11-1+nice2"
+          test "$(dpkg-deb -f "$deb" Version)" = "$PACKAGE_VERSION"
           test "$(dpkg-deb -f "$deb" Conflicts)" = "com.udevs.vedette"
           test "$(dpkg-deb -f "$deb" Replaces)" = "com.udevs.vedette"
           test "$(dpkg-deb -f "$deb" Maintainer)" = "doimty"
-          test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
+          test "$(dpkg-deb -f "$deb" Architecture)" = "$PACKAGE_ARCH"
           rm -rf /tmp/vedette-package
           dpkg-deb -x "$deb" /tmp/vedette-package
           dylib="$(find /tmp/vedette-package -name 'Vedette.dylib' -print -quit)"
           prefs_binary="$(find /tmp/vedette-package -path '*/VedettePrefs.bundle/VedettePrefs' -print -quit)"
           test -n "$dylib"
           test -n "$prefs_binary"
-          test "${dylib#/tmp/vedette-package}" = "/Library/MobileSubstrate/DynamicLibraries/Vedette.dylib"
-          test "${prefs_binary#/tmp/vedette-package}" = "/Library/PreferenceBundles/VedettePrefs.bundle/VedettePrefs"
-          otool -D "$dylib" | grep -q '@loader_path/.jbroot/'
-          python3 -B tests/verify_nice_archive.py "$deb"
-          nicectl="/tmp/vedette-package/usr/libexec/vedette-nicectl"
+          test "${dylib#/tmp/vedette-package}" = "$PACKAGE_PREFIX/Library/MobileSubstrate/DynamicLibraries/Vedette.dylib"
+          test "${prefs_binary#/tmp/vedette-package}" = "$PACKAGE_PREFIX/Library/PreferenceBundles/VedettePrefs.bundle/VedettePrefs"
+          if [ "$THEOS_PACKAGE_SCHEME" = roothide ]; then
+            otool -D "$dylib" | grep -q '@loader_path/.jbroot/'
+          else
+            otool -D "$dylib" | grep -q '@rpath/Vedette.dylib'
+          fi
+          python3 -B tests/verify_nice_archive.py "$deb" "$THEOS_PACKAGE_SCHEME"
+          nicectl="/tmp/vedette-package$PACKAGE_PREFIX/usr/libexec/vedette-nicectl"
           test -x "$nicectl"
           nm -u "$dylib" > /tmp/vedette-main-imports.txt
           nm -u "$nicectl" > /tmp/vedette-nicectl-imports.txt
@@ -183,7 +200,8 @@ jobs:
             test "$(awk '$1 == "minos" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "15.0"
             test "$(awk '$1 == "sdk" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "17.5"
           done
-          python3 -B tests/verify_preferences_resources.py /tmp/vedette-package
+          python3 -B tests/verify_preferences_resources.py "/tmp/vedette-package$PACKAGE_PREFIX"
+          python3 -B tests/verify_release_layout.py "$deb" "$THEOS_PACKAGE_SCHEME"
           dpkg-deb -e "$deb" /tmp/vedette-control
           for script in /tmp/vedette-control/preinst /tmp/vedette-control/postinst /tmp/vedette-control/prerm /tmp/vedette-control/postrm; do
             test ! -f "$script" || bash -n "$script"
@@ -192,6 +210,6 @@ jobs:
       - name: Upload deb packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: vedette-roothide-packages
+          name: vedette-${{ matrix.scheme }}-packages
           path: packages/*.deb
           if-no-files-found: error
