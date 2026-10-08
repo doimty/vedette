@@ -143,6 +143,7 @@ jobs:
           test -d "$system_sdk"
           make clean TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log
+          python3 -B tests/canonicalize_nice_deb.py packages/com.doimty.vedette_1.1.11-1+nice1_iphoneos-arm64e.deb
 
       - name: Verify roothide artifact
         run: |
@@ -169,8 +170,10 @@ jobs:
           python3 -B tests/verify_nice_archive.py "$deb"
           nicectl="/tmp/vedette-package/usr/libexec/vedette-nicectl"
           test -x "$nicectl"
-          nm -u "$dylib" | grep -q '_setpriority'
-          ! nm -u "$nicectl" | grep -q '_setpriority'
+          nm -u "$dylib" > /tmp/vedette-main-imports.txt
+          nm -u "$nicectl" > /tmp/vedette-nicectl-imports.txt
+          grep -Eq '(^|[[:space:]])_setpriority$' /tmp/vedette-main-imports.txt
+          ! grep -Eq '(^|[[:space:]])_setpriority$' /tmp/vedette-nicectl-imports.txt
           for binary in "$dylib" "$prefs_binary" "$nicectl"; do
             lipo "$binary" -verify_arch arm64 arm64e
             otool -l "$binary" > /tmp/vedette-load-commands.txt

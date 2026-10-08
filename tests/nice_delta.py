@@ -53,8 +53,10 @@ CI_TESTS='''          make -f Makefile.tests test-nice STORE_RUNNER=sudo
 CI_ARTIFACT='''          python3 -B tests/verify_nice_archive.py "$deb"
           nicectl="/tmp/vedette-package/usr/libexec/vedette-nicectl"
           test -x "$nicectl"
-          nm -u "$dylib" | grep -q '_setpriority'
-          ! nm -u "$nicectl" | grep -q '_setpriority'
+          nm -u "$dylib" > /tmp/vedette-main-imports.txt
+          nm -u "$nicectl" > /tmp/vedette-nicectl-imports.txt
+          grep -Eq '(^|[[:space:]])_setpriority$' /tmp/vedette-main-imports.txt
+          ! grep -Eq '(^|[[:space:]])_setpriority$' /tmp/vedette-nicectl-imports.txt
 '''
 NAMES={'Vedette.xm','Makefile','control','layout/DEBIAN/postinst','vedetteprefs/Makefile',
        'vedetteprefs/VDTProcessConfiguration.m','.github/workflows/roothide-build.yml'}
@@ -77,6 +79,8 @@ def expected_nice(name, base):
                '[rootSpecifiers addObject:intervalSpec];\n\n        // Keep the nice controls independent from the legacy CPU rule editor.\n        [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];\n        _specifiers')
     elif name=='.github/workflows/roothide-build.yml':
         s=s.replace('1.1.10-1+ui21','1.1.11-1+nice1')
+        package_line='          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log\n'
+        change(package_line,package_line+'          python3 -B tests/canonicalize_nice_deb.py packages/com.doimty.vedette_1.1.11-1+nice1_iphoneos-arm64e.deb\n')
         change('          python3 -B tests/test_diagnostic_preprocess.py\n','          python3 -B tests/test_diagnostic_preprocess.py\n'+CI_TESTS)
         change('          for binary in "$dylib" "$prefs_binary"; do\n',CI_ARTIFACT+'          for binary in "$dylib" "$prefs_binary" "$nicectl"; do\n')
     elif name=='Vedette.xm':
