@@ -1,4 +1,8 @@
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#else
 #define _POSIX_C_SOURCE 200809L
+#endif
 #include "../VDTNiceStore.h"
 #include <assert.h>
 #include <errno.h>
@@ -59,7 +63,9 @@ int main(void) {
     CHECK(VDTNiceStoreRead(&s,VDT_NICE_JOURNAL,&bytes,&length)!=0);
     CHECK(fchownat(s.directoryFD,VDT_NICE_JOURNAL,0,0,0)==0);
     CHECK(VDTNiceStoreRemove(&s,VDT_NICE_JOURNAL)==0);
-    CHECK(mkfifoat(s.directoryFD,VDT_NICE_JOURNAL,0600)==0);
+    // The fixture needs a FIFO, not the newer Darwin mkfifoat API (macOS 13+).
+    char fifoPath[600]; snprintf(fifoPath,sizeof(fifoPath),"%s/%s",directory,VDT_NICE_JOURNAL);
+    CHECK(mkfifo(fifoPath,0600)==0);
     CHECK(VDTNiceStoreRead(&s,VDT_NICE_JOURNAL,&bytes,&length)!=0);
     CHECK(unlinkat(s.directoryFD,VDT_NICE_JOURNAL,0)==0);
     int fd=openat(s.directoryFD,VDT_NICE_JOURNAL,O_WRONLY|O_CREAT|O_EXCL,0600); CHECK(fd>=0);
