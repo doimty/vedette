@@ -77,3 +77,12 @@
 "Independent rule off" = "Independent rule off";
 "Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension." = "Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension.";
 "Remove this extension's independent rule and use its containing app's rule?" = "Remove this extension's independent rule and use its containing app's rule?";
+"Active limit (MiB)" = "Active limit (MiB)";
+"Enable memory rule" = "Enable memory rule";
+"Enable reclaim priority rule" = "Enable reclaim priority rule";
+"Inactive limit (MiB)" = "Inactive limit (MiB)";
+"Memory" = "Memory";
+"Priority band" = "Priority band";
+"Reclaim priority" = "Reclaim priority";
+"Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB." = "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.";
+"Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.";

@@ -17,9 +17,10 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 APPEX_BASE = '2994f24bbc73a6081d958f8f64ba4ff76640b8af'
 REVIEWED_PATHS = frozenset({
-    'VDTShared.h', 'VDTShared.mm', 'VDTProcessManager.mm',
+    'VDTShared.h', 'VDTShared.mm', 'VDTProcessManager.mm', 'VDTProcessManager.h',
     'vedetteprefs/VDTRootListController.m',
     'vedetteprefs/VDTProcessConfiguration.m', 'vedetteprefs/Makefile',
+    'Vedette.xm',
 })
 CI_PATH = '.github/workflows/roothide-build.yml'
 # Host test calls only. CI setup, build, artifact metadata and triggers stay frozen.

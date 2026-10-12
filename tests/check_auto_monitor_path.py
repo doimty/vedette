@@ -105,7 +105,7 @@ def check_launch_gate_and_catch_up() -> None:
     require(reconcile, r"current_normalized_configs_sync\s*\(\)", "reused catch-up config snapshot")
     require(handler, r"current_normalized_configs_sync\s*\(\)", "reused fast-path config snapshot")
     forbid(reconcile, "vdt_configs_from_prefs", "per-scan config re-normalization")
-    require(reconcile, r"vdt_resolve_targets\s*\(configs\)", "catch-up target scan")
+    require(reconcile, r"vdt_resolve_targets\s*\(configs,\s*current_normalized_resource_rules_sync\(\)\)", "catch-up target scan")
     require(reconcile, r"retire_targets_without_active_config\s*\(configs\)", "deleted-config retirement retry")
     require(reconcile, r"apply_launch_target_if_needed\s*\(target\)", "catch-up application gate")
     require(reconcile, r"intersectSet:liveInstances", "exited-instance retirement")

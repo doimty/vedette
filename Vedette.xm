@@ -71,12 +71,20 @@ static NSMutableDictionary<NSString *, NSDictionary *> *managed_process_targets(
 // validated configuration, never a PID-lifetime proof; target identity is
 // still rechecked immediately before each policy syscall.
 static NSArray<NSDictionary *> *normalized_configs_snapshot;
+static NSArray<NSDictionary *> *normalized_resource_rules_snapshot;
 
 static NSArray<NSDictionary *> *current_normalized_configs_sync(void){
     if (!normalized_configs_snapshot){
         normalized_configs_snapshot = [vdt_configs_from_prefs(VDTGetPrefs()) copy];
     }
     return normalized_configs_snapshot;
+}
+
+static NSArray<NSDictionary *> *current_normalized_resource_rules_sync(void){
+    if (!normalized_resource_rules_snapshot){
+        normalized_resource_rules_snapshot = [vdt_resource_rules_from_prefs(VDTGetPrefs()) copy];
+    }
+    return normalized_resource_rules_snapshot;
 }
 
 static NSString *target_instance_key(NSDictionary *target){
@@ -172,6 +180,11 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
         }
 
         NSMutableDictionary *restoreTarget = [oldTarget mutableCopy];
+        // Resource intents are not re-applied from a retire pass. Revert
+        // records arrive with the write channel (M6 enablement); until then
+        // the resource stage settles as a no-op instead of guessing a restore.
+        [restoreTarget removeObjectForKey:VDTTargetMemoryRuleKey];
+        [restoreTarget removeObjectForKey:VDTTargetJetsamRuleKey];
         restoreTarget[VDTConfigPercentageKey] = @0;
         restoreTarget[VDTConfigIntervalKey] = @0;
         restoreTarget[VDTConfigPolicyKey] = @(VDTViolationPolicyNone);
@@ -184,7 +197,7 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
 
 static void reconcile_unreported_processes_sync(){
     NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
-    NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs);
+    NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, current_normalized_resource_rules_sync());
     NSMutableSet<NSString *> *liveInstances = [NSMutableSet set];
 
     retire_targets_without_active_config(configs);
@@ -215,7 +228,7 @@ static void schedule_launch_catch_up_sync(){
 
 static void handle_reported_pid_sync(pid_t pid){
     NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
-    NSArray<NSDictionary *> *targets = vdt_targets_for_pid(pid, configs);
+    NSArray<NSDictionary *> *targets = vdt_targets_for_pid(pid, configs, current_normalized_resource_rules_sync());
 
     if (targets.count == 0) {
         VDTProbeRecord(@"runningboardd.receivedNewProcSkipped", @{
@@ -232,10 +245,12 @@ static void handle_reported_pid_sync(pid_t pid){
 static void reloadPrefsSync(){
     NSDictionary *newPrefs = getPrefs();
     NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);
+    NSArray<NSDictionary *> *resourceRules = vdt_resource_rules_from_prefs(newPrefs);
     VDTSetPrefs(newPrefs);
     normalized_configs_snapshot = [configs copy];
+    normalized_resource_rules_snapshot = [resourceRules copy];
 
-    NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs);
+    NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, resourceRules);
     HBLogDebug(@"Vedette configs: %@", configs);
     HBLogDebug(@"Vedette targets: %@", targets);
 
@@ -280,7 +295,7 @@ static void restoreAllMonitors(){
             [restoreConfigs addObject:restore];
         }
 
-        vdt_apply_targets(vdt_resolve_targets(restoreConfigs));
+        vdt_apply_targets(vdt_resolve_targets(restoreConfigs, vdt_resource_rules_from_prefs(getTempPrefs())));
         [tracked_process_instances() removeAllObjects];
         [managed_process_targets() removeAllObjects];
 

@@ -163,6 +163,57 @@
             [inheritance setButtonAction:@selector(confirmFollowContainingApp)];
             [rootSpecifiers addObject:inheritance];
         }
+
+        //Memory rule
+        PSSpecifier *memoryGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Memory") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [memoryGroupSpec setProperty:VDTLoc(self.class, @"Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.") forKey:@"footerText"];
+        [rootSpecifiers addObject:memoryGroupSpec];
+
+        PSSpecifier *memoryEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable memory rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:specifier:) detail:nil cell:PSSwitchCell edit:nil];
+        [memoryEnabledSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [memoryEnabledSpec setProperty:@NO forKey:@"default"];
+        [memoryEnabledSpec setProperty:@"enabled" forKey:@"key"];
+        [memoryEnabledSpec setProperty:@"memoryRules" forKey:@"vdtRuleSection"];
+        [rootSpecifiers addObject:memoryEnabledSpec];
+
+        PSTextFieldSpecifier* memoryActiveSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Active limit (MiB)") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:specifier:) detail:nil cell:PSEditTextCell edit:nil];
+        [memoryActiveSpec setKeyboardType:UIKeyboardTypeNumbersAndPunctuation autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
+        [memoryActiveSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [memoryActiveSpec setPlaceholder:@"0"];
+        [memoryActiveSpec setProperty:@"active" forKey:@"key"];
+        [memoryActiveSpec setProperty:@"memoryRules" forKey:@"vdtRuleSection"];
+        [memoryActiveSpec setProperty:VDTLoc(self.class, @"Active limit (MiB)") forKey:@"label"];
+        [rootSpecifiers addObject:memoryActiveSpec];
+
+        PSTextFieldSpecifier* memoryInactiveSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Inactive limit (MiB)") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:specifier:) detail:nil cell:PSEditTextCell edit:nil];
+        [memoryInactiveSpec setKeyboardType:UIKeyboardTypeNumbersAndPunctuation autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
+        [memoryInactiveSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [memoryInactiveSpec setPlaceholder:@"0"];
+        [memoryInactiveSpec setProperty:@"inactive" forKey:@"key"];
+        [memoryInactiveSpec setProperty:@"memoryRules" forKey:@"vdtRuleSection"];
+        [memoryInactiveSpec setProperty:VDTLoc(self.class, @"Inactive limit (MiB)") forKey:@"label"];
+        [rootSpecifiers addObject:memoryInactiveSpec];
+
+        //Reclaim priority rule
+        PSSpecifier *jetsamGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Reclaim priority") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [jetsamGroupSpec setProperty:VDTLoc(self.class, @"Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.") forKey:@"footerText"];
+        [rootSpecifiers addObject:jetsamGroupSpec];
+
+        PSSpecifier *jetsamEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable reclaim priority rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:specifier:) detail:nil cell:PSSwitchCell edit:nil];
+        [jetsamEnabledSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [jetsamEnabledSpec setProperty:@NO forKey:@"default"];
+        [jetsamEnabledSpec setProperty:@"enabled" forKey:@"key"];
+        [jetsamEnabledSpec setProperty:@"jetsamRules" forKey:@"vdtRuleSection"];
+        [rootSpecifiers addObject:jetsamEnabledSpec];
+
+        PSTextFieldSpecifier* jetsamBandSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Priority band") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:specifier:) detail:nil cell:PSEditTextCell edit:nil];
+        [jetsamBandSpec setKeyboardType:UIKeyboardTypeNumbersAndPunctuation autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
+        [jetsamBandSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [jetsamBandSpec setPlaceholder:@"16"];
+        [jetsamBandSpec setProperty:@"priority" forKey:@"key"];
+        [jetsamBandSpec setProperty:@"jetsamRules" forKey:@"vdtRuleSection"];
+        [jetsamBandSpec setProperty:VDTLoc(self.class, @"Priority band") forKey:@"label"];
+        [rootSpecifiers addObject:jetsamBandSpec];
         
         _specifiers = rootSpecifiers;
     }
@@ -189,6 +240,20 @@
             [owner reloadSpecifiers];
         }]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)setResourceRuleValue:(id)value specifier:(PSSpecifier*)specifier{
+    NSString *key = [specifier propertyForKey:@"key"];
+    NSString *section = [specifier propertyForKey:@"vdtRuleSection"];
+    if (key.length == 0 || section.length == 0) return;
+    setValueForProcessResourceRuleKey([self validIdentifier], key, value, [self configurationType], section);
+}
+
+- (id)readResourceRuleValue:(PSSpecifier*)specifier{
+    NSString *key = [specifier propertyForKey:@"key"];
+    NSString *section = [specifier propertyForKey:@"vdtRuleSection"];
+    if (key.length == 0 || section.length == 0) return [specifier propertyForKey:@"default"];
+    return valueForProcessResourceRuleKey([self validIdentifier], key, [specifier propertyForKey:@"default"], [self configurationType], section);
 }
 
 - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier*)specifier{

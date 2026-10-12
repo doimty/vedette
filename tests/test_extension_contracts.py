@@ -75,15 +75,15 @@ def resolution_contract(sources):
         'else if (ruleChoice == VDTBundleRuleApp)')
     assert 'VDTConfigEnabledKey' not in classification, 'explicit off/invalid cannot fall back to App'
     has(target, 'if (ruleChoice == VDTBundleRuleDaemon && daemonConfigs.count > 0)',
-        'if (!matched) return nil;', 'NSNumber *policy = enabled ? vdt_number(matched[VDTConfigPolicyKey]) : @(VDTViolationPolicyNone);')
+        'if (!matched && !hasResourceIntent) return nil;', 'NSNumber *policy = enabled ? vdt_number(matched[VDTConfigPolicyKey]) : @(VDTViolationPolicyNone);')
     for signature in ('NSArray<NSDictionary *>* vdt_resolve_targets', 'NSArray<NSDictionary *>* vdt_targets_for_pid'):
         scan = function_source(pm, signature)
         has(scan, 'NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById = [NSMutableDictionary dictionary];',
             'split_configs(configs, appConfigsById, extensionConfigsById, daemonConfigs);',
-            'target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs)')
+            'target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs, resourceMaps)')
         assert 'if (appConfigsById.count == 0 && daemonConfigs.count == 0)' not in scan, 'extension-only configs must reach PID matching'
     scan = function_source(pm, 'NSArray<NSDictionary *>* vdt_resolve_targets')
-    has(scan, 'if (appConfigsById.count == 0 && extensionConfigsById.count == 0 && daemonConfigs.count == 0) return @[];')
+    has(scan, 'if (appConfigsById.count == 0 && extensionConfigsById.count == 0 && daemonConfigs.count == 0 &&\n        resource_maps_empty(resourceMaps)) return @[];')
     one = function_source(pm, 'NSArray<NSDictionary *>* vdt_targets_for_pid')
     has(one, 'return target ? @[target] : @[];')
 
