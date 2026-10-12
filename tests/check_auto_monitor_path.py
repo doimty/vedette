@@ -223,17 +223,14 @@ def check_process_scan_and_config_boundaries() -> None:
         "fractional and non-finite numeric rejection",
     )
 
-    require(
-        MANAGER,
-        r"application_bundle_path_for_executable.*?while\s*\(candidate\.length\s*>\s*1\).*?pathExtension.*?@\"app\"",
-        "nested application-bundle classification",
-    )
-    require(target_body, r"resolvedAsApplication", "App identity classification")
-    require(
-        target_body,
-        r"if\s*\(!matched\s*&&\s*!resolvedAsApplication\s*&&\s*daemonConfigs\.count\s*>\s*0\)",
-        "App-to-daemon fallthrough block",
-    )
+    require(target_body, r'VDTNearestBundlePath\(executablePath, @"appex"\)', "nearest extension classification")
+    require(target_body, r'VDTReadExtensionBundleInfo\(extensionPath, executablePath\)', "verified extension executable")
+    require(target_body, r'VDTNearestBundlePath\(extensionPath \?: executablePath, @"app"\)', "containing App classification")
+    require(target_body, r'VDTChooseBundleRule\(bundlePath != nil, extensionPath != nil,\s*extensionIdentifier != nil, extensionConfig != nil, appConfig != nil\)', "presence-based override choice")
+    require(target_body, r'if \(ruleChoice == VDTBundleRuleDaemon && daemonConfigs.count > 0\)', "App/extension-to-daemon fallthrough block")
+    rules = (REPO_ROOT / "VDTBundleRules.c").read_text()
+    require(rules, r'if \(insideExtension\).*?if \(!extensionIdentityValid\) return VDTBundleRuleNone;.*?if \(hasExtensionConfig\) return VDTBundleRuleExtension;', "explicit disabled extension override")
+    require(rules, r'if \(insideApp\) return hasAppConfig \? VDTBundleRuleApp : VDTBundleRuleNone;', "unconfigured App never becomes daemon")
     require(target_body, r"VDTCopyLastPathComponent\s*\(", "full executable-name derivation")
     require(target_body, r"VDTProcessNameMatches\s*\(", "daemon identity comparison")
     require(

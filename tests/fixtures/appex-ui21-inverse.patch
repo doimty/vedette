@@ -1,0 +1,406 @@
+diff --git a/VDTProcessManager.mm b/VDTProcessManager.mm
+index a224ba7..c749a02 100644
+--- a/VDTProcessManager.mm
++++ b/VDTProcessManager.mm
+@@ -9,6 +9,8 @@
+ #import "PrivateHeaders.h"
+ #import "VDTProcessIdentity.h"
+ #import "VDTPolicyTransition.h"
++#import "VDTBundleIdentity.h"
++#import "VDTBundleRules.h"
+ 
+ #include <errno.h>
+ #include <limits.h>
+@@ -130,19 +132,6 @@ static LSApplicationProxy* appproxy_from_bundle_path(NSString *path){
+     return [proxyClass applicationProxyForBundleURL:bundleURL];
+ }
+ 
+-static NSString *application_bundle_path_for_executable(NSString *executablePath){
+-    if (![executablePath isKindOfClass:[NSString class]] || executablePath.length == 0) return nil;
+-
+-    NSString *candidate = executablePath.stringByDeletingLastPathComponent;
+-    while (candidate.length > 1) {
+-        if ([candidate.pathExtension caseInsensitiveCompare:@"app"] == NSOrderedSame) return candidate;
+-        NSString *parent = candidate.stringByDeletingLastPathComponent;
+-        if ([parent isEqualToString:candidate]) break;
+-        candidate = parent;
+-    }
+-    return nil;
+-}
+-
+ // Full executable path. Empty string when unavailable, never partial data.
+ static BOOL executable_path_for_pid(pid_t pid, char *buffer, uint32_t bufferSize){
+     return VDTCopyProcessInfoString(pid, buffer, bufferSize, proc_pidpath);
+@@ -245,6 +234,8 @@ NSArray<NSDictionary *>* vdt_configs_from_prefs(NSDictionary *prefs){
+                                                      VDTConfigTypeApp, globallyEnabled)];
+     [configs addObjectsFromArray:configs_from_section(validatedPrefs, @"daemonConfigs", @"daemonName",
+                                                      VDTConfigTypeDaemon, globallyEnabled)];
++    [configs addObjectsFromArray:configs_from_section(validatedPrefs, @"extensionConfigs", @"extensionIdentifier",
++                                                     VDTConfigTypeExtension, globallyEnabled)];
+     return configs;
+ }
+ 
+@@ -252,6 +243,7 @@ NSArray<NSDictionary *>* vdt_configs_from_prefs(NSDictionary *prefs){
+ 
+ static void split_configs(NSArray<NSDictionary *> *configs,
+                          NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById,
++                         NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById,
+                          NSMutableArray<NSDictionary *> *daemonConfigs){
+     for (id rawConfig in configs) {
+         NSDictionary *config = vdt_dictionary(rawConfig);
+@@ -264,6 +256,10 @@ static void split_configs(NSArray<NSDictionary *> *configs,
+             // Preserve the preference API's first-entry-wins behavior if a
+             // hand-edited plist contains duplicate identifiers.
+             if (!appConfigsById[identifier]) appConfigsById[identifier] = config;
++        } else if (type == VDTConfigTypeExtension) {
++            // Presence, including a disabled/malformed first entry, overrides
++            // the containing App without sharing its identifier namespace.
++            if (!extensionConfigsById[identifier]) extensionConfigsById[identifier] = config;
+         } else if (type == VDTConfigTypeDaemon) {
+             [daemonConfigs addObject:config];
+         }
+@@ -274,6 +270,7 @@ static void split_configs(NSArray<NSDictionary *> *configs,
+ // not configured, which is the signal to leave it completely alone.
+ static NSDictionary *target_for_pid(pid_t pid,
+                                     NSDictionary<NSString *, NSDictionary *> *appConfigsById,
++                                    NSDictionary<NSString *, NSDictionary *> *extensionConfigsById,
+                                     NSArray<NSDictionary *> *daemonConfigs){
+     if (pid <= 0) return nil;
+ 
+@@ -293,29 +290,36 @@ static NSDictionary *target_for_pid(pid_t pid,
+     NSString *matchedName = nil;
+     NSString *fallbackProcComm = nil;
+ 
+-    // A verified App identity is authoritative even when that App has no App
+-    // config. It must never fall through to an unrelated daemon entry that
+-    // happens to share the executable filename.
+-    BOOL resolvedAsApplication = NO;
+-    if (executablePath) {
+-        NSString *bundlePath = application_bundle_path_for_executable(executablePath);
+-        resolvedAsApplication = bundlePath != nil;
+-
+-        if (bundlePath && appConfigsById.count > 0) {
+-            LSApplicationProxy *appProxy = appproxy_from_bundle_path(bundlePath);
+-            NSString *bundleIdentifier = appProxy.bundleIdentifier;
+-            if ([bundleIdentifier isKindOfClass:[NSString class]] && bundleIdentifier.length > 0) {
+-                resolvedAsApplication = YES;
+-                NSDictionary *config = appConfigsById[bundleIdentifier];
+-                if (config) {
+-                    matched = config;
+-                    matchedName = bundleIdentifier;
+-                }
+-            }
+-        }
++    // Validate the nearest extension before considering its containing App.
++    // An explicit extension entry wins by presence, not by enabled state;
++    // invalid extension metadata must never inherit an App or daemon rule.
++    NSString *extensionPath = VDTNearestBundlePath(executablePath, @"appex");
++    NSDictionary *extensionInfo = extensionPath ?
++        VDTReadExtensionBundleInfo(extensionPath, executablePath) : nil;
++    NSString *extensionIdentifier = vdt_nonEmptyString(extensionInfo[@"extensionIdentifier"]);
++    NSDictionary *extensionConfig = extensionIdentifier ? extensionConfigsById[extensionIdentifier] : nil;
++
++    NSString *bundlePath = VDTNearestBundlePath(extensionPath ?: executablePath, @"app");
++    NSString *bundleIdentifier = nil;
++    NSDictionary *appConfig = nil;
++    if (bundlePath && appConfigsById.count > 0 &&
++        (!extensionPath || (extensionIdentifier && !extensionConfig))) {
++        LSApplicationProxy *appProxy = appproxy_from_bundle_path(bundlePath);
++        bundleIdentifier = vdt_nonEmptyString(appProxy.bundleIdentifier);
++        if (bundleIdentifier) appConfig = appConfigsById[bundleIdentifier];
++    }
++
++    VDTBundleRuleChoice ruleChoice = VDTChooseBundleRule(bundlePath != nil, extensionPath != nil,
++        extensionIdentifier != nil, extensionConfig != nil, appConfig != nil);
++    if (ruleChoice == VDTBundleRuleExtension) {
++        matched = extensionConfig;
++        matchedName = extensionIdentifier;
++    } else if (ruleChoice == VDTBundleRuleApp) {
++        matched = appConfig;
++        matchedName = bundleIdentifier;
+     }
+ 
+-    if (!matched && !resolvedAsApplication && daemonConfigs.count > 0) {
++    if (ruleChoice == VDTBundleRuleDaemon && daemonConfigs.count > 0) {
+         char procComm[256];
+         BOOL hasProcComm = !hasExecutableName && proc_comm_for_pid(pid, procComm, sizeof(procComm));
+         if (!hasExecutableName && !hasProcComm) return nil;
+@@ -380,9 +384,10 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs){
+     if (configs.count == 0) return @[];
+ 
+     NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById = [NSMutableDictionary dictionary];
++    NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById = [NSMutableDictionary dictionary];
+     NSMutableArray<NSDictionary *> *daemonConfigs = [NSMutableArray array];
+-    split_configs(configs, appConfigsById, daemonConfigs);
+-    if (appConfigsById.count == 0 && daemonConfigs.count == 0) return @[];
++    split_configs(configs, appConfigsById, extensionConfigsById, daemonConfigs);
++    if (appConfigsById.count == 0 && extensionConfigsById.count == 0 && daemonConfigs.count == 0) return @[];
+ 
+     // proc_listpids reports a byte count, not an element count.
+     int listBytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+@@ -404,7 +409,7 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs){
+     for (int idx = 0; idx < pidCount; idx++) {
+         pid_t pid = (pid_t)buffer[idx];
+         if (pid <= 0) continue;
+-        NSDictionary *target = target_for_pid(pid, appConfigsById, daemonConfigs);
++        NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs);
+         if (target) [targets addObject:target];
+     }
+ 
+@@ -423,10 +428,11 @@ NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *>
+     if (pid <= 0 || configs.count == 0) return @[];
+ 
+     NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById = [NSMutableDictionary dictionary];
++    NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById = [NSMutableDictionary dictionary];
+     NSMutableArray<NSDictionary *> *daemonConfigs = [NSMutableArray array];
+-    split_configs(configs, appConfigsById, daemonConfigs);
++    split_configs(configs, appConfigsById, extensionConfigsById, daemonConfigs);
+ 
+-    NSDictionary *target = target_for_pid(pid, appConfigsById, daemonConfigs);
++    NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs);
+     return target ? @[target] : @[];
+ }
+ 
+diff --git a/VDTShared.h b/VDTShared.h
+index 9fb24ed..f1a58b7 100644
+--- a/VDTShared.h
++++ b/VDTShared.h
+@@ -6,8 +6,9 @@
+ #import "Common.h"
+ 
+ typedef NS_ENUM(NSUInteger, VDTConfigType) {
+-    VDTConfigTypeApp,
+-    VDTConfigTypeDaemon
++    VDTConfigTypeApp = 0,
++    VDTConfigTypeDaemon = 1,
++    VDTConfigTypeExtension = 2
+ };
+ 
+ typedef NS_ENUM(NSUInteger, VDTViolationPolicy) {
+@@ -31,6 +32,10 @@ id valueForProcessConfigKey(NSString *identifier, NSString *key, id defaultValue
+ id valueForProcessConfigKeyWithPrefs(NSString *identifier, NSString *key, id defaultValue, VDTConfigType type, NSDictionary *prefs);
+ void setValueForProcessConfigKey(NSString *identifier, NSString *key, id value, VDTConfigType type);
+ void setValueForProcessConfigKeyWithPrefs(NSString *identifier, NSString *key, id value, VDTConfigType type, NSDictionary *prefs);
++// Presence, not enabled state, determines whether an extension overrides its app.
++BOOL VDTHasProcessConfig(NSString *identifier, VDTConfigType type, NSDictionary *prefs);
++// Removes all matching records. For an extension this restores host inheritance.
++void VDTRemoveProcessConfig(NSString *identifier, VDTConfigType type);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/VDTShared.mm b/VDTShared.mm
+index 8e7f37a..73651de 100644
+--- a/VDTShared.mm
++++ b/VDTShared.mm
+@@ -20,11 +20,21 @@ static NSArray *VDTConfigArray(id value){
+ }
+ 
+ static NSString *VDTConfigIdentifier(VDTConfigType type){
+-    return type == VDTConfigTypeApp ? @"bundleIdentifier" : @"daemonName";
++    switch (type) {
++        case VDTConfigTypeApp: return @"bundleIdentifier";
++        case VDTConfigTypeDaemon: return @"daemonName";
++        case VDTConfigTypeExtension: return @"extensionIdentifier";
++        default: return nil;
++    }
+ }
+ 
+ static NSString *VDTConfigSection(VDTConfigType type){
+-    return type == VDTConfigTypeApp ? @"appConfigs" : @"daemonConfigs";
++    switch (type) {
++        case VDTConfigTypeApp: return @"appConfigs";
++        case VDTConfigTypeDaemon: return @"daemonConfigs";
++        case VDTConfigTypeExtension: return @"extensionConfigs";
++        default: return nil;
++    }
+ }
+ 
+ NSDictionary* getPrefs(){
+@@ -80,7 +90,9 @@ id valueForProcessConfigKeyWithPrefs(NSString *identifier,
+ 
+     NSDictionary *source = prefs ? VDTValidatedPrefs(prefs) : VDTDictionaryFromFile(PREFS_PATH);
+     NSString *identifierKey = VDTConfigIdentifier(type);
+-    for (id rawConfig in VDTConfigArray(source[VDTConfigSection(type)])) {
++    NSString *sectionKey = VDTConfigSection(type);
++    if (!identifierKey || !sectionKey) return defaultValue;
++    for (id rawConfig in VDTConfigArray(source[sectionKey])) {
+         if (![rawConfig isKindOfClass:[NSDictionary class]]) continue;
+         NSDictionary *config = rawConfig;
+         id configuredIdentifier = config[identifierKey];
+@@ -109,6 +121,7 @@ void setValueForProcessConfigKeyWithPrefs(NSString *identifier,
+     NSDictionary *source = prefs ? VDTValidatedPrefs(prefs) : VDTDictionaryFromFile(PREFS_PATH);
+     NSString *sectionKey = VDTConfigSection(type);
+     NSString *identifierKey = VDTConfigIdentifier(type);
++    if (!identifierKey || !sectionKey) return;
+     NSMutableArray *configs = [VDTConfigArray(source[sectionKey]) mutableCopy];
+     NSUInteger matchedIndex = NSNotFound;
+ 
+@@ -141,3 +154,36 @@ void setValueForProcessConfigKeyWithPrefs(NSString *identifier,
+ void setValueForProcessConfigKey(NSString *identifier, NSString *key, id value, VDTConfigType type){
+     setValueForProcessConfigKeyWithPrefs(identifier, key, value, type, nil);
+ }
++
++BOOL VDTHasProcessConfig(NSString *identifier, VDTConfigType type, NSDictionary *prefs){
++    if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0) return NO;
++    NSString *sectionKey = VDTConfigSection(type);
++    NSString *identifierKey = VDTConfigIdentifier(type);
++    if (!sectionKey || !identifierKey) return NO;
++    NSDictionary *source = prefs ? VDTValidatedPrefs(prefs) : VDTDictionaryFromFile(PREFS_PATH);
++    for (id raw in VDTConfigArray(source[sectionKey])) {
++        if (![raw isKindOfClass:[NSDictionary class]]) continue;
++        id value = ((NSDictionary *)raw)[identifierKey];
++        if ([value isKindOfClass:[NSString class]] && [value isEqualToString:identifier]) return YES;
++    }
++    return NO;
++}
++
++void VDTRemoveProcessConfig(NSString *identifier, VDTConfigType type){
++    if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0) return;
++    NSString *sectionKey = VDTConfigSection(type);
++    NSString *identifierKey = VDTConfigIdentifier(type);
++    if (!sectionKey || !identifierKey) return;
++    NSDictionary *source = VDTDictionaryFromFile(PREFS_PATH);
++    NSMutableArray *remaining = [NSMutableArray new];
++    BOOL removed = NO;
++    for (id raw in VDTConfigArray(source[sectionKey])) {
++        id value = [raw isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)raw)[identifierKey] : nil;
++        if ([value isKindOfClass:[NSString class]] && [value isEqualToString:identifier]) {
++            removed = YES;
++        } else {
++            [remaining addObject:raw];
++        }
++    }
++    if (removed) setValueForKeyWithPrefs(sectionKey, remaining, source);
++}
+diff --git a/vedetteprefs/Makefile b/vedetteprefs/Makefile
+index 5d3b103..315b160 100644
+--- a/vedetteprefs/Makefile
++++ b/vedetteprefs/Makefile
+@@ -8,7 +8,7 @@ include $(THEOS)/makefiles/common.mk
+ 
+ BUNDLE_NAME = VedettePrefs
+ 
+-VedettePrefs_FILES = $(wildcard *.m) $(wildcard ChoicyPreferences/*.m) ../VDTShared.mm
++VedettePrefs_FILES = $(wildcard *.m) $(wildcard ChoicyPreferences/*.m) ../VDTShared.mm ../VDTBundleIdentity.mm ../VDTBundleRules.c
+ VedettePrefs_FRAMEWORKS = UIKit
+ VedettePrefs_PRIVATE_FRAMEWORKS = Preferences
+ VedettePrefs_EXTRA_FRAMEWORKS = AltList
+diff --git a/vedetteprefs/VDTProcessConfiguration.m b/vedetteprefs/VDTProcessConfiguration.m
+index 3b1a960..297c05b 100644
+--- a/vedetteprefs/VDTProcessConfiguration.m
++++ b/vedetteprefs/VDTProcessConfiguration.m
+@@ -11,6 +11,7 @@
+ #import "VDTStyle.h"
+ #import "VDTHeaderCell.h"
+ #import "VDTActionListController.h"
++#import "VDTExtensionListController.h"
+ 
+ @implementation VDTProcessConfiguration
+ 
+@@ -74,7 +75,12 @@
+ }
+ 
+ - (NSString*)validIdentifier{
+-    return  [self configurationType] == VDTConfigTypeApp ? [[self specifier] propertyForKey:@"applicationIdentifier"] : [[self specifier] propertyForKey:@"daemonName"];
++    switch ([self configurationType]) {
++        case VDTConfigTypeApp: return [[self specifier] propertyForKey:@"applicationIdentifier"];
++        case VDTConfigTypeDaemon: return [[self specifier] propertyForKey:@"daemonName"];
++        case VDTConfigTypeExtension: return [[self specifier] propertyForKey:@"extensionIdentifier"];
++        default: return nil;
++    }
+ }
+ 
+ -(VDTConfigType)configurationType{
+@@ -93,7 +99,8 @@
+         [monitorEnabledGroupSpec setProperty:VDTLoc(self.class, @"Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required.") forKey:@"footerText"];
+         [rootSpecifiers addObject:monitorEnabledGroupSpec];
+         [rootSpecifiers addObject:VDTHeaderSpecifier(self.specifier.name ?: validIdentifier,
+-            validIdentifier, [self configurationType] == VDTConfigTypeApp ? @"app" : @"gearshape.2")];
++            validIdentifier, [self configurationType] == VDTConfigTypeExtension ? @"puzzlepiece.extension" :
++                ([self configurationType] == VDTConfigTypeApp ? @"app" : @"gearshape.2"))];
+     
+         PSSpecifier *monitorEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable this rule") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSwitchCell edit:nil];
+         [monitorEnabledSpec setProperty:VDTLoc(self.class, @"Enable this rule") forKey:@"label"];
+@@ -145,6 +152,17 @@
+         [intervalSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
+         _intervalSpecifier = intervalSpec;
+         [rootSpecifiers addObject:intervalSpec];
++
++        if ([self configurationType] == VDTConfigTypeExtension) {
++            PSSpecifier *inheritanceGroup = [PSSpecifier emptyGroupSpecifier];
++            [inheritanceGroup setProperty:VDTLoc(self.class,
++                @"Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension.") forKey:@"footerText"];
++            [rootSpecifiers addObject:inheritanceGroup];
++            PSSpecifier *inheritance = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app")
++                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
++            [inheritance setButtonAction:@selector(confirmFollowContainingApp)];
++            [rootSpecifiers addObject:inheritance];
++        }
+         
+         _specifiers = rootSpecifiers;
+     }
+@@ -152,6 +170,27 @@
+     return _specifiers;
+ }
+ 
++- (void)confirmFollowContainingApp {
++    if ([self configurationType] != VDTConfigTypeExtension) return;
++    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app")
++        message:VDTLoc(self.class, @"Remove this extension's independent rule and use its containing app's rule?")
++        preferredStyle:UIAlertControllerStyleAlert];
++    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel")
++        style:UIAlertActionStyleCancel handler:nil]];
++    __weak typeof(self) weakSelf = self;
++    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app")
++        style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
++            VDTProcessConfiguration *owner = weakSelf;
++            if (!owner) return;
++            VDTRemoveProcessConfig([owner validIdentifier], VDTConfigTypeExtension);
++            UIViewController *parent = (UIViewController *)[owner valueForKey:@"_parentController"];
++            if ([parent isKindOfClass:VDTExtensionListController.class])
++                [(VDTExtensionListController *)parent reloadExtensionRule:[owner validIdentifier]];
++            [owner reloadSpecifiers];
++        }]];
++    [self presentViewController:alert animated:YES completion:nil];
++}
++
+ - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier*)specifier{
+     NSString *key = [specifier propertyForKey:@"key"];
+     
+@@ -169,6 +208,11 @@
+                 [(CHPDaemonListController *)parentController reloadValueOfSelectedSpecifier];
+                 break;
+             }
++            case VDTConfigTypeExtension:{
++                if ([parentController isKindOfClass:VDTExtensionListController.class])
++                    [(VDTExtensionListController *)parentController reloadExtensionRule:[self validIdentifier]];
++                break;
++            }
+             default:
+                 break;
+         }
+diff --git a/vedetteprefs/VDTRootListController.m b/vedetteprefs/VDTRootListController.m
+index ec37362..9804b03 100644
+--- a/vedetteprefs/VDTRootListController.m
++++ b/vedetteprefs/VDTRootListController.m
+@@ -9,6 +9,7 @@
+ #import "VDTStyle.h"
+ #import "VDTHeaderCell.h"
+ #import "VDTAboutListController.h"
++#import "VDTExtensionListController.h"
+ 
+ @implementation VDTRootListController
+ 
+@@ -55,6 +56,12 @@
+         [altListSpec setProperty:VDTSettingsSymbol(@"square.grid.2x2") forKey:@"iconImage"];
+         [rootSpecifiers addObject:altListSpec];
+ 
++        //App extensions
++        PSSpecifier *extensionListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"App extensions")
++            target:nil set:nil get:nil detail:VDTExtensionListController.class cell:PSLinkCell edit:nil];
++        [extensionListSpec setProperty:VDTSettingsSymbol(@"puzzlepiece.extension") forKey:@"iconImage"];
++        [rootSpecifiers addObject:extensionListSpec];
++
+         //Daemons
+         PSSpecifier *daemonListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Daemons") target:nil set:nil get:nil detail:NSClassFromString(@"CHPDaemonListController") cell:PSLinkCell edit:nil];
+         [daemonListSpec setProperty:VDTSettingsSymbol(@"gearshape.2") forKey:@"iconImage"];

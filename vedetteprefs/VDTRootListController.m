@@ -9,6 +9,7 @@
 #import "VDTStyle.h"
 #import "VDTHeaderCell.h"
 #import "VDTAboutListController.h"
+#import "VDTExtensionListController.h"
 
 @implementation VDTRootListController
 
@@ -54,6 +55,12 @@
         [altListSpec setProperty:@(VDTConfigTypeApp) forKey:@"configurationType"];
         [altListSpec setProperty:VDTSettingsSymbol(@"square.grid.2x2") forKey:@"iconImage"];
         [rootSpecifiers addObject:altListSpec];
+
+        //App extensions
+        PSSpecifier *extensionListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"App extensions")
+            target:nil set:nil get:nil detail:VDTExtensionListController.class cell:PSLinkCell edit:nil];
+        [extensionListSpec setProperty:VDTSettingsSymbol(@"puzzlepiece.extension") forKey:@"iconImage"];
+        [rootSpecifiers addObject:extensionListSpec];
 
         //Daemons
         PSSpecifier *daemonListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Daemons") target:nil set:nil get:nil detail:NSClassFromString(@"CHPDaemonListController") cell:PSLinkCell edit:nil];

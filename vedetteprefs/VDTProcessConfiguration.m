@@ -11,6 +11,7 @@
 #import "VDTStyle.h"
 #import "VDTHeaderCell.h"
 #import "VDTActionListController.h"
+#import "VDTExtensionListController.h"
 
 @implementation VDTProcessConfiguration
 
@@ -74,7 +75,12 @@
 }
 
 - (NSString*)validIdentifier{
-    return  [self configurationType] == VDTConfigTypeApp ? [[self specifier] propertyForKey:@"applicationIdentifier"] : [[self specifier] propertyForKey:@"daemonName"];
+    switch ([self configurationType]) {
+        case VDTConfigTypeApp: return [[self specifier] propertyForKey:@"applicationIdentifier"];
+        case VDTConfigTypeDaemon: return [[self specifier] propertyForKey:@"daemonName"];
+        case VDTConfigTypeExtension: return [[self specifier] propertyForKey:@"extensionIdentifier"];
+        default: return nil;
+    }
 }
 
 -(VDTConfigType)configurationType{
@@ -93,7 +99,8 @@
         [monitorEnabledGroupSpec setProperty:VDTLoc(self.class, @"Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required.") forKey:@"footerText"];
         [rootSpecifiers addObject:monitorEnabledGroupSpec];
         [rootSpecifiers addObject:VDTHeaderSpecifier(self.specifier.name ?: validIdentifier,
-            validIdentifier, [self configurationType] == VDTConfigTypeApp ? @"app" : @"gearshape.2")];
+            validIdentifier, [self configurationType] == VDTConfigTypeExtension ? @"puzzlepiece.extension" :
+                ([self configurationType] == VDTConfigTypeApp ? @"app" : @"gearshape.2"))];
     
         PSSpecifier *monitorEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable this rule") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSwitchCell edit:nil];
         [monitorEnabledSpec setProperty:VDTLoc(self.class, @"Enable this rule") forKey:@"label"];
@@ -145,11 +152,43 @@
         [intervalSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
         _intervalSpecifier = intervalSpec;
         [rootSpecifiers addObject:intervalSpec];
+
+        if ([self configurationType] == VDTConfigTypeExtension) {
+            PSSpecifier *inheritanceGroup = [PSSpecifier emptyGroupSpecifier];
+            [inheritanceGroup setProperty:VDTLoc(self.class,
+                @"Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension.") forKey:@"footerText"];
+            [rootSpecifiers addObject:inheritanceGroup];
+            PSSpecifier *inheritance = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app")
+                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+            [inheritance setButtonAction:@selector(confirmFollowContainingApp)];
+            [rootSpecifiers addObject:inheritance];
+        }
         
         _specifiers = rootSpecifiers;
     }
     
     return _specifiers;
+}
+
+- (void)confirmFollowContainingApp {
+    if ([self configurationType] != VDTConfigTypeExtension) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app")
+        message:VDTLoc(self.class, @"Remove this extension's independent rule and use its containing app's rule?")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel")
+        style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app")
+        style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            VDTProcessConfiguration *owner = weakSelf;
+            if (!owner) return;
+            VDTRemoveProcessConfig([owner validIdentifier], VDTConfigTypeExtension);
+            UIViewController *parent = (UIViewController *)[owner valueForKey:@"_parentController"];
+            if ([parent isKindOfClass:VDTExtensionListController.class])
+                [(VDTExtensionListController *)parent reloadExtensionRule:[owner validIdentifier]];
+            [owner reloadSpecifiers];
+        }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier*)specifier{
@@ -167,6 +206,11 @@
             }
             case VDTConfigTypeDaemon:{
                 [(CHPDaemonListController *)parentController reloadValueOfSelectedSpecifier];
+                break;
+            }
+            case VDTConfigTypeExtension:{
+                if ([parentController isKindOfClass:VDTExtensionListController.class])
+                    [(VDTExtensionListController *)parentController reloadExtensionRule:[self validIdentifier]];
                 break;
             }
             default:

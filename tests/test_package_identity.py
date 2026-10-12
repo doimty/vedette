@@ -2,6 +2,7 @@
 """Own distribution IDs without migrating or resetting legacy rule storage."""
 from pathlib import Path
 import plistlib,subprocess,unittest
+from extension_projection import projected_bytes
 ROOT=Path(__file__).resolve().parents[1]
 BASE='4ac149755d093995ce2b14f7971d8299d4df41ce'
 
@@ -39,6 +40,6 @@ class OwnIdentifiers(unittest.TestCase):
         self.assertIn('@"/tmp/com.udevs.vedette.marker.plist"',probe)
         for file in ('VDTShared.h','VDTShared.mm','Makefile','vedetteprefs/Makefile','layout/DEBIAN/postinst','layout/DEBIAN/postrm'):
             with self.subTest(file=file):
-                self.assertEqual((ROOT/file).read_bytes(),subprocess.check_output(['git','show',BASE+':'+file],cwd=ROOT))
+                self.assertEqual(projected_bytes(file),subprocess.check_output(['git','show',BASE+':'+file],cwd=ROOT))
 
 if __name__=='__main__':unittest.main(verbosity=2)

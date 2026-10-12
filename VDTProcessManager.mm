@@ -9,6 +9,8 @@
 #import "PrivateHeaders.h"
 #import "VDTProcessIdentity.h"
 #import "VDTPolicyTransition.h"
+#import "VDTBundleIdentity.h"
+#import "VDTBundleRules.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -130,19 +132,6 @@ static LSApplicationProxy* appproxy_from_bundle_path(NSString *path){
     return [proxyClass applicationProxyForBundleURL:bundleURL];
 }
 
-static NSString *application_bundle_path_for_executable(NSString *executablePath){
-    if (![executablePath isKindOfClass:[NSString class]] || executablePath.length == 0) return nil;
-
-    NSString *candidate = executablePath.stringByDeletingLastPathComponent;
-    while (candidate.length > 1) {
-        if ([candidate.pathExtension caseInsensitiveCompare:@"app"] == NSOrderedSame) return candidate;
-        NSString *parent = candidate.stringByDeletingLastPathComponent;
-        if ([parent isEqualToString:candidate]) break;
-        candidate = parent;
-    }
-    return nil;
-}
-
 // Full executable path. Empty string when unavailable, never partial data.
 static BOOL executable_path_for_pid(pid_t pid, char *buffer, uint32_t bufferSize){
     return VDTCopyProcessInfoString(pid, buffer, bufferSize, proc_pidpath);
@@ -245,6 +234,8 @@ NSArray<NSDictionary *>* vdt_configs_from_prefs(NSDictionary *prefs){
                                                      VDTConfigTypeApp, globallyEnabled)];
     [configs addObjectsFromArray:configs_from_section(validatedPrefs, @"daemonConfigs", @"daemonName",
                                                      VDTConfigTypeDaemon, globallyEnabled)];
+    [configs addObjectsFromArray:configs_from_section(validatedPrefs, @"extensionConfigs", @"extensionIdentifier",
+                                                     VDTConfigTypeExtension, globallyEnabled)];
     return configs;
 }
 
@@ -252,6 +243,7 @@ NSArray<NSDictionary *>* vdt_configs_from_prefs(NSDictionary *prefs){
 
 static void split_configs(NSArray<NSDictionary *> *configs,
                          NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById,
+                         NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById,
                          NSMutableArray<NSDictionary *> *daemonConfigs){
     for (id rawConfig in configs) {
         NSDictionary *config = vdt_dictionary(rawConfig);
@@ -264,6 +256,10 @@ static void split_configs(NSArray<NSDictionary *> *configs,
             // Preserve the preference API's first-entry-wins behavior if a
             // hand-edited plist contains duplicate identifiers.
             if (!appConfigsById[identifier]) appConfigsById[identifier] = config;
+        } else if (type == VDTConfigTypeExtension) {
+            // Presence, including a disabled/malformed first entry, overrides
+            // the containing App without sharing its identifier namespace.
+            if (!extensionConfigsById[identifier]) extensionConfigsById[identifier] = config;
         } else if (type == VDTConfigTypeDaemon) {
             [daemonConfigs addObject:config];
         }
@@ -274,6 +270,7 @@ static void split_configs(NSArray<NSDictionary *> *configs,
 // not configured, which is the signal to leave it completely alone.
 static NSDictionary *target_for_pid(pid_t pid,
                                     NSDictionary<NSString *, NSDictionary *> *appConfigsById,
+                                    NSDictionary<NSString *, NSDictionary *> *extensionConfigsById,
                                     NSArray<NSDictionary *> *daemonConfigs){
     if (pid <= 0) return nil;
 
@@ -293,29 +290,36 @@ static NSDictionary *target_for_pid(pid_t pid,
     NSString *matchedName = nil;
     NSString *fallbackProcComm = nil;
 
-    // A verified App identity is authoritative even when that App has no App
-    // config. It must never fall through to an unrelated daemon entry that
-    // happens to share the executable filename.
-    BOOL resolvedAsApplication = NO;
-    if (executablePath) {
-        NSString *bundlePath = application_bundle_path_for_executable(executablePath);
-        resolvedAsApplication = bundlePath != nil;
+    // Validate the nearest extension before considering its containing App.
+    // An explicit extension entry wins by presence, not by enabled state;
+    // invalid extension metadata must never inherit an App or daemon rule.
+    NSString *extensionPath = VDTNearestBundlePath(executablePath, @"appex");
+    NSDictionary *extensionInfo = extensionPath ?
+        VDTReadExtensionBundleInfo(extensionPath, executablePath) : nil;
+    NSString *extensionIdentifier = vdt_nonEmptyString(extensionInfo[@"extensionIdentifier"]);
+    NSDictionary *extensionConfig = extensionIdentifier ? extensionConfigsById[extensionIdentifier] : nil;
 
-        if (bundlePath && appConfigsById.count > 0) {
-            LSApplicationProxy *appProxy = appproxy_from_bundle_path(bundlePath);
-            NSString *bundleIdentifier = appProxy.bundleIdentifier;
-            if ([bundleIdentifier isKindOfClass:[NSString class]] && bundleIdentifier.length > 0) {
-                resolvedAsApplication = YES;
-                NSDictionary *config = appConfigsById[bundleIdentifier];
-                if (config) {
-                    matched = config;
-                    matchedName = bundleIdentifier;
-                }
-            }
-        }
+    NSString *bundlePath = VDTNearestBundlePath(extensionPath ?: executablePath, @"app");
+    NSString *bundleIdentifier = nil;
+    NSDictionary *appConfig = nil;
+    if (bundlePath && appConfigsById.count > 0 &&
+        (!extensionPath || (extensionIdentifier && !extensionConfig))) {
+        LSApplicationProxy *appProxy = appproxy_from_bundle_path(bundlePath);
+        bundleIdentifier = vdt_nonEmptyString(appProxy.bundleIdentifier);
+        if (bundleIdentifier) appConfig = appConfigsById[bundleIdentifier];
     }
 
-    if (!matched && !resolvedAsApplication && daemonConfigs.count > 0) {
+    VDTBundleRuleChoice ruleChoice = VDTChooseBundleRule(bundlePath != nil, extensionPath != nil,
+        extensionIdentifier != nil, extensionConfig != nil, appConfig != nil);
+    if (ruleChoice == VDTBundleRuleExtension) {
+        matched = extensionConfig;
+        matchedName = extensionIdentifier;
+    } else if (ruleChoice == VDTBundleRuleApp) {
+        matched = appConfig;
+        matchedName = bundleIdentifier;
+    }
+
+    if (ruleChoice == VDTBundleRuleDaemon && daemonConfigs.count > 0) {
         char procComm[256];
         BOOL hasProcComm = !hasExecutableName && proc_comm_for_pid(pid, procComm, sizeof(procComm));
         if (!hasExecutableName && !hasProcComm) return nil;
@@ -380,9 +384,10 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs){
     if (configs.count == 0) return @[];
 
     NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById = [NSMutableDictionary dictionary];
     NSMutableArray<NSDictionary *> *daemonConfigs = [NSMutableArray array];
-    split_configs(configs, appConfigsById, daemonConfigs);
-    if (appConfigsById.count == 0 && daemonConfigs.count == 0) return @[];
+    split_configs(configs, appConfigsById, extensionConfigsById, daemonConfigs);
+    if (appConfigsById.count == 0 && extensionConfigsById.count == 0 && daemonConfigs.count == 0) return @[];
 
     // proc_listpids reports a byte count, not an element count.
     int listBytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
@@ -404,7 +409,7 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs){
     for (int idx = 0; idx < pidCount; idx++) {
         pid_t pid = (pid_t)buffer[idx];
         if (pid <= 0) continue;
-        NSDictionary *target = target_for_pid(pid, appConfigsById, daemonConfigs);
+        NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs);
         if (target) [targets addObject:target];
     }
 
@@ -423,10 +428,11 @@ NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *> 
     if (pid <= 0 || configs.count == 0) return @[];
 
     NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById = [NSMutableDictionary dictionary];
     NSMutableArray<NSDictionary *> *daemonConfigs = [NSMutableArray array];
-    split_configs(configs, appConfigsById, daemonConfigs);
+    split_configs(configs, appConfigsById, extensionConfigsById, daemonConfigs);
 
-    NSDictionary *target = target_for_pid(pid, appConfigsById, daemonConfigs);
+    NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs);
     return target ? @[target] : @[];
 }
 

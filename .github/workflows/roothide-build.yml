@@ -131,6 +131,9 @@ jobs:
           python3 -B tests/test_section_text.py
           python3 -B tests/test_efficiency_contracts.py
           python3 -B tests/test_diagnostic_preprocess.py
+          python3 -B tests/test_extension_contracts.py
+          python3 -B tests/test_bundle_rules.py
+          python3 -B tests/test_extensions_native.py --require-native
 
       - name: Build package
         run: |

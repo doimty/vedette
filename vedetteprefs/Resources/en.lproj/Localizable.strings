@@ -70,3 +70,10 @@
 "Violation Policy Selection" = "Violation Policy Selection";
 "Yes" = "Yes";
 "⚠️WARNING⚠️" = "⚠️WARNING⚠️";
+
+"App extensions" = "App extensions";
+"No App extensions" = "No App extensions";
+"Follow containing app" = "Follow containing app";
+"Independent rule off" = "Independent rule off";
+"Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension." = "Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension.";
+"Remove this extension's independent rule and use its containing app's rule?" = "Remove this extension's independent rule and use its containing app's rule?";

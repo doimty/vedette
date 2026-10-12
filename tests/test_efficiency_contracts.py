@@ -1,5 +1,6 @@
 from pathlib import Path
 import re,subprocess,unittest
+from extension_projection import projected_bytes
 ROOT=Path(__file__).resolve().parents[1]
 BASE='cd0b34807c031d2e179f1ae397ea8c6847be35e3'
 CPU_FROZEN=['VDTProcessIdentity.c','VDTProcessIdentity.h','VDTPolicyTransition.c','VDTPolicyTransition.h','VDTShared.mm','VDTShared.h','PrivateHeaders.h','libproc/libproc_internal.h','Vedette.plist','layout/DEBIAN/postinst','layout/DEBIAN/postrm']
@@ -57,7 +58,7 @@ class EfficiencyContracts(unittest.TestCase):
         expected=subprocess.check_output(['git','show',BASE+':VDTProcessManager.mm'],cwd=ROOT)
         wanted=expected.replace(b'    int operationErrno = errno;',b'#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;\n#endif')
         self.assertNotEqual(wanted,expected)
-        self.assertEqual((ROOT/'VDTProcessManager.mm').read_bytes(),wanted)
+        self.assertEqual(projected_bytes('VDTProcessManager.mm'),wanted)
         source=wanted.decode()
         self.assertEqual(source.count('#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;'),1)
         self.assertGreaterEqual(source.count('@"errno": @(operationErrno)'),3)
@@ -65,6 +66,6 @@ class EfficiencyContracts(unittest.TestCase):
     def test_cpu_runtime_binary_source_freeze(self):
         for name in CPU_FROZEN:
             with self.subTest(file=name):
-                self.assertEqual((ROOT/name).read_bytes(),subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT))
+                self.assertEqual(projected_bytes(name),subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT))
 
 if __name__=='__main__':unittest.main(verbosity=2)

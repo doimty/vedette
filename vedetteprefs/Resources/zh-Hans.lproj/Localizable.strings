@@ -70,3 +70,10 @@
 "Violation Policy Selection" = "超限处理";
 "Yes" = "确定";
 "⚠️WARNING⚠️" = "⚠️警告⚠️";
+
+"App extensions" = "App 扩展";
+"No App extensions" = "未找到 App 扩展";
+"Follow containing app" = "跟随所属 App";
+"Independent rule off" = "独立规则已关闭";
+"Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension." = "未单独设置时跟随所属 App。修改任一设置后改用独立规则；关闭独立规则后，Vedette 不再限制此扩展的 CPU。";
+"Remove this extension's independent rule and use its containing app's rule?" = "删除此扩展的独立规则，恢复跟随所属 App？";

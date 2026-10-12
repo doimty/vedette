@@ -2,7 +2,7 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror
 
-.PHONY: test-cpu test-ui test
+.PHONY: test-cpu test-ui test-extensions test
 
 test-cpu:
 	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
@@ -23,4 +23,11 @@ test-ui:
 	@sh tests/run_list_order_tests.sh
 
 
-test: test-cpu test-ui
+test-extensions:
+	@python3 -B tests/test_extension_contracts.py
+	@python3 -B tests/test_bundle_rules.py
+	@python3 -B tests/check_auto_monitor_path.py
+	@python3 -B tests/test_extensions_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
+
+
+test: test-cpu test-ui test-extensions

@@ -8,6 +8,7 @@ import re
 import subprocess
 import unittest
 from pathlib import Path
+from extension_projection import projected_bytes, baseline_bytes, APPEX_BASE
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFS = ROOT / 'vedetteprefs'
@@ -76,7 +77,10 @@ class PreferencesUIContracts(unittest.TestCase):
             if name.startswith('vedetteprefs/') or name.startswith('tests/'):
                 continue
             expected = subprocess.check_output(['git', 'show', BASELINE + ':' + name], cwd=ROOT)
-            actual = (ROOT / name).read_bytes()
+            actual = projected_bytes(name)
+            # First preserve the complete ui2.1 scope, then validate the older
+            # d54fc36 contracts with their already reviewed ui21 transforms.
+            self.assertEqual(actual, baseline_bytes(name, APPEX_BASE), name)
             if name == 'control':
                 wanted = expected.replace(b'Version: 1.1.10\n', b'Version: 1.1.10-1+ui21\n')
                 wanted = wanted.replace(b'Package: com.udevs.vedette\n', b'Package: com.doimty.vedette\n')
@@ -111,9 +115,15 @@ class PreferencesUIContracts(unittest.TestCase):
                 wanted = wanted.replace(b'normalized_configs_snapshot = [configs copy];\n    NSArray<NSDictionary *> *targets', b'normalized_configs_snapshot = [configs copy];\n    NSArray<NSDictionary *> *targets', 1)
                 actual = actual.replace(b'normalized_configs_snapshot = [configs copy];\n\n    NSArray<NSDictionary *> *targets', b'normalized_configs_snapshot = [configs copy];\n    NSArray<NSDictionary *> *targets', 1)
                 self.assertEqual(actual, wanted, name)
+            elif name == 'VDTProcessManager.mm':
+                wanted = expected.replace(b'    int operationErrno = errno;',
+                    b'#if VDT_DIAGNOSTICS_ENABLED\n    int operationErrno = errno;\n#endif', 1)
+                self.assertEqual(actual, wanted, name)
+            else:
+                self.assertEqual(actual, expected, name)
         for name in ['vedetteprefs/Makefile', 'vedetteprefs/ChoicyPreferences/CHPDaemonList.m']:
             expected = subprocess.check_output(['git', 'show', BASELINE + ':' + name], cwd=ROOT)
-            self.assertEqual((ROOT / name).read_bytes(), expected, name)
+            self.assertEqual(projected_bytes(name), expected, name)
 
     def test_native_cards_not_global_appearance(self):
         for path in ['VDTRootListController.m', 'VDTProcessConfiguration.m', 'VDTAboutListController.m',

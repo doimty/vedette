@@ -6,8 +6,9 @@
 #import "Common.h"
 
 typedef NS_ENUM(NSUInteger, VDTConfigType) {
-    VDTConfigTypeApp,
-    VDTConfigTypeDaemon
+    VDTConfigTypeApp = 0,
+    VDTConfigTypeDaemon = 1,
+    VDTConfigTypeExtension = 2
 };
 
 typedef NS_ENUM(NSUInteger, VDTViolationPolicy) {
@@ -31,6 +32,10 @@ id valueForProcessConfigKey(NSString *identifier, NSString *key, id defaultValue
 id valueForProcessConfigKeyWithPrefs(NSString *identifier, NSString *key, id defaultValue, VDTConfigType type, NSDictionary *prefs);
 void setValueForProcessConfigKey(NSString *identifier, NSString *key, id value, VDTConfigType type);
 void setValueForProcessConfigKeyWithPrefs(NSString *identifier, NSString *key, id value, VDTConfigType type, NSDictionary *prefs);
+// Presence, not enabled state, determines whether an extension overrides its app.
+BOOL VDTHasProcessConfig(NSString *identifier, VDTConfigType type, NSDictionary *prefs);
+// Removes all matching records. For an extension this restores host inheritance.
+void VDTRemoveProcessConfig(NSString *identifier, VDTConfigType type);
 
 #ifdef __cplusplus
 }
