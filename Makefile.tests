@@ -2,7 +2,7 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror
 
-.PHONY: test-cpu test-ui test
+.PHONY: test-cpu test-ui test-nice test-extensions test-rebuild test
 
 test-cpu:
 	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
@@ -35,4 +35,18 @@ test-nice:
 	@python3 -B tests/test_springboard_support.py
 
 
-test: test-cpu test-ui test-nice
+test-extensions:
+	@python3 -B tests/test_extension_contracts.py
+	@python3 -B tests/test_bundle_rules.py
+	@python3 -B tests/check_auto_monitor_path.py
+	@python3 -B tests/test_extensions_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
+
+
+test-rebuild:
+	@python3 -B tests/test_resource_manager.py
+	@python3 -B tests/test_resource_ui21.py
+	@python3 -B tests/test_resource_preferences_native.py --static-only
+	@python3 -B tests/test_rebuild_baseline.py
+
+
+test: test-cpu test-ui test-nice test-extensions test-rebuild

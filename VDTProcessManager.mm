@@ -10,6 +10,9 @@
 #import "VDTProcessIdentity.h"
 #import "VDTPolicyTransition.h"
 #import "VDTSpringBoardIdentity.h"
+#import "VDTBundleIdentity.h"
+#import "VDTBundleRules.h"
+#import "VDTResourceApply.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -186,6 +189,8 @@ NSString * const VDTTargetExecutablePathKey = @"executablePath";
 NSString * const VDTTargetProcCommKey = @"procComm";
 NSString * const VDTTargetStartSecondsKey = @"startSeconds";
 NSString * const VDTTargetStartMicrosecondsKey = @"startMicroseconds";
+NSString * const VDTTargetMemoryRuleKey = @"memoryRule";
+NSString * const VDTTargetJetsamRuleKey = @"jetsamRule";
 
 static NSArray<NSDictionary *> *configs_from_section(NSDictionary *prefs,
                                                      NSString *sectionKey,
@@ -246,13 +251,236 @@ NSArray<NSDictionary *>* vdt_configs_from_prefs(NSDictionary *prefs){
                                                      VDTConfigTypeApp, globallyEnabled)];
     [configs addObjectsFromArray:configs_from_section(validatedPrefs, @"daemonConfigs", @"daemonName",
                                                      VDTConfigTypeDaemon, globallyEnabled)];
+    [configs addObjectsFromArray:configs_from_section(validatedPrefs, @"extensionConfigs", @"extensionIdentifier",
+                                                     VDTConfigTypeExtension, globallyEnabled)];
     return configs;
+}
+
+#pragma mark - Resource rules (memoryRules / jetsamRules)
+
+// The Jetsam policy cores are versioned by Darwin major; iOS 15–18 map to
+// Darwin 21–24. Unknown future versions resolve to a read-only plan.
+static int32_t vdt_target_darwin_major(void){
+    return (int32_t)(NSProcessInfo.processInfo.operatingSystemVersion.majorVersion + 6);
+}
+
+// Classify an untrusted plist value exactly the way the C cores expect. A
+// CFBoolean or a non-integral number must never be coerced into an integer.
+static VDTPolicyInteger resource_policy_integer(id value){
+    if (!value) return (VDTPolicyInteger){VDTPolicyInputNull, 0};
+    if ([value isKindOfClass:[NSNumber class]]) {
+        NSNumber *number = (NSNumber *)value;
+        if (CFGetTypeID((__bridge CFTypeRef)number) == CFBooleanGetTypeID()) {
+            return (VDTPolicyInteger){VDTPolicyInputBoolean, 0};
+        }
+        double numericValue = number.doubleValue;
+        long long integralValue = number.longLongValue;
+        if (!isfinite(numericValue)) return (VDTPolicyInteger){VDTPolicyInputOverflow, 0};
+        if (numericValue != (double)integralValue) {
+            return (VDTPolicyInteger){VDTPolicyInputFloatingPoint, 0};
+        }
+        return (VDTPolicyInteger){VDTPolicyInputInteger, integralValue};
+    }
+    if ([value isKindOfClass:[NSString class]]) return (VDTPolicyInteger){VDTPolicyInputString, 0};
+    return (VDTPolicyInteger){VDTPolicyInputInvalid, 0};
+}
+
+static BOOL resource_rule_enabled_value(id value, BOOL *outEnabled){
+    if (!outEnabled) return NO;
+    if (!value) {
+        *outEnabled = NO;
+        return YES;
+    }
+    if (![value isKindOfClass:[NSNumber class]]) return NO;
+    if (CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID()) return NO;
+    *outEnabled = [(NSNumber *)value boolValue];
+    return YES;
+}
+
+// Builds the typed core input for one stored record. Load time and apply time
+// share these builders, so classification and planning can never disagree.
+static VDTMemoryRule resource_memory_core_rule(NSDictionary *rule, VDTPolicyRecordState state){
+    VDTMemoryRuleInput input = {
+        .state = state,
+        .schema = resource_policy_integer(rule[@"schema"]),
+        .active = resource_policy_integer(rule[@"active"]),
+        .inactive = resource_policy_integer(rule[@"inactive"])
+    };
+    return VDTParseMemoryRule(&input);
+}
+
+static VDTJetsamRule resource_jetsam_core_rule(NSDictionary *rule, VDTPolicyRecordState state){
+    VDTJetsamRuleInput input = {
+        .state = state,
+        .schema = resource_policy_integer(rule[@"schema"]),
+        .mode = VDTJetsamModeRaw,
+        .named = VDTJetsamNamedInvalid,
+        .rawBand = resource_policy_integer(rule[@"priority"]),
+        // The saved band is owned by the device that wrote it: a later OS
+        // upgrade turns the source major into a mismatch the core refuses
+        // instead of silently migrating the number.
+        .rawSourceDarwinMajor = resource_policy_integer(@(vdt_target_darwin_major()))
+    };
+    return VDTParseJetsamRule(&input);
+}
+
+// One normalised resource rule. `state` mirrors the frozen cores: presence —
+// including a disabled or malformed record — overrides host inheritance.
+static NSDictionary *resource_rule_from_entry(NSDictionary *validatedEntry,
+                                              NSString *sectionKey,
+                                              NSString *identifierKey,
+                                              VDTConfigType type,
+                                              BOOL globallyEnabled){
+    NSString *identifier = vdt_nonEmptyString(validatedEntry[identifierKey]);
+    if (!identifier) return nil;
+
+    BOOL enabled = NO;
+    BOOL enabledValid = resource_rule_enabled_value(validatedEntry[@"enabled"], &enabled);
+    VDTPolicyRecordState state = VDTPolicyRecordInvalid;
+    if (enabledValid && (!enabled || !globallyEnabled)) {
+        // The member switch folds into "disabled" exactly like the CPU rows;
+        // the record still overrides inheritance so a reload can undo it.
+        state = VDTPolicyRecordDisabled;
+    } else if (enabledValid) {
+        BOOL memorySection = [sectionKey isEqualToString:@"memoryRules"];
+        VDTPolicyParseStatus parseStatus = memorySection ?
+            resource_memory_core_rule(validatedEntry, VDTPolicyRecordEnabled).parseStatus :
+            resource_jetsam_core_rule(validatedEntry, VDTPolicyRecordEnabled).parseStatus;
+        if (parseStatus == VDTPolicyParseOK) state = VDTPolicyRecordEnabled;
+    }
+
+    NSMutableDictionary *rule = [@{
+        VDTConfigIdentifierKey: identifier,
+        VDTConfigTypeKey: @(type),
+        @"section": sectionKey,
+        @"state": @(state),
+        VDTConfigEnabledKey: @(state == VDTPolicyRecordEnabled)
+    } mutableCopy];
+    for (NSString *key in @[@"schema", @"active", @"inactive", @"priority"]) {
+        if (validatedEntry[key]) rule[key] = validatedEntry[key];
+    }
+    return rule;
+}
+
+static NSArray<NSDictionary *> *resource_rules_from_section(NSDictionary *validatedPrefs,
+                                                            NSString *sectionKey,
+                                                            NSString *identifierKey,
+                                                            VDTConfigType type,
+                                                            BOOL globallyEnabled){
+    NSMutableArray<NSDictionary *> *rules = [NSMutableArray array];
+    for (id rawEntry in vdt_array(validatedPrefs[sectionKey])) {
+        NSDictionary *entry = vdt_dictionary(rawEntry);
+        if (!entry) continue;
+        NSDictionary *rule = resource_rule_from_entry(entry, sectionKey, identifierKey, type, globallyEnabled);
+        if (rule) [rules addObject:rule];
+    }
+    return rules;
+}
+
+NSArray<NSDictionary *>* vdt_resource_rules_from_prefs(NSDictionary *prefs){
+    NSDictionary *validatedPrefs = vdt_dictionary(prefs);
+    if (!validatedPrefs) return @[];
+
+    BOOL globallyEnabled = vdt_bool(validatedPrefs[@"enabled"], YES);
+    NSMutableArray<NSDictionary *> *rules = [NSMutableArray array];
+    for (NSString *sectionKey in @[@"memoryRules", @"jetsamRules"]) {
+        [rules addObjectsFromArray:resource_rules_from_section(validatedPrefs, sectionKey,
+            @"bundleIdentifier", VDTConfigTypeApp, globallyEnabled)];
+        [rules addObjectsFromArray:resource_rules_from_section(validatedPrefs, sectionKey,
+            @"daemonName", VDTConfigTypeDaemon, globallyEnabled)];
+        [rules addObjectsFromArray:resource_rules_from_section(validatedPrefs, sectionKey,
+            @"extensionIdentifier", VDTConfigTypeExtension, globallyEnabled)];
+    }
+    return rules;
+}
+
+// Per-resource rule index. App and extension records are keyed by identifier;
+// daemon records stay a list because they match by executable name.
+typedef struct VDTResourceRuleMaps {
+    NSMutableDictionary<NSString *, NSDictionary *> *appMemoryById;
+    NSMutableDictionary<NSString *, NSDictionary *> *extensionMemoryById;
+    NSMutableDictionary<NSString *, NSDictionary *> *appJetsamById;
+    NSMutableDictionary<NSString *, NSDictionary *> *extensionJetsamById;
+    NSMutableArray<NSDictionary *> *daemonMemory;
+    NSMutableArray<NSDictionary *> *daemonJetsam;
+} VDTResourceRuleMaps;
+
+static VDTResourceRuleMaps resource_rule_maps(NSArray<NSDictionary *> *rules){
+    VDTResourceRuleMaps maps = {};
+    maps.appMemoryById = [NSMutableDictionary dictionary];
+    maps.extensionMemoryById = [NSMutableDictionary dictionary];
+    maps.appJetsamById = [NSMutableDictionary dictionary];
+    maps.extensionJetsamById = [NSMutableDictionary dictionary];
+    maps.daemonMemory = [NSMutableArray array];
+    maps.daemonJetsam = [NSMutableArray array];
+
+    for (id rawRule in rules) {
+        NSDictionary *rule = vdt_dictionary(rawRule);
+        if (!rule) continue;
+        NSString *identifier = vdt_nonEmptyString(rule[VDTConfigIdentifierKey]);
+        NSNumber *typeValue = vdt_number(rule[VDTConfigTypeKey]);
+        NSString *sectionKey = vdt_nonEmptyString(rule[@"section"]);
+        if (!identifier || !typeValue || !sectionKey) continue;
+
+        BOOL memory = [sectionKey isEqualToString:@"memoryRules"];
+        VDTConfigType type = (VDTConfigType)typeValue.unsignedLongValue;
+        if (type == VDTConfigTypeApp) {
+            NSMutableDictionary *map = memory ? maps.appMemoryById : maps.appJetsamById;
+            // First entry wins, matching the preference API and the CPU path.
+            if (!map[identifier]) map[identifier] = rule;
+        } else if (type == VDTConfigTypeExtension) {
+            NSMutableDictionary *map = memory ? maps.extensionMemoryById : maps.extensionJetsamById;
+            if (!map[identifier]) map[identifier] = rule;
+        } else if (type == VDTConfigTypeDaemon) {
+            [(memory ? maps.daemonMemory : maps.daemonJetsam) addObject:rule];
+        }
+    }
+    return maps;
+}
+
+static BOOL resource_maps_empty(VDTResourceRuleMaps maps){
+    return maps.appMemoryById.count == 0 && maps.extensionMemoryById.count == 0 &&
+        maps.appJetsamById.count == 0 && maps.extensionJetsamById.count == 0 &&
+        maps.daemonMemory.count == 0 && maps.daemonJetsam.count == 0;
+}
+
+// Presence, not enabled state, decides inheritance: an extension record of any
+// state overrides the containing App; a missing record inherits its records.
+static NSDictionary *resource_rule_for_extension(NSString *extensionIdentifier,
+                                                 NSString *appIdentifier,
+                                                 NSDictionary<NSString *, NSDictionary *> *extensionRulesById,
+                                                 NSDictionary<NSString *, NSDictionary *> *appRulesById){
+    if (!extensionIdentifier) return nil;
+    NSDictionary *extensionRule = extensionRulesById[extensionIdentifier];
+    if (extensionRule) return extensionRule;
+    return appIdentifier ? appRulesById[appIdentifier] : nil;
+}
+
+static NSDictionary *resource_rule_for_daemon(NSArray<NSDictionary *> *daemonRules,
+                                              const char *executableName,
+                                              const char *procComm,
+                                              const char *executablePath){
+    for (NSDictionary *rule in daemonRules) {
+        NSString *configuredName = vdt_nonEmptyString(rule[VDTConfigIdentifierKey]);
+        if (!configuredName) continue;
+        const char *configured = configuredName.UTF8String;
+        if (!configured) continue;
+        // The same reserved identity applies to every resource; a basename
+        // or p_comm called SpringBoard is never proof of the system process.
+        if (VDTSpringBoardRuleName(configured)) {
+            if (VDTSpringBoardRuleMatches(configured, executablePath)) return rule;
+            continue;
+        }
+        if (VDTProcessNameMatches(configured, executableName, procComm)) return rule;
+    }
+    return nil;
 }
 
 #pragma mark - Target resolution
 
 static void split_configs(NSArray<NSDictionary *> *configs,
                          NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById,
+                         NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById,
                          NSMutableArray<NSDictionary *> *daemonConfigs){
     for (id rawConfig in configs) {
         NSDictionary *config = vdt_dictionary(rawConfig);
@@ -265,6 +493,10 @@ static void split_configs(NSArray<NSDictionary *> *configs,
             // Preserve the preference API's first-entry-wins behavior if a
             // hand-edited plist contains duplicate identifiers.
             if (!appConfigsById[identifier]) appConfigsById[identifier] = config;
+        } else if (type == VDTConfigTypeExtension) {
+            // Presence, including a disabled/malformed first entry, overrides
+            // the containing App without sharing its identifier namespace.
+            if (!extensionConfigsById[identifier]) extensionConfigsById[identifier] = config;
         } else if (type == VDTConfigTypeDaemon) {
             [daemonConfigs addObject:config];
         }
@@ -275,7 +507,9 @@ static void split_configs(NSArray<NSDictionary *> *configs,
 // not configured, which is the signal to leave it completely alone.
 static NSDictionary *target_for_pid(pid_t pid,
                                     NSDictionary<NSString *, NSDictionary *> *appConfigsById,
-                                    NSArray<NSDictionary *> *daemonConfigs){
+                                    NSDictionary<NSString *, NSDictionary *> *extensionConfigsById,
+                                    NSArray<NSDictionary *> *daemonConfigs,
+                                    VDTResourceRuleMaps resourceMaps){
     if (pid <= 0) return nil;
 
     char pathBuffer[PROC_PIDPATHINFO_MAXSIZE];
@@ -308,29 +542,51 @@ static NSDictionary *target_for_pid(pid_t pid,
         }
     }
 
-    // A verified App identity is authoritative even when that App has no App
-    // config. It must never fall through to an unrelated daemon entry that
-    // happens to share the executable filename.
-    BOOL resolvedAsApplication = NO;
-    if (executablePath && !matched) {
-        NSString *bundlePath = application_bundle_path_for_executable(executablePath);
-        resolvedAsApplication = bundlePath != nil;
-
-        if (bundlePath && appConfigsById.count > 0) {
-            LSApplicationProxy *appProxy = appproxy_from_bundle_path(bundlePath);
-            NSString *bundleIdentifier = appProxy.bundleIdentifier;
-            if ([bundleIdentifier isKindOfClass:[NSString class]] && bundleIdentifier.length > 0) {
-                resolvedAsApplication = YES;
-                NSDictionary *config = appConfigsById[bundleIdentifier];
-                if (config) {
-                    matched = config;
-                    matchedName = bundleIdentifier;
-                }
-            }
+    // Validate the nearest extension before considering its containing App.
+    // An explicit extension entry wins by presence, not by enabled state;
+    // invalid extension metadata must never inherit an App or daemon rule.
+    NSString *extensionPath = VDTNearestBundlePath(executablePath, @"appex");
+    if (!extensionPath && executablePath) {
+        // A rejected/noncanonical appex path must not masquerade as its App
+        // after the strict path classifier declines it. This is a blocker,
+        // never an alternate source of extension identity or metadata.
+        NSString *candidate = executablePath.stringByDeletingLastPathComponent;
+        while (candidate.length > 1) {
+            if ([candidate.pathExtension caseInsensitiveCompare:@"appex"] == NSOrderedSame) return nil;
+            NSString *parent = candidate.stringByDeletingLastPathComponent;
+            if ([parent isEqualToString:candidate]) break;
+            candidate = parent;
         }
     }
+    NSDictionary *extensionInfo = extensionPath ?
+        VDTReadExtensionBundleInfo(extensionPath, executablePath) : nil;
+    NSString *extensionIdentifier = vdt_nonEmptyString(extensionInfo[@"extensionIdentifier"]);
+    NSDictionary *extensionConfig = extensionIdentifier ? extensionConfigsById[extensionIdentifier] : nil;
 
-    if (!matched && !resolvedAsApplication && daemonConfigs.count > 0) {
+    // Keep the release App ancestry check: even an unconfigured .app must
+    // never fall through to an unrelated basename/p_comm daemon rule.
+    NSString *bundlePath = application_bundle_path_for_executable(extensionPath ?: executablePath);
+    NSString *bundleIdentifier = nil;
+    NSDictionary *appConfig = nil;
+    if (!matched && bundlePath && appConfigsById.count > 0 &&
+        (!extensionPath || (extensionIdentifier && !extensionConfig))) {
+        LSApplicationProxy *appProxy = appproxy_from_bundle_path(bundlePath);
+        bundleIdentifier = vdt_nonEmptyString(appProxy.bundleIdentifier);
+        if (bundleIdentifier) appConfig = appConfigsById[bundleIdentifier];
+    }
+
+    VDTBundleRuleChoice ruleChoice = matched ? VDTBundleRuleNone :
+        VDTChooseBundleRule(bundlePath != nil, extensionPath != nil,
+        extensionIdentifier != nil, extensionConfig != nil, appConfig != nil);
+    if (ruleChoice == VDTBundleRuleExtension) {
+        matched = extensionConfig;
+        matchedName = extensionIdentifier;
+    } else if (ruleChoice == VDTBundleRuleApp) {
+        matched = appConfig;
+        matchedName = bundleIdentifier;
+    }
+
+    if (ruleChoice == VDTBundleRuleDaemon && daemonConfigs.count > 0) {
         char procComm[256];
         BOOL hasProcComm = !hasExecutableName && proc_comm_for_pid(pid, procComm, sizeof(procComm));
         if (!hasExecutableName && !hasProcComm) return nil;
@@ -354,11 +610,89 @@ static NSDictionary *target_for_pid(pid_t pid,
         }
     }
 
-    if (!matched) return nil;
+    // Resource rules resolve on the same validated identity and travel with
+    // the target independently of the CPU decision. The per-resource presence
+    // rule applies: a record of any state overrides host inheritance, while a
+    // missing record inherits the containing App's record for that resource.
+    NSDictionary *memoryRule = nil;
+    NSDictionary *jetsamRule = nil;
+    NSNumber *resourceIdentityType = nil;
+    NSString *resourceIdentityName = nil;
+    // Each resource has its own explicit reserved-daemon override. Presence
+    // wins even when disabled/invalid, without changing the CPU/nice choice.
+    if (VDTSpringBoardPathMatches(executablePath.UTF8String)) {
+        memoryRule = resource_rule_for_daemon(resourceMaps.daemonMemory, NULL, NULL,
+            executablePath.UTF8String);
+        jetsamRule = resource_rule_for_daemon(resourceMaps.daemonJetsam, NULL, NULL,
+            executablePath.UTF8String);
+        if (memoryRule || jetsamRule) {
+            resourceIdentityType = @(VDTConfigTypeDaemon);
+            resourceIdentityName = @VDT_SPRINGBOARD_RULE_NAME;
+        }
+    }
+
+    BOOL resourceNeedsApp = (!memoryRule && resourceMaps.appMemoryById.count > 0) ||
+        (!jetsamRule && resourceMaps.appJetsamById.count > 0);
+    NSString *resourceBundleIdentifier = bundleIdentifier;
+    // Failed extension verification is authoritative for ALL resources, not
+    // an invitation to inherit the containing App or a same-name daemon.
+    if (!resourceBundleIdentifier && bundlePath && resourceNeedsApp &&
+        (!extensionPath || extensionIdentifier)) {
+        LSApplicationProxy *resourceProxy = appproxy_from_bundle_path(bundlePath);
+        resourceBundleIdentifier = vdt_nonEmptyString(resourceProxy.bundleIdentifier);
+    }
+
+    if (extensionIdentifier) {
+        memoryRule = resource_rule_for_extension(extensionIdentifier, resourceBundleIdentifier,
+            resourceMaps.extensionMemoryById, resourceMaps.appMemoryById);
+        jetsamRule = resource_rule_for_extension(extensionIdentifier, resourceBundleIdentifier,
+            resourceMaps.extensionJetsamById, resourceMaps.appJetsamById);
+        resourceIdentityType = @(VDTConfigTypeExtension);
+        resourceIdentityName = extensionIdentifier;
+    } else if (!extensionPath && resourceBundleIdentifier) {
+        if (!memoryRule) memoryRule = resourceMaps.appMemoryById[resourceBundleIdentifier];
+        if (!jetsamRule) jetsamRule = resourceMaps.appJetsamById[resourceBundleIdentifier];
+        if (!resourceIdentityType && (memoryRule || jetsamRule)) {
+            resourceIdentityType = @(VDTConfigTypeApp);
+            resourceIdentityName = resourceBundleIdentifier;
+        }
+    } else if (!extensionPath && !bundlePath &&
+               (resourceMaps.daemonMemory.count > 0 || resourceMaps.daemonJetsam.count > 0)) {
+        const char *resourceComm = fallbackProcComm.UTF8String;
+        char resourceProcComm[256];
+        if (!hasExecutableName && !resourceComm &&
+            proc_comm_for_pid(pid, resourceProcComm, sizeof(resourceProcComm))) {
+            NSString *comm = [NSString stringWithUTF8String:resourceProcComm];
+            if (comm.length > 0) {
+                fallbackProcComm = comm;
+                resourceComm = fallbackProcComm.UTF8String;
+            }
+        }
+        // Resource identity lookup failure leaves any CPU target intact.
+        if (hasExecutableName || resourceComm) {
+            memoryRule = resource_rule_for_daemon(resourceMaps.daemonMemory,
+                hasExecutableName ? executableName : NULL, resourceComm, executablePath.UTF8String);
+            jetsamRule = resource_rule_for_daemon(resourceMaps.daemonJetsam,
+                hasExecutableName ? executableName : NULL, resourceComm, executablePath.UTF8String);
+            if (memoryRule || jetsamRule) {
+                resourceIdentityType = @(VDTConfigTypeDaemon);
+                resourceIdentityName = (memoryRule ?: jetsamRule)[VDTConfigIdentifierKey];
+            }
+        }
+    }
+    BOOL hasResourceIntent = memoryRule != nil || jetsamRule != nil;
+
+    if (!matched && !hasResourceIntent) return nil;
 
     NSNumber *typeValue = vdt_number(matched[VDTConfigTypeKey]);
     NSNumber *enabledValue = vdt_number(matched[VDTConfigEnabledKey]);
-    if (!typeValue || !enabledValue) return nil;
+    if (!typeValue || !enabledValue) {
+        // Resource-only target: the CPU side stays disabled, but the validated
+        // identity still owns the resource intents for this instance.
+        if (matched || !hasResourceIntent || !resourceIdentityType) return nil;
+        typeValue = resourceIdentityType;
+        enabledValue = @NO;
+    }
 
     BOOL enabled = enabledValue.boolValue;
     NSNumber *percentage = enabled ? vdt_number(matched[VDTConfigPercentageKey]) : @0;
@@ -368,7 +702,7 @@ static NSDictionary *target_for_pid(pid_t pid,
 
     NSMutableDictionary *target = [@{
         VDTTargetPidKey: @(pid),
-        VDTTargetNameKey: matchedName ?: @"",
+        VDTTargetNameKey: matchedName ?: resourceIdentityName ?: @"",
         VDTConfigTypeKey: typeValue,
         // A disabled entry resolves to zero, which the syscall layer treats as
         // "restore system defaults" rather than "apply a fatal limit".
@@ -389,16 +723,21 @@ static NSDictionary *target_for_pid(pid_t pid,
     } else {
         return nil;
     }
+    if (memoryRule) target[VDTTargetMemoryRuleKey] = memoryRule;
+    if (jetsamRule) target[VDTTargetJetsamRuleKey] = jetsamRule;
     return target;
 }
 
-NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs){
-    if (configs.count == 0) return @[];
+NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules){
+    if (configs.count == 0 && resourceRules.count == 0) return @[];
 
     NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById = [NSMutableDictionary dictionary];
     NSMutableArray<NSDictionary *> *daemonConfigs = [NSMutableArray array];
-    split_configs(configs, appConfigsById, daemonConfigs);
-    if (appConfigsById.count == 0 && daemonConfigs.count == 0) return @[];
+    split_configs(configs, appConfigsById, extensionConfigsById, daemonConfigs);
+    VDTResourceRuleMaps resourceMaps = resource_rule_maps(resourceRules);
+    if (appConfigsById.count == 0 && extensionConfigsById.count == 0 && daemonConfigs.count == 0 &&
+        resource_maps_empty(resourceMaps)) return @[];
 
     // proc_listpids reports a byte count, not an element count.
     int listBytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
@@ -420,7 +759,7 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs){
     for (int idx = 0; idx < pidCount; idx++) {
         pid_t pid = (pid_t)buffer[idx];
         if (pid <= 0) continue;
-        NSDictionary *target = target_for_pid(pid, appConfigsById, daemonConfigs);
+        NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs, resourceMaps);
         if (target) [targets addObject:target];
     }
 
@@ -428,6 +767,7 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs){
 
     VDTProbeRecord(@"runningboardd.resolveTargets", @{
         @"configCount": @(configs.count),
+        @"resourceRuleCount": @(resourceRules.count),
         @"scannedPids": @(pidCount),
         @"matchedTargets": @(targets.count)
     });
@@ -435,14 +775,16 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs){
     return targets;
 }
 
-NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *> *configs){
-    if (pid <= 0 || configs.count == 0) return @[];
+NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules){
+    if (pid <= 0 || (configs.count == 0 && resourceRules.count == 0)) return @[];
 
     NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSDictionary *> *extensionConfigsById = [NSMutableDictionary dictionary];
     NSMutableArray<NSDictionary *> *daemonConfigs = [NSMutableArray array];
-    split_configs(configs, appConfigsById, daemonConfigs);
+    split_configs(configs, appConfigsById, extensionConfigsById, daemonConfigs);
+    VDTResourceRuleMaps resourceMaps = resource_rule_maps(resourceRules);
 
-    NSDictionary *target = target_for_pid(pid, appConfigsById, daemonConfigs);
+    NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs, resourceMaps);
     return target ? @[target] : @[];
 }
 
@@ -556,6 +898,102 @@ static int policy_set_fatal(pid_t pid, int percentage, int interval, void *conte
     return proc_set_cpumon_params_fatal(pid, percentage, interval);
 }
 
+#pragma mark - Resource stage (staged enablement)
+
+// Production capabilities stay fully disabled until the M6 enablement step.
+// The engine still builds programs and reports why nothing can be written, so
+// the UI can distinguish saved from applied without faking either.
+static VDTApplyCapabilities vdt_resource_capabilities(void){
+    VDTApplyCapabilities capabilities = {};
+    capabilities.writeMemoryCustom = false;
+    capabilities.writeMemoryUnlimited = false;
+    capabilities.writeJetsamBand = false;
+    capabilities.restoreWriteback = false;
+    return capabilities;
+}
+
+// No production syscall backend is wired yet. A NULL backend keeps the engine
+// fail-closed: it reports "backend missing" instead of issuing any syscall.
+static const VDTResourceBackend *vdt_resource_backend(void){
+    return NULL;
+}
+
+// Applies the resolved resource rules for one target through the injectable
+// backend. The stage is independent of the CPU transition in both directions:
+// a CPU success never marks resource work as done, and a resource failure
+// never blocks CPU protection nor erases what the CPU side achieved.
+static BOOL vdt_apply_resource_target(NSDictionary *rawTarget){
+    NSDictionary *target = vdt_dictionary(rawTarget);
+    NSNumber *pidValue = target ? vdt_number(target[VDTTargetPidKey]) : nil;
+    if (!target || !pidValue || pidValue.intValue <= 0) return NO;
+
+    NSDictionary *memoryRule = vdt_dictionary(target[VDTTargetMemoryRuleKey]);
+    NSDictionary *jetsamRule = vdt_dictionary(target[VDTTargetJetsamRuleKey]);
+    if (!memoryRule && !jetsamRule) return YES;
+
+    pid_t pid = (pid_t)pidValue.intValue;
+    VDTMemoryRule memoryCore = {};
+    VDTJetsamRule jetsamCore = {};
+    if (memoryRule) {
+        memoryCore = resource_memory_core_rule(memoryRule,
+            (VDTPolicyRecordState)[vdt_number(memoryRule[@"state"]) unsignedLongValue]);
+    }
+    if (jetsamRule) {
+        jetsamCore = resource_jetsam_core_rule(jetsamRule,
+            (VDTPolicyRecordState)[vdt_number(jetsamRule[@"state"]) unsignedLongValue]);
+    }
+
+    // No revert records exist until the write channel is enabled, so restore
+    // requirements resolve to NoWrite instead of a blind SET of defaults.
+    VDTApplyProgram program = VDTApplyBuildProgram(pid,
+        memoryRule ? &memoryCore : NULL,
+        jetsamRule ? &jetsamCore : NULL,
+        vdt_target_darwin_major(),
+        false,
+        false,
+        vdt_resource_capabilities());
+
+    if (program.opCount == 0) {
+        VDTProbeRecord(@"runningboardd.resourceStage", @{
+            @"pid": @(pid),
+            @"name": target[VDTTargetNameKey] ?: @"",
+            @"ops": @0,
+            @"memorySkip": @(program.memorySkip),
+            @"jetsamSkip": @(program.jetsamSkip),
+            @"writeChannel": @"disabled"
+        });
+        return YES;
+    }
+
+    VDTApplyTarget applyTarget = {};
+    applyTarget.pid = pid;
+    VDTProcessInstanceToken token = {};
+    if (target_instance_token(target, &token)) {
+        applyTarget.hasExpectedToken = true;
+        applyTarget.expected = token;
+    }
+
+    VDTApplyReport report = VDTApplyExecute(&program, &applyTarget,
+        vdt_resource_backend(), NULL);
+
+    VDTProbeRecord(@"runningboardd.resourceStage", @{
+        @"pid": @(pid),
+        @"name": target[VDTTargetNameKey] ?: @"",
+        @"ops": @(program.opCount),
+        @"memoryOutcome": @(report.memoryOutcome),
+        @"jetsamOutcome": @(report.jetsamOutcome),
+        @"partial": @(report.partial),
+        @"identityPreMatched": @(report.identityPreMatched),
+        @"identityPostMatched": @(report.identityPostMatched),
+        @"writeChannel": vdt_resource_backend() ? @"enabled" : @"disabled"
+    });
+
+    // Only a failed write stays unsettled: the next scan retries it, while a
+    // disabled channel or a policy skip settles without pointless loops.
+    return report.memoryOutcome != VDTApplyOutcomeFailed &&
+        report.jetsamOutcome != VDTApplyOutcomeFailed;
+}
+
 BOOL vdt_apply_target(NSDictionary *rawTarget){
     NSDictionary *target = vdt_dictionary(rawTarget);
     NSNumber *pidValue = vdt_number(target[VDTTargetPidKey]);
@@ -651,7 +1089,13 @@ BOOL vdt_apply_target(NSDictionary *rawTarget){
         });
     }
 
-    return result.success;
+    // The resource stage runs regardless of the CPU outcome in either
+    // direction. A CPU success must never mark memory/jetsam work as done, and
+    // a resource failure must never skip CPU protection or erase its result.
+    BOOL cpuApplied = result.success;
+    BOOL resourceSettled = vdt_apply_resource_target(target);
+
+    return cpuApplied && resourceSettled;
 }
 
 void vdt_apply_targets(NSArray<NSDictionary *> *targets){

@@ -40,7 +40,9 @@ def verify(package):
     tweak = package / 'Library/MobileSubstrate/DynamicLibraries/Vedette.dylib'
     assert tweak.is_file(), 'Missing injected CPU-control library'
     assert b'VDTProbeRecordImpl' not in tweak.read_bytes(), 'Release diagnostic-only logger remains in injected library'
-    for symbol in (b'VDTHeaderCell', b'VDTAboutListController', b'VDTApplicationListSubcontrollerController', b'CHPDaemonListController', b'vdtHeader', b'Enabled Configurations', b'VDTActionListController'):
+    for marker in (b'extensionConfigs', b'extensionIdentifier'):
+        assert marker in binary and marker in tweak.read_bytes(), 'Missing extension storage/backend marker: ' + repr(marker)
+    for symbol in (b'VDTHeaderCell', b'VDTAboutListController', b'VDTApplicationListSubcontrollerController', b'CHPDaemonListController', b'vdtHeader', b'Enabled Configurations', b'VDTActionListController', b'VDTExtensionListController'):
         assert symbol in binary, 'Missing UI implementation marker: ' + repr(symbol)
     assert (bundle / 'Vedette@3x.png').is_file(), 'Missing own icon'
     print('Actual preferences resources: en/zh-Hans', len(tables['en']), 'keys each, bundle info/icon/UI markers passed')

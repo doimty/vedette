@@ -2,6 +2,7 @@
 """ui2 native section chrome prevents the custom-caption duplication seen in ui3."""
 from pathlib import Path
 import subprocess,unittest
+from extension_projection import inverse_extension_source
 ROOT=Path(__file__).resolve().parents[1]
 UI2='cd0b34807c031d2e179f1ae397ea8c6847be35e3'
 UI3='4ac149755d093995ce2b14f7971d8299d4df41ce'
@@ -12,7 +13,7 @@ class NativeSectionChrome(unittest.TestCase):
  def test_ui21_uses_exact_ui2_native_section_delegates(self):
   for file in CONTROLLERS:
    with self.subTest(file=file):
-    source=(ROOT/'vedetteprefs'/file).read_text()
+    source=inverse_extension_source('vedetteprefs/'+file,(ROOT/'vedetteprefs'/file).read_text())
     base=show(UI2,file)
     self.assertEqual(source,base)
     self.assertNotIn('titleForHeaderInSection:',source)

@@ -2,8 +2,12 @@
 """SpringBoard catalogue/identity regressions. Native resolver tests run in CI."""
 from pathlib import Path
 import os,subprocess,tempfile,unittest
-from springboard_delta import ROOT,BASE,FILES,without_springboard
-from release_delta import without_release
+from springboard_delta import ROOT,BASE,FILES,without_springboard as historical_without_springboard
+from release_delta import without_release as historical_without_release
+from extension_projection import released_bytes
+
+def without_springboard(name, data): return historical_without_springboard(name, released_bytes(name, data))
+def without_release(name, data): return historical_without_release(name, released_bytes(name, data))
 class SpringBoardSupport(unittest.TestCase):
     def test_exact_scope_preserves_original_cpu_and_ui_behavior(self):
         for name in FILES:
@@ -27,7 +31,8 @@ class SpringBoardSupport(unittest.TestCase):
         for kept in ['hasSuffix:@"Jetsam"','hasSuffix:@"SimulateCrash"','hasSuffix:@"_v2"']:
             self.assertIn(kept,source)
     def test_only_reserved_path_can_skip_app_lookup(self):
-        source=(ROOT/'VDTProcessManager.mm').read_text()
+        # Original released resolver contract remains tested independently.
+        source=released_bytes('VDTProcessManager.mm').decode()
         special=source[source.index('// Only the canonical system executable'):source.index('// A verified App identity')]
         self.assertIn('VDTSpringBoardPathMatches(executablePath.UTF8String)',special)
         self.assertIn('VDTSpringBoardRuleMatches(identifier.UTF8String, executablePath.UTF8String)',special)

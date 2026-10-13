@@ -108,3 +108,23 @@
 "Read back: %@" = "回读值：%@";
 "Pending targets: %@" = "待处理目标：%@";
 "No verified running instance" = "未找到可验证的运行实例";
+
+"App extensions" = "App 扩展";
+"No App extensions" = "未找到 App 扩展";
+"Follow containing app" = "跟随所属 App";
+"Independent rule off" = "独立规则已关闭";
+"Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension." = "未单独设置时跟随所属 App。修改任一设置后改用独立规则；关闭独立规则后，Vedette 不再限制此扩展的 CPU。";
+"Remove this extension's independent rule and use its containing app's rule?" = "删除此扩展的独立规则，恢复跟随所属 App？";
+"Active limit (MiB)" = "活跃上限 (MiB)";
+"Enable memory rule" = "启用内存规则";
+"Enable reclaim priority rule" = "启用回收优先级规则";
+"Inactive limit (MiB)" = "非活跃上限 (MiB)";
+"Memory" = "内存";
+"Priority band" = "优先级档位";
+"Reclaim priority" = "回收优先级";
+"Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB." = "保存的内存规则与生效状态分开显示：当前版本仅保存。0 = 系统默认、-1 = 不限制、正数 = MiB。";
+"Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "保存的回收优先级规则与生效状态分开显示：当前版本仅保存。档位因系统版本而异；0 = idle、-1 会实际写入默认档。";
+"Invalid resource rule" = "资源规则无效";
+"Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value." = "内存请输入 -1 至 2147483647 的整数，优先级档位请输入有符号 32 位 raw 整数。开关仅接受布尔值。";
+"Resource rule save failed" = "资源规则保存失败";
+"The rule could not be saved. The previous saved value has been restored." = "无法保存此规则，已恢复显示之前保存的值。";

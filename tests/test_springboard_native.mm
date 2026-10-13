@@ -1,5 +1,11 @@
 // Real production resolver + nice coordinator; ALL kernel APIs below are fake.
-#import "../VDTProcessManager.h"
+// Positive build executes the current combined resolver (resource argument).
+// The actual pre-SpringBoard resolver is compiled in an isolated old-header
+// overlay as a negative control, preserving every original assertion.
+#ifndef VDT_RESOLVER_HEADER
+#define VDT_RESOLVER_HEADER "../VDTProcessManager.h"
+#endif
+#import VDT_RESOLVER_HEADER
 #import "../VDTNiceShared.h"
 #import "../PrivateHeaders.h"
 #import "../VDTSpringBoardIdentity.h"
@@ -91,7 +97,20 @@ static NSDictionary *rule(BOOL cpu,BOOL nice,int value) {
         VDT_NICE_VALUE_KEY:@(value),VDT_NICE_REVISION_KEY:@"test"};
 }
 static NSDictionary *preferences(NSDictionary *entry) { return @{@"enabled":@YES,@"daemonConfigs":@[entry]}; }
-static NSArray *resolve(NSDictionary *prefs) { return vdt_targets_for_pid(MockPID,vdt_configs_from_prefs(prefs)); }
+static NSArray *resolve(NSDictionary *prefs) {
+#ifdef VDT_RESOURCE_RESOLVER
+    return vdt_targets_for_pid(MockPID,vdt_configs_from_prefs(prefs),vdt_resource_rules_from_prefs(prefs));
+#else
+    return vdt_targets_for_pid(MockPID,vdt_configs_from_prefs(prefs));
+#endif
+}
+static NSArray *resolveAll(NSDictionary *prefs) {
+#ifdef VDT_RESOURCE_RESOLVER
+    return vdt_resolve_targets(vdt_configs_from_prefs(prefs),vdt_resource_rules_from_prefs(prefs));
+#else
+    return vdt_resolve_targets(vdt_configs_from_prefs(prefs));
+#endif
+}
 static void resetKernel(void) {
     MockPath=VDT_SPRINGBOARD_EXECUTABLE;MockComm=VDT_SPRINGBOARD_RULE_NAME;MockAlive=YES;MockStart=100;
     NiceValue=-1;CpuCalls=NiceReads=NiceWrites=LsCalls=LastCpuPercentage=0;MockAppIdentifier=nil;
@@ -117,7 +136,7 @@ int main(void) {
         CHECK([target[VDTConfigPolicyKey] isEqual:@(VDTViolationPolicyNone)]);
         CHECK([target[VDTConfigPercentageKey] isEqual:@0]);
         CHECK(LsCalls==0); // It works even when no LaunchServices App proxy exists.
-        CHECK(vdt_resolve_targets(vdt_configs_from_prefs(niceOnly)).count==1);
+        CHECK(resolveAll(niceOnly).count==1);
         CHECK(vdt_target_is_current(target));
         VDTNiceCoordinator *nice=[VDTNiceCoordinator new];runNice(nice,niceOnly);
         CHECK(NiceValue==5 && NiceWrites==1 && CpuCalls==0);

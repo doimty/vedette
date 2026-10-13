@@ -2,9 +2,11 @@
 """Additive nice contracts + executable negative controls. Not UIKit proof."""
 from pathlib import Path
 import io, os, resource, subprocess, tarfile, tempfile, unittest
-from nice_delta import BASE, NAMES, ROOT, without_nice
+from nice_delta import BASE, NAMES, ROOT, without_nice as historical_without_nice
+from extension_projection import released_bytes
 from verify_nice_archive import validate
 
+def without_nice(name, data): return historical_without_nice(name, released_bytes(name, data))
 def source(name): return (ROOT/name).read_text()
 def baseline(name): return subprocess.check_output(['git','show',BASE+':'+name],cwd=ROOT)
 class NiceContracts(unittest.TestCase):

@@ -2,7 +2,10 @@
 """Negative controls for real slice/CodeDirectory entitlement verification."""
 from pathlib import Path
 import hashlib,plistlib,struct,subprocess,unittest
-from release_delta import without_release
+from release_delta import without_release as historical_without_release
+from extension_projection import released_bytes
+
+def without_release(name, data): return historical_without_release(name, released_bytes(name, data))
 from verify_nice_tool import EXPECTED_ENTITLEMENTS,ROOT_HIDE_DEPENDENCY,verify_tool
 ROOT=Path(__file__).resolve().parents[1]
 BASE='430e89c28a6d00493da34b721fdd1580e3f9a1cb'
@@ -56,7 +59,10 @@ class RootHideToolTests(unittest.TestCase):
         self.assertEqual((ROOT/'nicectl/Makefile').read_bytes(),expected)
         frozen=['nicectl/main.mm','VDTNicePolicy.c','VDTNiceRuntime.mm','VDTNiceShared.mm','VDTNiceStore.c',
             'Vedette.xm','VDTProcessManager.mm','VDTPolicyTransition.c','VDTProcessIdentity.c','layout/DEBIAN/postinst','layout/DEBIAN/prerm','layout/DEBIAN/postrm']
-        frozen += [str(p.relative_to(ROOT)) for p in (ROOT/'vedetteprefs').rglob('*') if p.is_file()]
+        old_paths=subprocess.check_output(['git','ls-tree','-r','--name-only',BASE],cwd=ROOT,text=True).splitlines()
+        frozen += [path for path in old_paths if path.startswith('vedetteprefs/')]
+        # New extension paths have separate metadata/UI gates; never pretend
+        # they existed in the immutable signed-tool baseline.
         for file in frozen:
             with self.subTest(file=file):self.assertEqual(without_release(file,(ROOT/file).read_bytes()),subprocess.check_output(['git','show',BASE+':'+file],cwd=ROOT))
 

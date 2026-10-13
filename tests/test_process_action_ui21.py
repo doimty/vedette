@@ -4,6 +4,7 @@ These are source contracts, not a native UIKit runtime test.
 """
 from pathlib import Path
 import subprocess,unittest
+from extension_projection import projected_bytes
 ROOT=Path(__file__).resolve().parents[1]
 REL='vedetteprefs/VDTProcessConfiguration.m'
 BASE='cd0b34807c031d2e179f1ae397ea8c6847be35e3'
@@ -29,7 +30,8 @@ class ProcessAction(unittest.TestCase):
         with self.assertRaises(AssertionError):inspect_selector(self.base)
     def test_configuration_setter_and_defaults_unchanged(self):
         marker='- (void)setProcessConfigValue:(id)value specifier:(PSSpecifier*)specifier'
-        self.assertEqual(self.current[self.current.index(marker):],self.base[self.base.index(marker):])
+        projected = projected_bytes(REL, self.current).decode()
+        self.assertEqual(projected[projected.index(marker):],self.base[self.base.index(marker):])
     def test_child_controller_forwards_only_to_originating_rule(self):
         child=(ROOT/'vedetteprefs/VDTActionListController.m').read_text()
         self.assertIn('self.parentController',child)

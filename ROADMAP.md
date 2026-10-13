@@ -1,10 +1,30 @@
 # Vedette 开发路线图
 
-## 当前独立批次：N1 nice（2026-10-08）
+## 最新阶段：从完整发布基线重建（2026-10-13）
+
+- 基线固定为已发布 `1.1.12-3` / `788f43b`；新分支 `feat/release-resource-rules`、候选版本 `1.1.13-1+rc1`。保留 nice 全链路、SpringBoard 严格身份及双环境构建，并整合扩展/资源规则。
+- 修资源选择子回读、严格整数输入及保存失败反馈，真实 Foundation 回读夹具接入 CI；内存/Jetsam 写通道仍关闭，保存与生效分开。
+- 完整验收与证据入口：[REBUILD_PLAN.md](REBUILD_PLAN.md)。不安装、不发布、不改默认分支。下文是各历史阶段快照，不以旧候选状态覆盖本阶段结果。
+
+## 历史批次：N1 nice（2026-10-08）
 
 用户已明确当前要加的是按目标设置 nice，而非前后台/Jetsam/全局VM。基于 ui21 `2994f24` 的隔离分支 `feat/nice-priority` 已有本地候选 `1.1.11-1+nice1`：独立开关与 -20…20、原值/待写意图持久化、回读与恢复回执、nice-only 手动重试和受检卸载握手。原CPU执行/身份模块保持字节冻结；nice不会自动启用CPU规则。无周期轮询或新daemon。
 
 本地 C/存储/旧回归已通过，iOS SDK仅做双架构语法检查；Foundation宿主执行、Apple链接打包和实际runningboardd权限未验证。未commit/push/CI/安装。详见 [NICE_PLAN.md](NICE_PLAN.md)、[NICE_REPORT.md](NICE_REPORT.md)。旧CPU批量恢复R1缺口不在此批修复范围；下方为ui21及其历史路线记录，不应当作nice已发布状态。
+## 历史阶段：内存上限与 Jetsam 优先级（旧 ui21 分叉）
+
+用户本轮要求“开始新计划”。完整范围、0／-1软件语义、跨代档位、资源独立继承、恢复边界与门禁见 [MEMORY_PLAN.md](MEMORY_PLAN.md)。
+
+- 实施基础：已云构建的ui2.1 `2994f24` 加当前未提交的App扩展候选；不丢弃扩展改动、不改变已验收的ui2原生样式。
+- M0已封存117个文件的本地检查点，并复跑原回归及identity/policy测试。
+- 顺序：M1配置／纯策略核／只读诊断 → M2自定义限额与撤销 → M3经验证的无限模式 → M4跨版本Jetsam优先级 → M5原生UI整合 → M6独立云构建与真机验收。
+- 三种内存模式与CPU规则分离；无限实现和恢复来源尚未通过，不把规划当作已实现。（2026-10-13 更新：M1–M4 设备侧取证完成；M3 经用户裁定“禁止无证据的大数冒充”后判定**达成**，条件项留 M6——详见 [MEMORY_PLAN.md](MEMORY_PLAN.md) §八/§九 与 `vedette-memory-plan/m3-unlimited/REPORT.md`、`vedette-memory-plan/m4-jetsam/REPORT.md`。）
+- 整合（M5）进展（2026-10-13）：第一批＝应用引擎＋可注入后端（15/15 变异杀死）；第二批＝prefs「内存/回收优先级」段落＋独立存储；第三批＝管理器接线（资源加载/按资源继承/仅资源目标/应用阶段；写入通道保持关闭）。全套门禁与重型 C 回归全绿；未接设备/CI。设计 `M5_PLAN.md`，报告 `vedette-memory-plan/m5-integration/REPORT.md`。
+- 云构建（M6 起步，2026-10-13）：`feat/memory-jetsam-rules` 已推云端并 **run 38298645064 全绿**；roothide 候选包已核验（fat arm64+arm64e / minos15.0 / 签名 / 资源校验 87 键 / macOS 全回归含原生扩展测试）。待办：新内存套件接入 CI、发布版本另定、真机验收。报告 `vedette-memory-plan/m6-cloud/REPORT.md`，归档 `vedette-memory-build/run-38298645064/`。
+- M6 CI 接线完成（2026-10-13）：`a06eba1` + `27b91db` 推送后 **run 38331391387 全绿**（job 11m05s）；4 个新套件真实执行 4/5/8/7 项并全过，策略/引擎各 15 个变异编译后由断言击杀。Darwin `nm` 精确单前缀兼容与原白名单审计通过，既有 Foundation 原生扩展夹具 PASS。新 roothide 包 sha256 `71ea7931…`，双架构/资源校验通过；资源写门禁仍关闭，不安装、不发布。未完成：正式 backend/恢复持久化/受控启用、版本另定、真实 App 验收。归档 `vedette-memory-build/run-38331391387/`。
+- M0 时点快照：当时只启动计划与本地基线准备；无生产内存代码、设备操作、commit/push、云构建或安装。后续状态以以上执行记录为准。
+
+以下ui2.1及更早内容为各阶段的规划快照；涉及“待构建”时以各自构建回执和最新计划为准。
 
 更新：2026-10-08。视觉以已通过用户真机反馈的 ui2 (`cd0b34807c031d2e179f1ae397ea8c6847be35e3`) 为基线。新候选 `feat/ui21-cpu-efficiency` 恢复 ui2 的页面间距/分组；仅把大分段策略控件改为普通选择行，并做两项限定 CPU 开销优化。未构建/安装前不宣称 ui21 已通过设备验收。
 

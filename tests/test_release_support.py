@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import importlib.util,os,shlex,shutil,subprocess,tempfile,unittest
-from release_delta import NAMES,ROOT,BASE,without_release
+from release_delta import NAMES,ROOT,BASE,without_release as historical_without_release
+from extension_projection import released_bytes
+
+def without_release(name, data): return historical_without_release(name, released_bytes(name, data))
 from canonicalize_nice_deb import canonicalize,records
 from test_nice_tool import fat
 from verify_nice_tool import verify_tool
 spec=importlib.util.spec_from_file_location('stage_release',ROOT/'ci/stage_release.py')
-stage_module=importlib.util.module_from_spec(spec);spec.loader.exec_module(stage_module)
+candidate_stage_module=importlib.util.module_from_spec(spec);spec.loader.exec_module(candidate_stage_module)
+# Historical fixtures execute the actual immutable released production function.
+# Candidate fixtures below execute the current strict-version staging function.
+import types
+stage_module=types.ModuleType('released_stage_release')
+stage_module.__file__=str(ROOT/'ci/stage_release.py')
+exec(compile(subprocess.check_output(['git','show','788f43bcb17a2c3890ed8bdeea3f1a97660e13c7:ci/stage_release.py'],cwd=ROOT),
+             stage_module.__file__,'exec'),stage_module.__dict__)
 
 def fixture(stage,scheme):
     (stage/'usr/libexec').mkdir(parents=True);(stage/'DEBIAN').mkdir()
     (stage/'usr/libexec/vedette-nicectl').write_bytes(b'not executed test bytes');(stage/'usr/libexec/vedette-nicectl').chmod(0o755)
     arch='iphoneos-arm64' if scheme=='rootless' else 'iphoneos-arm64e'
-    text=(ROOT/'control').read_text().replace('Architecture: iphoneos-arm\n','Architecture: '+arch+'\n')+'\n'
+    # Keep the released 1.1.12-3 staging assertions, not a new-version mock.
+    text=released_bytes('control').decode().replace('Architecture: iphoneos-arm\n','Architecture: '+arch+'\n')+'\n'
     (stage/'DEBIAN/control').write_text(text)
     for name in ('postinst','prerm','postrm'):shutil.copy2(ROOT/'layout/DEBIAN'/name,stage/'DEBIAN'/name)
 
@@ -37,6 +48,28 @@ class ReleaseSupport(unittest.TestCase):
                 for hook in ('postinst','prerm'):
                     folder='layout-rootless' if scheme=='rootless' else 'layout'
                     self.assertEqual((stage/'DEBIAN'/hook).read_bytes(),(ROOT/folder/'DEBIAN'/hook).read_bytes())
+    def test_candidate_staging_accepts_only_exact_new_version(self):
+        with tempfile.TemporaryDirectory() as td:
+            for scheme in ('roothide','rootless'):
+                stage=Path(td)/scheme;fixture(stage,scheme)
+                control=stage/'DEBIAN/control'
+                released=control.read_bytes()
+                # The new strict function must reject the published old version
+                # before changing metadata or hooks; no dual-version wildcard.
+                with self.assertRaises(ValueError):candidate_stage_module.stage_release(stage,scheme)
+                self.assertEqual(control.read_bytes(),released)
+                candidate=released.replace(b'Version: 1.1.12-3\n',b'Version: 1.1.13-1+rc1\n',1)
+                self.assertNotEqual(candidate,released)
+                control.write_bytes(candidate)
+                candidate_stage_module.stage_release(stage,scheme)
+                self.assertIn(b'Version: 1.1.13-1+rc1\n',control.read_bytes())
+                self.assertEqual(b'roothide,' in control.read_bytes(),scheme=='roothide')
+                for hook in ('postinst','prerm'):
+                    folder='layout-rootless' if scheme=='rootless' else 'layout'
+                    self.assertEqual((stage/'DEBIAN'/hook).read_bytes(),(ROOT/folder/'DEBIAN'/hook).read_bytes())
+        for version in ('1.1.12-3','1.1.10-1+ui21'):
+            subprocess.run(['dpkg','--compare-versions','1.1.13-1+rc1','gt',version],check=True)
+
     def test_mismatched_scheme_or_version_fails_before_replacing_control(self):
         with tempfile.TemporaryDirectory() as td:
             stage=Path(td)/'stage';fixture(stage,'rootless');before=(stage/'DEBIAN/control').read_bytes()

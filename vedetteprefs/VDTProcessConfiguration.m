@@ -12,6 +12,68 @@
 #import "VDTHeaderCell.h"
 #import "VDTActionListController.h"
 #import "VDTNicePreferences.h"
+#import "VDTExtensionListController.h"
+#import <CoreFoundation/CoreFoundation.h>
+#include <stdint.h>
+#include <string.h>
+
+// BEGIN resource rule input validation (also executed by the Foundation fixture).
+static BOOL VDTResourceRuleFieldIsValid(id key, id section) {
+    if (![key isKindOfClass:NSString.class] || ![section isKindOfClass:NSString.class]) return NO;
+    BOOL memory = [section isEqualToString:@"memoryRules"];
+    BOOL jetsam = [section isEqualToString:@"jetsamRules"];
+    return ((memory || jetsam) && [key isEqualToString:@"enabled"])
+        || (memory && ([key isEqualToString:@"active"] || [key isEqualToString:@"inactive"]))
+        || (jetsam && [key isEqualToString:@"priority"]);
+}
+
+// Complete ASCII integer, with overflow checked BEFORE multiplication/addition.
+// No trimming, intValue coercion, floating-point NSNumber, or Boolean-as-integer.
+static NSNumber *VDTResourceRuleInteger(id value, int32_t minimum) {
+    NSString *text = nil;
+    if ([value isKindOfClass:NSString.class]) {
+        text = value;
+    } else if ([value isKindOfClass:NSNumber.class]) {
+        if (CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) return nil;
+        const char *type = [value objCType];
+        if (!type || strlen(type) != 1 || !strchr("cCsSiIlLqQ", type[0])) return nil;
+        text = [value stringValue];
+    } else {
+        return nil;
+    }
+    if (text.length == 0) return nil;
+    NSUInteger index = 0;
+    unichar first = [text characterAtIndex:0];
+    BOOL negative = first == '-';
+    if (negative || first == '+') index++;
+    if (index == text.length) return nil;
+    uint64_t magnitude = 0;
+    uint64_t limit = negative ? (uint64_t)(-(int64_t)minimum) : (uint64_t)INT32_MAX;
+    for (; index < text.length; index++) {
+        unichar character = [text characterAtIndex:index];
+        if (character < '0' || character > '9') return nil;
+        uint64_t digit = character - '0';
+        if (digit > limit || magnitude > (limit - digit) / 10) return nil;
+        magnitude = magnitude * 10 + digit;
+    }
+    int64_t parsed = negative ? -(int64_t)magnitude : (int64_t)magnitude;
+    if (parsed < minimum || parsed > INT32_MAX) return nil;
+    return @((NSInteger)parsed);
+}
+
+static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+    if (!VDTResourceRuleFieldIsValid(key, section)) return nil;
+    if ([key isEqualToString:@"enabled"]) {
+        if (![value isKindOfClass:NSNumber.class]
+            || CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID()) return nil;
+        return @([value boolValue]);
+    }
+    // Keep the advanced Jetsam raw int32 save domain. Version-specific band
+    // validity remains in VDTJetsamPolicy; saving is NOT applying or remapping.
+    int32_t minimum = [section isEqualToString:@"memoryRules"] ? -1 : INT32_MIN;
+    return VDTResourceRuleInteger(value, minimum);
+}
+// END resource rule input validation.
 
 @implementation VDTProcessConfiguration
 
@@ -75,7 +137,12 @@
 }
 
 - (NSString*)validIdentifier{
-    return  [self configurationType] == VDTConfigTypeApp ? [[self specifier] propertyForKey:@"applicationIdentifier"] : [[self specifier] propertyForKey:@"daemonName"];
+    switch ([self configurationType]) {
+        case VDTConfigTypeApp: return [[self specifier] propertyForKey:@"applicationIdentifier"];
+        case VDTConfigTypeDaemon: return [[self specifier] propertyForKey:@"daemonName"];
+        case VDTConfigTypeExtension: return [[self specifier] propertyForKey:@"extensionIdentifier"];
+        default: return nil;
+    }
 }
 
 -(VDTConfigType)configurationType{
@@ -102,7 +169,8 @@
         [monitorEnabledGroupSpec setProperty:VDTLoc(self.class, @"Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required.") forKey:@"footerText"];
         [rootSpecifiers addObject:monitorEnabledGroupSpec];
         [rootSpecifiers addObject:VDTHeaderSpecifier(self.specifier.name ?: validIdentifier,
-            validIdentifier, [self configurationType] == VDTConfigTypeApp ? @"app" : @"gearshape.2")];
+            validIdentifier, [self configurationType] == VDTConfigTypeExtension ? @"puzzlepiece.extension" :
+                ([self configurationType] == VDTConfigTypeApp ? @"app" : @"gearshape.2"))];
     
         PSSpecifier *monitorEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable CPU limits") target:self set:@selector(setProcessConfigValue:specifier:) get:@selector(readProcessConfigValue:) detail:nil cell:PSSwitchCell edit:nil];
         [monitorEnabledSpec setProperty:VDTLoc(self.class, @"Enable CPU limits") forKey:@"label"];
@@ -156,11 +224,131 @@
         [rootSpecifiers addObject:intervalSpec];
 
         // Keep the nice controls independent from the legacy CPU rule editor.
-        [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];
+        if ([self configurationType] == VDTConfigTypeApp || [self configurationType] == VDTConfigTypeDaemon) {
+            [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];
+        }
+        if ([self configurationType] == VDTConfigTypeExtension) {
+            PSSpecifier *inheritanceGroup = [PSSpecifier emptyGroupSpecifier];
+            [inheritanceGroup setProperty:VDTLoc(self.class,
+                @"Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension.") forKey:@"footerText"];
+            [rootSpecifiers addObject:inheritanceGroup];
+            PSSpecifier *inheritance = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app")
+                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+            [inheritance setButtonAction:@selector(confirmFollowContainingApp)];
+            [rootSpecifiers addObject:inheritance];
+        }
+
+        //Memory rule
+        PSSpecifier *memoryGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Memory") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [memoryGroupSpec setProperty:VDTLoc(self.class, @"Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.") forKey:@"footerText"];
+        [rootSpecifiers addObject:memoryGroupSpec];
+
+        PSSpecifier *memoryEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable memory rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSSwitchCell edit:nil];
+        [memoryEnabledSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [memoryEnabledSpec setProperty:@NO forKey:@"default"];
+        [memoryEnabledSpec setProperty:@"enabled" forKey:@"key"];
+        [memoryEnabledSpec setProperty:@"memoryRules" forKey:@"vdtRuleSection"];
+        [rootSpecifiers addObject:memoryEnabledSpec];
+
+        PSTextFieldSpecifier* memoryActiveSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Active limit (MiB)") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSEditTextCell edit:nil];
+        [memoryActiveSpec setKeyboardType:UIKeyboardTypeNumbersAndPunctuation autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
+        [memoryActiveSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [memoryActiveSpec setPlaceholder:@"0"];
+        [memoryActiveSpec setProperty:@"active" forKey:@"key"];
+        [memoryActiveSpec setProperty:@"memoryRules" forKey:@"vdtRuleSection"];
+        [memoryActiveSpec setProperty:VDTLoc(self.class, @"Active limit (MiB)") forKey:@"label"];
+        [rootSpecifiers addObject:memoryActiveSpec];
+
+        PSTextFieldSpecifier* memoryInactiveSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Inactive limit (MiB)") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSEditTextCell edit:nil];
+        [memoryInactiveSpec setKeyboardType:UIKeyboardTypeNumbersAndPunctuation autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
+        [memoryInactiveSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [memoryInactiveSpec setPlaceholder:@"0"];
+        [memoryInactiveSpec setProperty:@"inactive" forKey:@"key"];
+        [memoryInactiveSpec setProperty:@"memoryRules" forKey:@"vdtRuleSection"];
+        [memoryInactiveSpec setProperty:VDTLoc(self.class, @"Inactive limit (MiB)") forKey:@"label"];
+        [rootSpecifiers addObject:memoryInactiveSpec];
+
+        //Reclaim priority rule
+        PSSpecifier *jetsamGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Reclaim priority") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [jetsamGroupSpec setProperty:VDTLoc(self.class, @"Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.") forKey:@"footerText"];
+        [rootSpecifiers addObject:jetsamGroupSpec];
+
+        PSSpecifier *jetsamEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable reclaim priority rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSSwitchCell edit:nil];
+        [jetsamEnabledSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [jetsamEnabledSpec setProperty:@NO forKey:@"default"];
+        [jetsamEnabledSpec setProperty:@"enabled" forKey:@"key"];
+        [jetsamEnabledSpec setProperty:@"jetsamRules" forKey:@"vdtRuleSection"];
+        [rootSpecifiers addObject:jetsamEnabledSpec];
+
+        PSTextFieldSpecifier* jetsamBandSpec = [PSTextFieldSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Priority band") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSEditTextCell edit:nil];
+        [jetsamBandSpec setKeyboardType:UIKeyboardTypeNumbersAndPunctuation autoCaps:UITextAutocapitalizationTypeNone autoCorrection:UITextAutocorrectionTypeNo];
+        [jetsamBandSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+        [jetsamBandSpec setPlaceholder:@"16"];
+        [jetsamBandSpec setProperty:@"priority" forKey:@"key"];
+        [jetsamBandSpec setProperty:@"jetsamRules" forKey:@"vdtRuleSection"];
+        [jetsamBandSpec setProperty:VDTLoc(self.class, @"Priority band") forKey:@"label"];
+        [rootSpecifiers addObject:jetsamBandSpec];
+
         _specifiers = rootSpecifiers;
     }
     
     return _specifiers;
+}
+
+- (void)confirmFollowContainingApp {
+    if ([self configurationType] != VDTConfigTypeExtension) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app")
+        message:VDTLoc(self.class, @"Remove this extension's independent rule and use its containing app's rule?")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel")
+        style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app")
+        style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            VDTProcessConfiguration *owner = weakSelf;
+            if (!owner) return;
+            VDTRemoveProcessConfig([owner validIdentifier], VDTConfigTypeExtension);
+            UIViewController *parent = (UIViewController *)[owner valueForKey:@"_parentController"];
+            if ([parent isKindOfClass:VDTExtensionListController.class])
+                [(VDTExtensionListController *)parent reloadExtensionRule:[owner validIdentifier]];
+            [owner reloadSpecifiers];
+        }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)presentResourceRuleError:(NSString *)title message:(NSString *)message {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"OK")
+        style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)setResourceRuleValue:(id)value specifier:(PSSpecifier*)specifier{
+    NSString *key = [specifier propertyForKey:@"key"];
+    NSString *section = [specifier propertyForKey:@"vdtRuleSection"];
+    NSNumber *parsed = VDTResourceRuleInput(value, key, section);
+    if (!parsed) {
+        [self reloadSpecifier:specifier animated:NO];
+        [self presentResourceRuleError:VDTLoc(self.class, @"Invalid resource rule")
+            message:VDTLoc(self.class, @"Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value.")];
+        return;
+    }
+    BOOL saved = setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);
+    // Reload through the getter even on failure; never leave an optimistic edit
+    // displayed, post our own notification, or claim the saved rule was applied.
+    [self reloadSpecifier:specifier animated:NO];
+    if (!saved) {
+        [self presentResourceRuleError:VDTLoc(self.class, @"Resource rule save failed")
+            message:VDTLoc(self.class, @"The rule could not be saved. The previous saved value has been restored.")];
+    }
+}
+
+- (id)readResourceRuleValue:(PSSpecifier*)specifier{
+    NSString *key = [specifier propertyForKey:@"key"];
+    NSString *section = [specifier propertyForKey:@"vdtRuleSection"];
+    if (!VDTResourceRuleFieldIsValid(key, section)) return [specifier propertyForKey:@"default"];
+    return valueForProcessResourceRuleKey([self validIdentifier], key, [specifier propertyForKey:@"default"], [self configurationType], section);
 }
 
 - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier*)specifier{
@@ -178,6 +366,11 @@
             }
             case VDTConfigTypeDaemon:{
                 [(CHPDaemonListController *)parentController reloadValueOfSelectedSpecifier];
+                break;
+            }
+            case VDTConfigTypeExtension:{
+                if ([parentController isKindOfClass:VDTExtensionListController.class])
+                    [(VDTExtensionListController *)parentController reloadExtensionRule:[self validIdentifier]];
                 break;
             }
             default:

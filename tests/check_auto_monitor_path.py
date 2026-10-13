@@ -105,7 +105,7 @@ def check_launch_gate_and_catch_up() -> None:
     require(reconcile, r"current_normalized_configs_sync\s*\(\)", "reused catch-up config snapshot")
     require(handler, r"current_normalized_configs_sync\s*\(\)", "reused fast-path config snapshot")
     forbid(reconcile, "vdt_configs_from_prefs", "per-scan config re-normalization")
-    require(reconcile, r"vdt_resolve_targets\s*\(configs\)", "catch-up target scan")
+    require(reconcile, r"vdt_resolve_targets\s*\(configs,\s*current_normalized_resource_rules_sync\(\)\)", "catch-up target scan")
     require(reconcile, r"retire_targets_without_active_config\s*\(configs\)", "deleted-config retirement retry")
     require(reconcile, r"apply_launch_target_if_needed\s*\(target\)", "catch-up application gate")
     require(reconcile, r"intersectSet:liveInstances", "exited-instance retirement")
@@ -223,17 +223,17 @@ def check_process_scan_and_config_boundaries() -> None:
         "fractional and non-finite numeric rejection",
     )
 
-    require(
-        MANAGER,
-        r"application_bundle_path_for_executable.*?while\s*\(candidate\.length\s*>\s*1\).*?pathExtension.*?@\"app\"",
-        "nested application-bundle classification",
-    )
-    require(target_body, r"resolvedAsApplication", "App identity classification")
-    require(
-        target_body,
-        r"if\s*\(!matched\s*&&\s*!resolvedAsApplication\s*&&\s*daemonConfigs\.count\s*>\s*0\)",
-        "App-to-daemon fallthrough block",
-    )
+    require(target_body, r'VDTNearestBundlePath\(executablePath, @"appex"\)', "nearest extension classification")
+    require(target_body, r'VDTReadExtensionBundleInfo\(extensionPath, executablePath\)', "verified extension executable")
+    require(target_body, r'application_bundle_path_for_executable\(extensionPath \?: executablePath\)', "released App ancestry classifier")
+    ancestry = extract_function(MANAGER, 'static NSString *application_bundle_path_for_executable')
+    require(ancestry, r'executablePath\.stringByDeletingLastPathComponent', "released App parent walk")
+    require(ancestry, r'pathExtension\s+caseInsensitiveCompare:@"app"', "released exact App extension class")
+    require(target_body, r'VDTChooseBundleRule\(bundlePath != nil, extensionPath != nil,\s*extensionIdentifier != nil, extensionConfig != nil, appConfig != nil\)', "presence-based override choice")
+    require(target_body, r'if \(ruleChoice == VDTBundleRuleDaemon && daemonConfigs.count > 0\)', "App/extension-to-daemon fallthrough block")
+    rules = (REPO_ROOT / "VDTBundleRules.c").read_text()
+    require(rules, r'if \(insideExtension\).*?if \(!extensionIdentityValid\) return VDTBundleRuleNone;.*?if \(hasExtensionConfig\) return VDTBundleRuleExtension;', "explicit disabled extension override")
+    require(rules, r'if \(insideApp\) return hasAppConfig \? VDTBundleRuleApp : VDTBundleRuleNone;', "unconfigured App never becomes daemon")
     require(target_body, r"VDTCopyLastPathComponent\s*\(", "full executable-name derivation")
     require(target_body, r"VDTProcessNameMatches\s*\(", "daemon identity comparison")
     require(
