@@ -145,3 +145,15 @@ M3不通过时不得宣称三模式完成。M2可单独形成有限候选，但�
 - `Vedette.xm`：资源快照 + 四处调用携带规则 + retire 剥离资源意图。
 - 投影：REVIEWED_PATHS +2（VDTProcessManager.h、Vedette.xm），42 hunks 全冻结通过；新增 `tests/test_resource_manager.py`（8 项含 5 负例）；更新 extension/auto-monitor 合同 token。
 - 全部门禁 + `make -f Makefile.tests test` + 策略核 + 引擎套件全绿。边界：本地不编译 manager/vx（M6 CI）；写入通道关闭。下一步：真实 backend + 恢复记录 + 能力启用（M6）。
+
+### M6 首批：云构建全绿（2026-10-13）
+
+- 推送 `feat/memory-jetsam-rules`（`a3e92be` 扩展批次 + `775a5f1` 内存批次；两笔均过 commit-check A/B；默认分支未动）。推送通道：github.com:443 受阻 → 仓库部署密钥 `vedette-push (minis-ish)` + SSH（remote ssh-origin）。
+- 云构建 run 38298645064 全绿（12m42s）；候选包 `com.doimty.vedette_1.1.10-1+ui21_iphoneos-arm64e.deb` sha256 `28c0d410…`：fat arm64+arm64e、minos15.0/sdk17.5、链式修复、已签名；`verify_preferences_resources` 87 键通过；macOS 全回归（含 extensions native `--require-native`）通过。
+- 注意：版本串未变（发布前另定）；4 个新内存套件未接 workflow（M6 待办）；仅 roothide 包。归档 `vedette-memory-build/run-38298645064/`。
+
+### M6 第二批：CI 接线（2026-10-13，本地验证完成）
+
+- 已将 `test_memory_policy`、`test_resource_apply`、`test_resource_manager`、`test_resource_ui21` 四套门禁加入工作流并同步逆投影 CI 附加块；本条时点云端验证待执行。
+- 符号审计仅在 Darwin 去掉一个 Mach-O ABI 下划线；原白名单不变。正负例与 3 个故障变体均已验证，本地最终引擎 5 项/15 行为变异、快速门禁与既有宿主回归全过；Foundation 在 iSH 明确 SKIP，云端仍要求 `--require-native`。
+- 本批不改资源生产代码：能力门禁全 false、backend NULL，不安装、不发布；版本仍 `1.1.10-1+ui21`。证据 `vedette-memory-plan/m6-cloud/ci-validation/`。
