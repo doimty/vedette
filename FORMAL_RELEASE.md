@@ -19,21 +19,27 @@
 
 - iSH `make -f Makefile.tests test` 全量通过；Foundation native 按设计 SKIP 77，不能当 PASS。
 - 新 UI 独立门禁8 tests / 11错误变体静态拒绝；资源原文门禁17 tests。正式字面投影扣除指定路径的唯一字面区域回到固定1dfce93，再串完整788发布/历史CPU与UI冻结，未知差异负例仍拒；本批类命名/目录/重试/CI布局纳入逐字可审阅patch，不清空冻结。
-- Linux真实生产C的有界重试预算（4编译后断言变体）与目录状态机（3编译后断言变体）已执行通过；并发失效、旧代次拒绝、暖失败保留和明确重试均有断言。新Foundation夹具覆盖不reload的恢复、三次上限、Gone清理、旧延时任务、真实目录扫描及CHP假类并存；本地只完成SDK编译，实际Foundation执行必须由新云原生门禁验证。
+- Linux真实生产C的有界重试预算（4编译后断言变体）与目录状态机（3编译后断言变体）已执行通过；并发失效、旧代次拒绝、暖失败保留和明确重试均有断言。新Foundation夹具覆盖不reload的恢复、三次上限、Gone清理、旧延时任务、真实目录扫描及CHP假类并存；本地SDK编译与新云原生真实执行分别留证，不拿前者充后者。
 - 双架构 iPhoneOS16.5 SDK：扩展 nice 真实 TU 与fakekernel fixture均通过；UI生产原文 + 两套fixture×2架构8个语法编译通过。不是Applelink/native/真机证明。
 - 独审发现重复记录F1/F2与CPUFollow失败反馈F4，已修并补真实文件测试；宿主CPU-only无nice继承F3也加固。原报告为变更前快照，不篡改原结论。
-- Cloud CI已接 `--require-native` 两新套件，原 nice/SpringBoard/资源保存原生必须继续执行；待新run实际验证，没有借旧run包冒充正式包。
+- [run 38399190238](https://github.com/doimty/vedette/actions/runs/38399190238) 实测提交 `bb4e17f56885327316f38be490aa4dd8c1bb09fc`，独立原生门禁与两个打包任务全部 success；原生无SKIP。nice 83断言、extension nice118断言+6个运行变体、independent rules11/11指定断言变体、生产Foundation catalog28断言、资源真实文件往返95次保存均实际执行。每包三个Mach-O均含arm64+arm64e，minOS15/sdk17.5、代码页/权限哈希、布局/依赖/脚本和en/zh-Hans各149键均独立核验通过，旧CHP类/协议元数据无残留。
 
 ## 发布与兼容性
 
-正式版本 **1.1.13-2** 大于1.1.13-1+rc1，已dpkg核验。用户已明确选择继续开源，本轮提交将推回原公开 `doimty/vedette` 的新 `release/1.1.13` 分支；旧 `main` 和 `feat/release-resource-rules` 保持不变。此前建立的私有仓库不删除、不改为公开，也不公开其他项目历史。
+正式版本 **1.1.13-2** 大于1.1.13-1+rc1，已dpkg核验。用户已明确选择继续开源，本轮已推回原公开 `doimty/vedette` 的新 `release/1.1.13` 分支；旧 `main` 和 `feat/release-resource-rules` 保持不变。此前建立的私有仓库不删除、不改为公开，也不公开其他项目历史。
 
-私有CI的扩展nice真实Foundation baseline及6个runtime变异已执行通过；整体原生回归仍未全绿。最后的旧候选 `0e4cd02` 因GitHub账户计费限制未启动runner，不能算编译失败或通过；本批接续修复后由公开仓库做新的完整验证，仍须逐项核验新run与产物。
+私有CI旧历史曾通过扩展nice部分门禁，但整体未绿、`0e4cd02`因账户计费限制未启动runner；该历史边界不再代表当前候选。接续生产补丁 `9a320cd` 及夹具隔离补丁 `bb4e17f` 已公开，新run完整原生及双包成功。首轮公开run38398435011被新增夹具删除仍存活journal触发fail-closed而阻止打包；仅调整夹具先正常restore再reset，未放宽生产护栏。
+
+正式包SHA-256：
+- RootHide：192,336 B，`063b04c7c0e2f26b213e241f536ef2b6e68a9b94e7f8ebeb84160426edd07e4f`。
+- rootless：195,684 B，`23725d19ab6e36be6d9a39ce2c2587cbfb18300a8d978fe511affe8cdc1c553d`。
+
+成品和对应测试SHA源码稳定交付：`shared/vedette-1113-build-38399190238/`。文档收尾提交与测试SHA区分，文档修改不产生不同字节包或再派全量CI。
 
 用户确认另一机装PanCake，第二段搜索滑返不能视为纯原生gesturebaseline；不强制开启/禁用返回手势。真机冷push卡顿与PanCake search/popcancel兼容仍待A/B，未声称已修UI阻塞，不拿Foundation测试证明真机转场。
 
 内存/Jetsam生产backend NULL、所有写能力false，本轮仅配置/列表，不宣称两侧生效。
 
-GPLv3许可证和对应源码继续公开保留。公开源码授权已明确，不再作为发布阻断；完整原生回归、双环境成品核验和真实UI验收仍独立保留，不能用公开构建代替这些条件。在正式包验收前不发布APT，不自动装机。
+GPLv3许可证和对应源码继续公开保留。完整原生回归和双环境成品核验已完成；UIKit冷push/PanCake search-popcancel仍独立待真机验收，不能用公开构建代替。尚未发布APT、不自动装机。
 
 详细checkpoint、独审与本地日志：`vedette-final-1113/`；本批计划/SDK对象/合同结果：`vedette-public-1113/continuation-0e4cd02/`。新包须核真实CI SHA，不拿旧rc1或未运行的候选充交付。

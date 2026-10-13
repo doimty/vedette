@@ -22,15 +22,17 @@
 
 本地独立工作树 `/var/minis/workspace/vedette-release-resources`；旧发布树和旧内存树不改。分工隔离UI/core/test冲突整合。详细验证与回执位于 `vedette-rebuild-1113/`。每筆拟用说明和提交对象按commit-check A/B检查，只推新分支云构建。**不安装、不改设备、不发布APT、不改默认分支。**
 
-## 进行中的正式补丁（历史 rc1 完成记录保持不改）
+## 正式补丁（历史 rc1 完成记录保持不改）
 
-用户后续明确指出Extension nice与资源置顶遗漏，授权修复并正式发包。本轮选1.1.13-2（dpkg大于rc1），工作分支release/1.1.13。此前使用私有开发库；2026-10-13用户明确改为保持开源，授权推回原公开 `doimty/vedette` 的同名新分支并编译，默认分支保持不变。扩展nice独立resolver/lifecycle/来源/恢复、四侧enablepin、按族Follow/失败反馈及混合重复记录一致性已接；已有一轮全量本地与双架构SDK通过。私有CI的扩展nice Foundation baseline及6个runtime变异已执行通过，整体回归仍未全绿，最新0e4cd02因账户计费限制未启动runner。旧App/Daemon固定发布合同经本轮正式逐字投影后继续冻住，原策略、工具、卸载脚本未动。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。
+用户后续明确指出Extension nice与资源置顶遗漏，授权修复并正式发包。本轮选1.1.13-2（dpkg大于rc1），工作分支release/1.1.13。2026-10-13用户明确改为保持开源，已推回原公开 `doimty/vedette` 的同名新分支，默认分支保持不变。扩展nice独立resolver/lifecycle/来源/恢复、四侧enablepin、按族Follow/失败反馈及混合重复记录一致性均已接；本地、双架构SDK和新公开run38399190238完整原生及双环境成品核验通过。旧私有未全绿/0e4cd02计费未启动仅属历史，不能代替本次证据。原App/Daemon发布合同经精确formal投影继续冻住，原C策略、工具、存储和卸载脚本未动。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。
 
 相较最初只重建的授权，现允许commit/push公开新分支/云编译及验收后更新软件源；对应源码按GPLv3继续公开，不再等待公开源码授权。未安装/改设备、未发APT；本地SKIP非PASS。PanCake兼容与真实冷pushUI仍未验收，不用host模型充真机。资源backend仍NULL/能力全false。
 
-## 本批接续修复（2026-10-13，云验证前）
+## 本批接续修复回执（2026-10-13）
 
-用户继续推进后，本地已接有界nice重试、真实检查时间、CHP→VDT类/协议隔离、共享扩展目录快照及失败保留/刷新，守护仍进程内singleton目录。运行时PID/出生token/路径及原C策略、Store、48pt图标、偏好域、关闭的内存/Jetsam backend冻结。SDK双架构生产对象与C预算/目录状态机变异通过；新Foundation故障/真实目录夹具尚待云执行，不算本地native通过。工作流改为唯一全量原生validate后双环境打包，测试命令不删；完整的字面投影和负例继续保留。不宣称修好PanCake/冷push、不安装/改设备、不在完整验收前发APT。
+用户继续推进后实现有界nice重试、真实检查时间、CHP→VDT类/协议隔离、共享扩展目录快照及失败保留/刷新；守护仍为进程内singleton目录。PID/出生token/路径及原C策略、Store、48pt图标、偏好域、关闭的内存/Jetsam backend冻结。SDK双架构18个生产prefs对象及元数据通过；新云run38399190238测试SHA bb4e17f完整原生无SKIP、依赖式两包全success，并经独立Mach-O/签名/布局/资源核验。精确formal投影33paths/83hunks，未知bytes负例继续拒绝。首轮只因夹具删除livejournal被正确安全护栏挡住，仅补正常restore再reset；生产护栏不放宽。
+
+RootHide 192336 B sha256 `063b04c7c0e2f26b213e241f536ef2b6e68a9b94e7f8ebeb84160426edd07e4f`；rootless195684 B `23725d19ab6e36be6d9a39ce2c2587cbfb18300a8d978fe511affe8cdc1c553d`。交付包和对应测试SHA源码位于 `shared/vedette-1113-build-38399190238/`。未装机/改设备/发APT，PanCake/冷push真机UI仍待；本段不覆盖下文历史rc1回执。
 
 ## 完成回执（2026-10-13）
 

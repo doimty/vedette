@@ -168,8 +168,8 @@ M3不通过时不得宣称三模式完成。M2可单独形成有限候选，但�
 - 独立成品核验：每包3个双架构Mach-O/minOS15/sdk17.5、代码页与entitlement哈希、129键资源一致。RootHide sha `b126d9d5…`、rootless `92d34855…`。详 [REBUILD_PLAN.md](REBUILD_PLAN.md)，归档 `vedette-rebuild-1113/run-38340606214/`。
 - 保存正确和原有nice完整不等于内存/Jetsam已生效：生产backend仍NULL/能力全false；未来resource-only生命周期与恢复持久化尚未完成。未设备/安装/发布，真机Preferences点击/渲染与RunningBoard漂移待后续。
 
-### 正式 1.1.13-2 修复（进行中）
+### 正式 1.1.13-2 修复（构建核验完成，真机/源发布待验）
 
-扩展 nice 的独立/继承/identity/journal/source receipt 与四侧独立 enabled 置顶已接线，CPU Follow 与 nice Follow 按族删除、重复记录读取/保存一致、写失败回读不通知。已有一轮全量本地门禁与双架构 SDK syntax 通过；私有CI实际通过扩展nice Foundation baseline及6个runtime变异，但整体回归尚未全绿，最新0e4cd02因账户计费限制未启动runner。用户2026-10-13明确保持开源，授权推回原公开 `doimty/vedette` 的新 `release/1.1.13` 分支并编译，默认分支不动；GPLv3对应源码公开授权已明确。资源 backend 仍 NULL/能力全 false，不把列表置顶当内存/Jetsam实际应用。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。完整原生/真机UI验收与APT发布尚待，不自动装机。
+扩展nice的独立/继承/identity/journal/source receipt与四侧独立enabled置顶已接线，CPU Follow与nice Follow按族删除、重复记录读取/保存一致、写失败回读不通知。用户保持开源授权已执行：原公开 `doimty/vedette` 新 `release/1.1.13`，默认分支不动。接续实现有界重试/真实检查时间/目录自有命名与快照，run38399190238测试SHA bb4e17f完整原生无SKIP和rootless/roothide双包全success，独立成品布局/签名/版本/149键资源亦过；旧私有部分通过或计费未启动仅为历史。资源backend仍NULL/能力全false，不把列表置顶或mock资源策略当实际内存/Jetsam应用。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。真机UI与APT发布尚待，不自动装机。
 
-本批接续仅nice重试/真实回执时间与UI目录隔离/缓存，资源能力依旧全false、backend NULL，manager与memorystatus写入通道没有改变。扩展目录快照不能用作实时PID身份或资源写入授权。C核和SDK编译不是新Foundation/内核执行；云validate全量回归通过后才双环境打包，源发布及真机仍独立验收。
+本批仅nice重试/真实回执时间与UI目录隔离/缓存，manager与memorystatus写入通道未改变。扩展目录快照不能用作实时PID身份或资源写入授权。C核/SDK与云Foundation证据层级分别记录；该云通过不证明实际设备RunningBoard/资源行为。

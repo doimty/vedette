@@ -158,13 +158,13 @@ ui3 已构建，但真机反馈分组文字重叠，暂停推荐。ui4 修正分
 
 ## 当前接续阶段（2026-10-13）
 
-正确重建候选1dfce93之后，用户授权补扩展 nice 与四类独立开关置顶并走正式1.1.13-2。新生命周期/按族继承与重复记录/保存失败反馈已完成本地与SDK校验；私有CI的扩展nice真实Foundation baseline及6个runtime变异已执行通过，整体原生回归仍未全绿。最新0e4cd02因账户计费限制未启动runner。用户2026-10-13明确改为保持开源：将本轮候选推回原公开 `doimty/vedette` 的新 `release/1.1.13` 分支并云编译，默认分支不动；对应源码继续按GPLv3提供，不再把公开源码授权列为阻断。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。资源后台全false/NULL不变，不代表真实内存生效。搜索滑返另一机有PanCake，仅兼容性待A/B，不强改原生gesture；冷push与真机UI仍待。完整原生/成品验收和源发布尚待，不装机。
+正确重建候选1dfce93之后，用户授权补扩展nice与四类独立开关置顶并走正式1.1.13-2；用户明确保持开源，已推原公开 `doimty/vedette` 新 `release/1.1.13`，默认分支不动。当前生产提交9a320cd及夹具隔离bb4e17f在公开run38399190238完整原生门禁和两个包全success，测试SHA bb4e17f；不再把旧私有未绿/未启动当现况。独立成品核验亦通过，详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。资源仍全false/NULL，不代表内存生效；PanCake/冷push真机转场仍待，不强改原生gesture。尚未装机或发源。
 
 ## 本批列表与恢复接续（2026-10-13）
 
 已在本地实现：nice每实例/动作/配置代次最多初始+两次延期，Conflict/权限错误不自动写，配置重载拒旧回调；真实检查时间与发布回执时间分离，UI明确历史观测。遗留4个CHP类和1协议换VDT自有命名，域/键不迁移；扩展主队列shared catalog只缓存只读metadata，规则/搜索/暖返回不重扫，来源失效和显式刷新才扫，失败保留旧快照。300秒入口兜底补LS漏事件，不起常驻轮询；跨Settings重启首扫/真机转场仍未闭环。守护单例串行状态和IO失败反馈补齐，静态目录不冒充实时PID。
 
-C生产状态机及7个编译后运行断言负例、双架构18个修改生产prefs对象与ObjC命名元数据已验；Foundation/Linux明确区分SKIP与native。云改为单validate全量原生门禁，成功后双环境打包；当前云结果尚待，不自动装机/发APT。未来资源真写仍全false/NULL，48pt视觉不变。
+C生产状态机及7个编译后运行断言负例、双架构18个修改生产prefs对象与ObjC命名元数据已验。本地Foundation SKIP不算native，云run38399190238的单validate完整原生无SKIP，通过后双环境打包全success；两包源码SHA/签名/布局/149键资源已核。成品与对应源码 `shared/vedette-1113-build-38399190238/`；未装机/发APT。未来资源真写仍全false/NULL，48pt视觉不变。
 
 ## 4. 验证与发布顺序
 
