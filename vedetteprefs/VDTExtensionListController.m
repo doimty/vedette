@@ -41,7 +41,7 @@
 
 - (void)viewWillAppear:(BOOL)animated {
     self.catalogVisible = NO;
-    _specifiers = nil; // Only rule grouping/search is rebuilt from the warm snapshot.
+    // Keep the live table snapshot until the visible, superclass-managed reload.
     self.catalogNeedsReload = YES;
     [super viewWillAppear:animated];
     [[VDTExtensionCatalog sharedInstance] ensureLoaded];

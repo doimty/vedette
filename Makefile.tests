@@ -23,6 +23,7 @@ test-ui:
 	@sh tests/run_list_order_tests.sh
 	@python3 -B tests/test_list_catalog.py
 	@python3 -B tests/test_list_catalog_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
+	@python3 -B tests/test_list_reentry.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
 
 
 test-nice:

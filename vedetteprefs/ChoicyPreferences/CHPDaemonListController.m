@@ -50,7 +50,7 @@
 - (void)viewWillAppear:(BOOL)animated
 {
 	_vdtVisible = NO;
-	_specifiers = nil;
+	// Keep the live table snapshot until the visible, superclass-managed reload.
 	_vdtNeedsReload = YES;
 	[super viewWillAppear:animated];
 	[[VDTDaemonList sharedInstance] updateDaemonListIfNeeded];

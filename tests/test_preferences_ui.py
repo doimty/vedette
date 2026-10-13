@@ -157,6 +157,27 @@ class PreferencesUIContracts(unittest.TestCase):
         self.assertIn('valueForProcessConfigKeyWithPrefs', enabled)
         self.assertNotIn('valueForKeyWithPrefs', enabled)
 
+    def test_reentry_preserves_snapshot_until_superclass_reload(self):
+        for path, visible, dirty in (
+            ('ChoicyPreferences/CHPDaemonListController.m', '_vdtVisible', '_vdtNeedsReload'),
+            ('VDTExtensionListController.m', 'self.catalogVisible', 'self.catalogNeedsReload'),
+        ):
+            with self.subTest(file=path):
+                source = (PREFS / path).read_text()
+                appear = source[source.index('- (void)viewWillAppear:'):source.index('- (void)viewDidAppear:')]
+                displayed = source[source.index('- (void)viewDidAppear:'):source.index('- (void)viewWillDisappear:')]
+                reload = source[source.index('- (void)reloadSpecifiers'):].split('\n- (', 1)[0]
+                self.assertNotIn('_specifiers', appear)
+                self.assertNotIn('_specifiers', reload)
+                self.assertIn(visible + ' = NO;', appear)
+                self.assertIn(dirty + ' = YES;', appear)
+                self.assertIn(visible + ' = YES;', displayed)
+                self.assertIn('if (' + dirty + ') [self reloadSpecifiers];', displayed)
+                stages = [dirty + ' = YES;', 'if (!' + visible + ') return;',
+                          dirty + ' = NO;', '[super reloadSpecifiers];']
+                positions = [reload.index(stage) for stage in stages]
+                self.assertEqual(positions, sorted(positions))
+
     def test_settings_keys_defaults_and_actions_unchanged(self):
         source = (PREFS / 'VDTProcessConfiguration.m').read_text()
         for key in ('enabled', 'percentage', 'interval', 'violationPolicy', 'applicationIdentifier', 'daemonName'):

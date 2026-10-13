@@ -1742,7 +1742,7 @@ index 2937b22..f0f73db 100644
  - (void)reloadValueOfSelectedSpecifier;
  @end
 diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonListController.m b/vedetteprefs/ChoicyPreferences/CHPDaemonListController.m
-index 2b06a04..eeac313 100644
+index 2b06a04..56c5c6d 100644
 --- a/vedetteprefs/ChoicyPreferences/CHPDaemonListController.m
 +++ b/vedetteprefs/ChoicyPreferences/CHPDaemonListController.m
 @@ -28,42 +28,60 @@
@@ -1787,7 +1787,7 @@ index 2b06a04..eeac313 100644
  - (void)viewWillAppear:(BOOL)animated
  {
 +	_vdtVisible = NO;
-+	_specifiers = nil;
++	// Keep the live table snapshot until the visible, superclass-managed reload.
 +	_vdtNeedsReload = YES;
  	[super viewWillAppear:animated];
 -	// Keep the active query; a changed switch may move a row to another group.
@@ -2063,7 +2063,7 @@ index 92fc862..d82e04d 100644
  - (void)reloadExtensionRule:(NSString *)identifier;
  @end
 diff --git a/vedetteprefs/VDTExtensionListController.m b/vedetteprefs/VDTExtensionListController.m
-index 6aca7c1..b2e6d4a 100644
+index 6aca7c1..a438dc3 100644
 --- a/vedetteprefs/VDTExtensionListController.m
 +++ b/vedetteprefs/VDTExtensionListController.m
 @@ -3,67 +3,28 @@
@@ -2153,7 +2153,7 @@ index 6aca7c1..b2e6d4a 100644
 +
  - (void)viewWillAppear:(BOOL)animated {
 +    self.catalogVisible = NO;
-+    _specifiers = nil; // Only rule grouping/search is rebuilt from the warm snapshot.
++    // Keep the live table snapshot until the visible, superclass-managed reload.
 +    self.catalogNeedsReload = YES;
      [super viewWillAppear:animated];
 +    [[VDTExtensionCatalog sharedInstance] ensureLoaded];
