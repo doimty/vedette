@@ -152,8 +152,10 @@ M3不通过时不得宣称三模式完成。M2可单独形成有限候选，但�
 - 云构建 run 38298645064 全绿（12m42s）；候选包 `com.doimty.vedette_1.1.10-1+ui21_iphoneos-arm64e.deb` sha256 `28c0d410…`：fat arm64+arm64e、minos15.0/sdk17.5、链式修复、已签名；`verify_preferences_resources` 87 键通过；macOS 全回归（含 extensions native `--require-native`）通过。
 - 注意：版本串未变（发布前另定）；4 个新内存套件未接 workflow（M6 待办）；仅 roothide 包。归档 `vedette-memory-build/run-38298645064/`。
 
-### M6 第二批：CI 接线（2026-10-13，本地验证完成）
+### M6 第二批：CI 接线与云端门禁完成（2026-10-13）
 
-- 已将 `test_memory_policy`、`test_resource_apply`、`test_resource_manager`、`test_resource_ui21` 四套门禁加入工作流并同步逆投影 CI 附加块；本条时点云端验证待执行。
-- 符号审计仅在 Darwin 去掉一个 Mach-O ABI 下划线；原白名单不变。正负例与 3 个故障变体均已验证，本地最终引擎 5 项/15 行为变异、快速门禁与既有宿主回归全过；Foundation 在 iSH 明确 SKIP，云端仍要求 `--require-native`。
-- 本批不改资源生产代码：能力门禁全 false、backend NULL，不安装、不发布；版本仍 `1.1.10-1+ui21`。证据 `vedette-memory-plan/m6-cloud/ci-validation/`。
+- 已将 `test_memory_policy`、`test_resource_apply`、`test_resource_manager`、`test_resource_ui21` 四套门禁加入工作流并同步逆投影 CI 附加块；`a06eba1` + `27b91db` 已推送，commit-check A/B 全过，默认分支未动。
+- 云构建 **run 38331391387 全绿**，构建 HEAD `27b91db96cc69666925a6f7f5fe495bec8444ec4`，job 11m05s。四套实际测试数 4/5/8/7，全过且无跳过；策略与引擎各 15 个变异全部编译后由断言击杀。Foundation 扩展原生 `--require-native` PASS；manager/UI 套件为源码合同，不冒称 UIKit/管理器原生执行。
+- 符号审计仅在 Darwin 去掉一个 Mach-O ABI 下划线；原白名单不变。正负例与 3 个故障变体已验证，本地最终引擎 5 项/15 行为变异、快速门禁与既有宿主回归全过；本地 Foundation 明确 SKIP，不当作原生证据。
+- 新 roothide deb sha256 `71ea7931f4b7497bf442a7d17b9acebaf76fff6919463f8c1a27dcded058c666`：fat arm64+arm64e / minos15.0 / sdk17.5 / 签名结构存在与边界有效 / 87 键资源校验通过。归档 `vedette-memory-build/run-38331391387/`；本地验证 `vedette-memory-plan/m6-cloud/ci-validation/`。
+- 本批不改资源生产代码：能力门禁全 false、backend NULL，不安装、不发布；版本仍 `1.1.10-1+ui21`，同版本不同字节仅作 CI 候选。下一步仍是正式 backend、恢复记录持久化及受控能力启用，host/mock 不代表真实 App 生效。

@@ -10,7 +10,7 @@
 - 三种内存模式与CPU规则分离；无限实现和恢复来源尚未通过，不把规划当作已实现。（2026-10-13 更新：M1–M4 设备侧取证完成；M3 经用户裁定“禁止无证据的大数冒充”后判定**达成**，条件项留 M6——详见 [MEMORY_PLAN.md](MEMORY_PLAN.md) §八/§九 与 `vedette-memory-plan/m3-unlimited/REPORT.md`、`vedette-memory-plan/m4-jetsam/REPORT.md`。）
 - 整合（M5）进展（2026-10-13）：第一批＝应用引擎＋可注入后端（15/15 变异杀死）；第二批＝prefs「内存/回收优先级」段落＋独立存储；第三批＝管理器接线（资源加载/按资源继承/仅资源目标/应用阶段；写入通道保持关闭）。全套门禁与重型 C 回归全绿；未接设备/CI。设计 `M5_PLAN.md`，报告 `vedette-memory-plan/m5-integration/REPORT.md`。
 - 云构建（M6 起步，2026-10-13）：`feat/memory-jetsam-rules` 已推云端并 **run 38298645064 全绿**；roothide 候选包已核验（fat arm64+arm64e / minos15.0 / 签名 / 资源校验 87 键 / macOS 全回归含原生扩展测试）。待办：新内存套件接入 CI、发布版本另定、真机验收。报告 `vedette-memory-plan/m6-cloud/REPORT.md`，归档 `vedette-memory-build/run-38298645064/`。
-- M6 CI 接线（2026-10-13，本地验证完成）：工作流与逆投影已加入 4 个新套件；Darwin `nm` 精确去单个 ABI 前缀，符号白名单不变，3 个故障变体均被拒。最终引擎 5 项/15 行为变异及宿主回归通过；云端重跑待执行。资源写门禁仍关闭，不安装、不发布。证据 `vedette-memory-plan/m6-cloud/ci-validation/`。
+- M6 CI 接线完成（2026-10-13）：`a06eba1` + `27b91db` 推送后 **run 38331391387 全绿**（job 11m05s）；4 个新套件真实执行 4/5/8/7 项并全过，策略/引擎各 15 个变异编译后由断言击杀。Darwin `nm` 精确单前缀兼容与原白名单审计通过，既有 Foundation 原生扩展夹具 PASS。新 roothide 包 sha256 `71ea7931…`，双架构/资源校验通过；资源写门禁仍关闭，不安装、不发布。未完成：正式 backend/恢复持久化/受控启用、版本另定、真实 App 验收。归档 `vedette-memory-build/run-38331391387/`。
 - M0 时点快照：当时只启动计划与本地基线准备；无生产内存代码、设备操作、commit/push、云构建或安装。后续状态以以上执行记录为准。
 
 以下ui2.1及更早内容为各阶段的规划快照；涉及“待构建”时以各自构建回执和最新计划为准。
