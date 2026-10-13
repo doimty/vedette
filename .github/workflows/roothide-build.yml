@@ -10,6 +10,7 @@ on:
       - roothide-no-rb-probe1
       - roothide-stable-probe3
       - fix/proc-identity-guard
+      - release/1.1.13
     paths:
       - '.github/workflows/roothide-build.yml'
       - '**/*.h'

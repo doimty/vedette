@@ -10,10 +10,22 @@ index 9c030ba..d52738f 100644
  tests/fixtures/appex-ui21-inverse.patch whitespace=-blank-at-eol
 +tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index 4c5466c..8b73523 100644
+index 4c5466c..2a7c359 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
-@@ -42,11 +42,11 @@ jobs:
+@@ -8,10 +8,11 @@ on:
+       - roothide-stable-marker1
+       - roothide-stable-marker2
+       - roothide-no-rb-probe1
+       - roothide-stable-probe3
+       - fix/proc-identity-guard
++      - release/1.1.13
+     paths:
+       - '.github/workflows/roothide-build.yml'
+       - '**/*.h'
+       - '**/*.c'
+       - '**/*.m'
+@@ -42,11 +43,11 @@ jobs:
      env:
        THEOS: ${{ github.workspace }}/theos
        THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
@@ -26,7 +38,7 @@ index 4c5466c..8b73523 100644
  
      steps:
        - name: Checkout
-@@ -148,16 +148,19 @@ jobs:
+@@ -148,16 +149,19 @@ jobs:
            sudo bash tests/run_nice_native_tests.sh
            sudo bash tests/run_springboard_native_tests.sh
            python3 -B tests/test_extension_contracts.py
