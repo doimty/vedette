@@ -140,3 +140,11 @@
 "Follow containing app nice" = "nice 跟随所属 App";
 "Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged." = "没有自己的 nice 字段时，跟随所属 App 的 nice 规则。保存开关或数值后创建独立 nice 规则；CPU 和资源规则不受影响。";
 "Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept." = "仅删除此扩展的 nice 设置并恢复跟随所属 App？CPU、内存和 Jetsam 规则将保留。";
+"Last check: %@" = "上次检查：%@";
+"Last read back: %@" = "上次读回：%@";
+"Bounded retry pending" = "等待有限重试";
+"Refresh" = "刷新";
+"Retry" = "重试";
+"Unable to load App extensions." = "无法加载 App 扩展目录。";
+"Unable to load Daemons." = "无法加载守护目录。";
+"Refresh failed. Showing the previous list." = "刷新失败，继续显示上次的列表。";

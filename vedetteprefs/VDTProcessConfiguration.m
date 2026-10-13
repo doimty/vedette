@@ -382,7 +382,7 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
                 break;
             }
             case VDTConfigTypeDaemon:{
-                [(CHPDaemonListController *)parentController reloadValueOfSelectedSpecifier];
+                [(VDTDaemonListController *)parentController reloadValueOfSelectedSpecifier];
                 break;
             }
             case VDTConfigTypeExtension:{

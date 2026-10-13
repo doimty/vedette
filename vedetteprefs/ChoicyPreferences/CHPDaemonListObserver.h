@@ -20,9 +20,9 @@
 
 #import "../../Common.h"
 
-@class CHPDaemonList;
+@class VDTDaemonList;
 
-@protocol CHPDaemonListObserver
+@protocol VDTDaemonListObserver
 @required
-- (void)daemonListDidUpdate:(CHPDaemonList*)list;
+- (void)daemonListDidUpdate:(VDTDaemonList*)list;
 @end

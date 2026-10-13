@@ -21,7 +21,7 @@
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
 
-@interface CHPListController : PSListController <UISearchResultsUpdating> {
+@interface VDTListController : PSListController <UISearchResultsUpdating> {
     NSString *_searchKey;
     UISearchController *_searchController;
 }

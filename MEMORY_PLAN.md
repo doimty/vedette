@@ -170,4 +170,6 @@ M3不通过时不得宣称三模式完成。M2可单独形成有限候选，但�
 
 ### 正式 1.1.13-2 修复（进行中）
 
-扩展 nice 的独立/继承/identity/journal/source receipt 与四侧独立 enabled 置顶已接线，CPU Follow 与 nice Follow 按族删除、重复记录读取/保存一致、写失败回读不通知。全量本地门禁与双架构 SDK syntax 通过；新增真实 Foundation fixtures 待私有 CI 原生执行，非本机 PASS。资源 backend 仍 NULL/能力全 false，不把列表置顶当内存/Jetsam实际应用。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。开发走私有新分支；对应源码公开归档授权、原生/真机UI验收、APT发布尚待，不自动装机。
+扩展 nice 的独立/继承/identity/journal/source receipt 与四侧独立 enabled 置顶已接线，CPU Follow 与 nice Follow 按族删除、重复记录读取/保存一致、写失败回读不通知。已有一轮全量本地门禁与双架构 SDK syntax 通过；私有CI实际通过扩展nice Foundation baseline及6个runtime变异，但整体回归尚未全绿，最新0e4cd02因账户计费限制未启动runner。用户2026-10-13明确保持开源，授权推回原公开 `doimty/vedette` 的新 `release/1.1.13` 分支并编译，默认分支不动；GPLv3对应源码公开授权已明确。资源 backend 仍 NULL/能力全 false，不把列表置顶当内存/Jetsam实际应用。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。完整原生/真机UI验收与APT发布尚待，不自动装机。
+
+本批接续仅nice重试/真实回执时间与UI目录隔离/缓存，资源能力依旧全false、backend NULL，manager与memorystatus写入通道没有改变。扩展目录快照不能用作实时PID身份或资源写入授权。C核和SDK编译不是新Foundation/内核执行；云validate全量回归通过后才双环境打包，源发布及真机仍独立验收。

@@ -1,5 +1,5 @@
 diff --git a/.gitattributes b/.gitattributes
-index 9c030ba..d52738f 100644
+index 9c030ba..6c6529f 100644
 --- a/.gitattributes
 +++ b/.gitattributes
 @@ -2,5 +2,6 @@
@@ -8,9 +8,9 @@ index 9c030ba..d52738f 100644
  # Literal inverse-diff fixture includes context-only spaces and frozen old
  # whitespace; do not rewrite those bytes or relax checks on production files.
  tests/fixtures/appex-ui21-inverse.patch whitespace=-blank-at-eol
-+tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol
++tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index 4c5466c..2a7c359 100644
+index 4c5466c..740fb80 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
 @@ -8,10 +8,11 @@ on:
@@ -25,7 +25,47 @@ index 4c5466c..2a7c359 100644
        - '**/*.h'
        - '**/*.c'
        - '**/*.m'
-@@ -42,11 +43,11 @@ jobs:
+@@ -23,11 +24,39 @@ on:
+       - 'layout/**'
+       - 'vedetteprefs/**'
+       - 'tests/**'
+ 
+ jobs:
++  validate:
++    name: Host and native regressions (once)
++    runs-on: macos-14
++    steps:
++      - name: Checkout
++        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
++        with:
++          fetch-depth: 0
++      - name: Select pinned Xcode 15.4
++        run: |
++          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
++          test "$(xcodebuild -version | head -n 1)" = "Xcode 15.4"
++          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "17.5"
++      - name: Install host packaging test tool
++        run: command -v dpkg-deb || brew install dpkg
++      - name: Run host regression tests
++        run: |
++          set -o pipefail
++          bash ci/run_host_tests.sh 2>&1 | tee host-regressions.log
++      - name: Preserve native verification log
++        if: always()
++        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
++        with:
++          name: vedette-native-verification
++          path: host-regressions.log
++          if-no-files-found: warn
++
+   package:
++    needs: validate
+     name: Package (${{ matrix.scheme }})
+     runs-on: macos-14
+     strategy:
+       fail-fast: false
+       matrix:
+@@ -42,11 +71,11 @@ jobs:
      env:
        THEOS: ${{ github.workspace }}/theos
        THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
@@ -38,43 +78,79 @@ index 4c5466c..2a7c359 100644
  
      steps:
        - name: Checkout
-@@ -148,16 +149,19 @@ jobs:
-           sudo bash tests/run_nice_native_tests.sh
-           sudo bash tests/run_springboard_native_tests.sh
-           python3 -B tests/test_extension_contracts.py
-           python3 -B tests/test_bundle_rules.py
-           python3 -B tests/test_extensions_native.py --require-native
-+          sudo python3 -B tests/test_extension_nice_native.py --require-native
-+          sudo python3 -B tests/test_independent_rules_native.py --require-native
-           python3 -B tests/test_memory_policy.py
-           python3 -B tests/test_resource_apply.py
-           python3 -B tests/test_resource_manager.py
-           python3 -B tests/test_resource_ui21.py
-           python3 -B tests/test_resource_preferences_native.py --require-native
-           python3 -B tests/test_rebuild_baseline.py
-+          python3 -B tests/test_formal_projection.py
+@@ -130,35 +159,10 @@ jobs:
+           mkdir -p "$THEOS/vendor/include/AltList" "$THEOS/vendor/lib" "$THEOS/vendor/lib/iphone/$THEOS_PACKAGE_SCHEME"
+           cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/"
+           cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/iphone/$THEOS_PACKAGE_SCHEME/"
+           cp /tmp/AltList/*.h "$THEOS/vendor/include/AltList/"
  
+-      - name: Run host regression tests
+-        run: |
+-          tests/run_process_identity_tests.sh
+-          python3 tests/check_auto_monitor_path.py
+-          sh tests/run_list_order_tests.sh
+-          python3 -B tests/test_preferences_ui.py
+-          python3 -B tests/test_ios15_cell_lifecycle.py
+-          python3 -B tests/test_ui21_baseline.py
+-          python3 -B tests/test_process_action_ui21.py
+-          python3 -B tests/test_section_text.py
+-          python3 -B tests/test_efficiency_contracts.py
+-          python3 -B tests/test_diagnostic_preprocess.py
+-          make -f Makefile.tests test-nice STORE_RUNNER=sudo
+-          sudo bash tests/run_nice_native_tests.sh
+-          sudo bash tests/run_springboard_native_tests.sh
+-          python3 -B tests/test_extension_contracts.py
+-          python3 -B tests/test_bundle_rules.py
+-          python3 -B tests/test_extensions_native.py --require-native
+-          python3 -B tests/test_memory_policy.py
+-          python3 -B tests/test_resource_apply.py
+-          python3 -B tests/test_resource_manager.py
+-          python3 -B tests/test_resource_ui21.py
+-          python3 -B tests/test_resource_preferences_native.py --require-native
+-          python3 -B tests/test_rebuild_baseline.py
+-
        - name: Build package
          run: |
            set -o pipefail
            export PATH="/opt/homebrew/opt/make/libexec/gnubin:$THEOS/bin:$PATH"
+           test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
+diff --git a/VDTNiceRuntime.h b/VDTNiceRuntime.h
+index ccc20f0..e92c40c 100644
+--- a/VDTNiceRuntime.h
++++ b/VDTNiceRuntime.h
+@@ -7,9 +7,11 @@ extern "C" {
+ // All entry points are confined to the existing runningboardd serial queue.
+ void vdt_nice_reload(NSDictionary *prefs);
+ void vdt_nice_reconcile(void);
+ void vdt_nice_apply(NSDictionary *target);
+ void vdt_nice_publish(void);
++// -1 means settled; otherwise a monotonic delay for one coalesced retry task.
++NSTimeInterval vdt_nice_next_retry_delay(void);
+ BOOL vdt_nice_restore_all(void);
+ #ifdef __cplusplus
+ }
+ #endif
 diff --git a/VDTNiceRuntime.mm b/VDTNiceRuntime.mm
-index 4e5b626..071f0ab 100644
+index 4e5b626..7546600 100644
 --- a/VDTNiceRuntime.mm
 +++ b/VDTNiceRuntime.mm
-@@ -2,10 +2,11 @@
+@@ -1,12 +1,15 @@
+ // Copyright (c) 2026 Vedette contributors. SPDX-License-Identifier: GPL-3.0-only
  #import "VDTNiceRuntime.h"
  #import "VDTNiceShared.h"
  #import "VDTNiceStore.h"
  #import "VDTNicePolicy.h"
++#import "VDTNiceAttempt.h"
  #import "VDTProcessIdentity.h"
 +#import "VDTBundleIdentity.h"
  #include <errno.h>
++#include <float.h>
  #include <limits.h>
  #include <math.h>
  #include <notify.h>
  #include <sys/resource.h>
-@@ -33,23 +34,45 @@ static BOOL text(id value, NSUInteger limit) {
+ #include <unistd.h>
+@@ -33,23 +36,45 @@ static BOOL text(id value, NSUInteger limit) {
  }
  static NSDictionary *boundTarget(id raw) {
      if (![raw isKindOfClass:NSDictionary.class]) return nil;
@@ -122,7 +198,7 @@ index 4e5b626..071f0ab 100644
  static NSString *instanceKey(NSDictionary *target) {
      NSString *identity = target[VDTTargetExecutablePathKey] ?: target[VDTTargetProcCommKey];
      return [NSString stringWithFormat:@"%d:%llu:%llu:%@", [target[VDTTargetPidKey] intValue],
-@@ -57,14 +80,28 @@ static NSString *instanceKey(NSDictionary *target) {
+@@ -57,14 +82,28 @@ static NSString *instanceKey(NSDictionary *target) {
          [target[VDTTargetStartMicrosecondsKey] unsignedLongLongValue], identity];
  }
  static NSString *ruleKey(NSDictionary *target) {
@@ -154,7 +230,7 @@ index 4e5b626..071f0ab 100644
      return @{@"captured": @(r->captured), @"original": @(r->originalValue),
          @"owns": @(r->ownsValue), @"owned": @(r->ownedValue),
          @"hasIntent": @(r->hasIntent), @"intent": @(r->intentValue)};
-@@ -87,11 +124,28 @@ static VDTNiceIdentity nativeIdentity(pid_t pid, NSDictionary *target) {
+@@ -87,11 +126,28 @@ static VDTNiceIdentity nativeIdentity(pid_t pid, NSDictionary *target) {
      int bytes = proc_pidinfo(pid, VDT_PROC_PIDTBSDINFO, 0, &info, sizeof(info));
      if (bytes != (int)sizeof(info)) return errno == ESRCH ? VDTNiceIdentityGone : VDTNiceIdentityUnavailableValue;
      if (info.pbi_pid != (uint32_t)pid) return VDTNiceIdentityUnavailableValue;
@@ -184,7 +260,92 @@ index 4e5b626..071f0ab 100644
      switch (outcome) {
          case VDTNiceUnmanaged: return @"disabled";
          case VDTNiceApplied: return @"applied";
-@@ -261,10 +315,17 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -112,10 +168,12 @@ static NSString *outcomeCode(VDTNiceOutcome outcome) {
+ @public
+     VDTNiceStore store;
+     NSMutableDictionary<NSString *, NSDictionary *> *records;
+     NSMutableDictionary<NSString *, NSDictionary *> *outcomes;
+     NSMutableSet<NSString *> *attempted;
++    NSMutableDictionary<NSString *, NSDictionary *> *attemptStates;
++    NSMutableSet<NSString *> *goneCleanupStarted;
+     NSDictionary<NSString *, NSDictionary *> *rules;
+     NSString *boot;
+     NSString *restoreNonce;
+     int loadError;
+     BOOL paused;
+@@ -124,10 +182,12 @@ static NSString *outcomeCode(VDTNiceOutcome outcome) {
+ }
+ - (void)reload:(NSDictionary *)prefs;
+ - (void)reconcile;
+ - (void)apply:(NSDictionary *)target;
+ - (void)publish;
++- (NSTimeInterval)retryClock;
++- (NSTimeInterval)nextRetryDelay;
+ - (BOOL)restoreAll;
+ - (int)save:(const VDTNiceRecord *)record target:(NSDictionary *)target;
+ @end
+ 
+ typedef struct { __strong VDTNiceCoordinator *owner; __strong NSDictionary *target; } NativeContext;
+@@ -164,11 +224,12 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+ @implementation VDTNiceCoordinator
+ - (instancetype)init {
+     if ((self = [super init])) {
+         store = (VDTNiceStore){.parentFD = -1, .directoryFD = -1, .parentPath = NULL, .leaf = NULL};
+         records = [NSMutableDictionary dictionary]; outcomes = [NSMutableDictionary dictionary];
+-        attempted = [NSMutableSet set]; rules = @{};
++        attempted = [NSMutableSet set]; attemptStates = [NSMutableDictionary dictionary];
++        goneCleanupStarted = [NSMutableSet set]; rules = @{};
+     }
+     return self;
+ }
+ - (void)dealloc { VDTNiceStoreClose(&store); }
+ - (void)load {
+@@ -233,11 +294,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+     if (wasPaused != paused || ![oldNonce ?: @"" isEqual:restoreNonce ?: @""]) receiptDirty = YES;
+ }
+ - (void)reload:(NSDictionary *)prefs {
+     rules = VDTNiceRulesFromPrefs(prefs);
+     receiptDirty = YES;
+-    [attempted removeAllObjects]; [outcomes removeAllObjects];
++    [attempted removeAllObjects]; [attemptStates removeAllObjects]; [goneCleanupStarted removeAllObjects]; [outcomes removeAllObjects];
+     VDTNiceStoreClose(&store); loaded = NO;
+     [self load];
+     if (rules.count > VDTNiceMaximumRecords) loadError = E2BIG;
+     [self checkRestoreRequest];
+ }
+@@ -250,84 +311,137 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+     if (next.count > VDTNiceMaximumRecords) return E2BIG;
+     int error = writePlist(&store, VDT_NICE_JOURNAL, @{@"version": @1, @"boot": boot, @"records": next});
+     if (!error) records = next;
+     return error;
+ }
++- (NSTimeInterval)retryClock { return NSProcessInfo.processInfo.systemUptime; }
++- (NSTimeInterval)nextRetryDelay {
++    if (loadError || store.directoryFD < 0) return -1;
++    NSTimeInterval now = [self retryClock], delay = -1;
++    for (NSDictionary *outcome in outcomes.allValues) {
++        NSDictionary *target = outcome[@"target"], *rule = ruleForTarget(target, rules);
++        BOOL enabled = [outcome[@"attemptEnabled"] boolValue] && !paused && [rule[@"enabled"] boolValue];
++        if (enabled && protectedRule(rule)) continue;
++        NSString *key = [instanceKey(target) stringByAppendingString:enabled ? @":apply" : @":restore"];
++        NSDictionary *state = attemptStates[key];
++        if (![state[@"pending"] boolValue]) continue;
++        NSTimeInterval candidate = MAX(0, [state[@"due"] doubleValue] - now);
++        if (delay < 0 || candidate < delay) delay = candidate;
++    }
++    return delay;
++}
+ - (void)runTarget:(NSDictionary *)target enabled:(BOOL)enabled desired:(int)desired {
+     NSString *key = instanceKey(target);
+     NSString *attemptKey = [key stringByAppendingString:enabled ? @":apply" : @":restore"];
+-    if ([attempted containsObject:attemptKey]) return;
++    NSDictionary *savedAttempt = attemptStates[attemptKey];
++    VDTNiceAttempt attempt = {.count = [savedAttempt[@"count"] unsignedIntValue],
++        .pending = (bool)[savedAttempt[@"pending"] boolValue], .due = [savedAttempt[@"due"] doubleValue]};
++    NSTimeInterval now = [self retryClock];
++    if (!VDTNiceAttemptAllowed(attempt, now)) return;
+     [attempted addObject:attemptKey];
+     VDTNiceRecord r = {};
      if (records[key] && !decodeRecord(records[key][@"record"], &r)) { loadError = EINVAL; return; }
      NativeContext context = {self, target};
      VDTNiceOperations ops = {.identity = identityCallback, .readValue = readCallback,
@@ -197,12 +358,31 @@ index 4e5b626..071f0ab 100644
 +        int error = [self save:&r target:target];
 +        if (error) { result.outcome = VDTNiceStoreFailed; result.error = error; }
 +    }
++    attempt = VDTNiceAttemptFinished(attempt, [self retryClock], result.outcome, result.error);
++    attemptStates[attemptKey] = @{@"count": @(attempt.count), @"pending": @(attempt.pending), @"due": @(attempt.due)};
      NSMutableDictionary *outcome = [@{@"target": target, @"state": outcomeCode(result.outcome),
-         @"error": @(result.error), @"checkedAt": @(NSDate.date.timeIntervalSince1970)} mutableCopy];
+-        @"error": @(result.error), @"checkedAt": @(NSDate.date.timeIntervalSince1970)} mutableCopy];
++        @"error": @(result.error), @"checkedAt": @(NSDate.date.timeIntervalSince1970),
++        @"attemptEnabled": @(enabled), @"retryPending": @(attempt.pending), @"attemptCount": @(attempt.count)} mutableCopy];
      if (result.observedValid) outcome[@"observed"] = @(result.observedValue);
      if (r.captured) outcome[@"original"] = @(r.originalValue);
      outcomes[key] = outcome;
-@@ -284,11 +345,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+     receiptDirty = YES;
+     // Bound failed/unmanaged observations as well as persistent records. Active
+     // recovery records are never evicted just to satisfy this cache bound.
+     if (outcomes.count > VDTNiceMaximumRecords) {
+         for (NSString *oldKey in [outcomes.allKeys copy]) {
+             if (records[oldKey]) continue;
+             [outcomes removeObjectForKey:oldKey];
++            [goneCleanupStarted removeObject:oldKey];
+             [attempted removeObject:[oldKey stringByAppendingString:@":apply"]];
+             [attempted removeObject:[oldKey stringByAppendingString:@":restore"]];
++            [attemptStates removeObjectForKey:[oldKey stringByAppendingString:@":apply"]];
++            [attemptStates removeObjectForKey:[oldKey stringByAppendingString:@":restore"]];
+             if (outcomes.count <= VDTNiceMaximumRecords) break;
+         }
+     }
+ }
  - (void)reconcile {
      [self load]; [self checkRestoreRequest];
      if (loadError || store.directoryFD < 0) return;
@@ -214,8 +394,28 @@ index 4e5b626..071f0ab 100644
          if (identity == VDTNiceIdentityGone) {
              // Forgetting an old instance must not be suppressed by a previous
              // successful apply in this config generation.
-             [attempted removeObject:[key stringByAppendingString:@":restore"]];
-@@ -300,14 +361,16 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+-            [attempted removeObject:[key stringByAppendingString:@":restore"]];
++            if (![goneCleanupStarted containsObject:key]) {
++                [goneCleanupStarted addObject:key];
++                [attempted removeObject:[key stringByAppendingString:@":restore"]];
++                [attemptStates removeObjectForKey:[key stringByAppendingString:@":restore"]];
++            }
+             [self runTarget:target enabled:NO desired:0];
+         } else if (paused || ![rule[@"enabled"] boolValue]) {
+             [self runTarget:target enabled:NO desired:0];
+         }
+     }
++    // Failed first attempts may have no captured journal (identity/read error).
++    // Retry their already-bound targets too; every IO still goes through the
++    // production lifetime/path guards. No PID scan, CPU call or polling here.
++    for (NSDictionary *outcome in [outcomes.allValues copy]) {
++        NSDictionary *target = outcome[@"target"], *rule = ruleForTarget(target, rules);
++        BOOL enabled = [outcome[@"attemptEnabled"] boolValue] && !paused && [rule[@"enabled"] boolValue];
++        NSString *attemptKey = [instanceKey(target) stringByAppendingString:enabled ? @":apply" : @":restore"];
++        if (![attemptStates[attemptKey][@"pending"] boolValue]) continue;
++        if (enabled) [self apply:target];
++        else [self runTarget:target enabled:NO desired:0];
++    }
  }
  - (void)apply:(NSDictionary *)rawTarget {
      if (loadError || store.directoryFD < 0) return;
@@ -232,9 +432,11 @@ index 4e5b626..071f0ab 100644
      [self runTarget:target enabled:enabled desired:[rule[@"value"] intValue]];
  }
  - (BOOL)restoreAll {
-     [attempted removeAllObjects];
+-    [attempted removeAllObjects];
++    [attempted removeAllObjects]; [attemptStates removeAllObjects]; [goneCleanupStarted removeAllObjects];
      [self load];
-@@ -316,18 +379,21 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+     if (loadError) return NO;
+     for (NSString *key in [records.allKeys copy]) [self runTarget:records[key][@"target"] enabled:NO desired:0];
      [self publish];
      return records.count == 0;
  }
@@ -262,6 +464,47 @@ index 4e5b626..071f0ab 100644
      for (NSString *key in outcomes) {
          NSDictionary *outcome = outcomes[key]; NSString *configKey = ruleKey(outcome[@"target"]);
          if (!configKey) continue;
+@@ -341,13 +455,18 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+         NSDictionary *rule = allRules[key]; NSMutableDictionary *row = [rule mutableCopy];
+         BOOL enabled = [rule[@"enabled"] boolValue];
+         NSString *state = enabled ? @"target-not-running" : @"disabled";
+         NSUInteger targetCount = 0, appliedCount = 0, pendingCount = 0;
+         int error = 0; BOOL sawFailure = NO;
++        NSTimeInterval newestCheck = 0, oldestCheck = DBL_MAX;
++        BOOL retryPending = NO;
+         NSArray *group = groups[key] ?: @[];
+         for (NSDictionary *item in group) {
+             NSDictionary *outcome = item[@"outcome"]; NSString *current = outcome[@"state"];
++            NSTimeInterval checked = [outcome[@"checkedAt"] doubleValue];
++            if (checked > 0) { newestCheck = MAX(newestCheck, checked); oldestCheck = MIN(oldestCheck, checked); }
++            retryPending = retryPending || [outcome[@"retryPending"] boolValue];
+             if (![current isEqual:@"target-not-running"]) ++targetCount;
+             if ([current isEqual:@"applied"]) ++appliedCount;
+             BOOL failure = ![@[@"applied", @"restored", @"disabled", @"target-not-running"] containsObject:current];
+             if (failure) { ++pendingCount; state = current; error = [outcome[@"error"] intValue]; sawFailure = YES; }
+             else if (!sawFailure && ![current isEqual:@"target-not-running"]) state = current;
+@@ -366,11 +485,12 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+         if (protectedRule(rule) && [rule[@"requestedEnabled"] boolValue]) state = @"protected";
+         if (paused && !restoring && !sawFailure) state = @"paused";
+         if (loadError) { state = boot ? @"state-unavailable" : @"boot-unavailable"; error = loadError; }
+         row[@"state"] = state; row[@"error"] = @(error);
+         row[@"targetCount"] = @(targetCount); row[@"appliedCount"] = @(appliedCount);
+-        row[@"pendingCount"] = @(pendingCount); row[@"checkedAt"] = @(NSDate.date.timeIntervalSince1970);
++        row[@"pendingCount"] = @(pendingCount); row[@"retryPending"] = @(retryPending);
++        if (newestCheck > 0) { row[@"checkedAt"] = @(newestCheck); row[@"oldestCheckedAt"] = @(oldestCheck); }
+         rows[key] = row;
+     }
+     NSDictionary *receipt = @{@"version": @1, @"boot": boot, @"rules": rows,
+         @"recordCount": @(records.count), @"pendingRestoreCount": @(totalPendingRestore),
+         @"paused": @(paused), @"restoreNonce": restoreNonce ?: @"", @"storeError": @(loadError),
+@@ -390,6 +510,7 @@ static VDTNiceCoordinator *coordinator(void) {
+ }
+ void vdt_nice_reload(NSDictionary *prefs) { [coordinator() reload:prefs]; }
+ void vdt_nice_reconcile(void) { [coordinator() reconcile]; }
+ void vdt_nice_apply(NSDictionary *target) { [coordinator() apply:target]; }
+ void vdt_nice_publish(void) { [coordinator() publish]; }
++NSTimeInterval vdt_nice_next_retry_delay(void) { return [coordinator() nextRetryDelay]; }
+ BOOL vdt_nice_restore_all(void) { return [coordinator() restoreAll]; }
 diff --git a/VDTNiceShared.h b/VDTNiceShared.h
 index 2cdd13d..c7f0d88 100644
 --- a/VDTNiceShared.h
@@ -851,7 +1094,7 @@ index 13c6627..89df94b 100644
                                             VDTConfigType type,
                                             NSString *sectionKey,
 diff --git a/Vedette.xm b/Vedette.xm
-index 7907eab..a6f57e5 100644
+index 7907eab..c64f6f0 100644
 --- a/Vedette.xm
 +++ b/Vedette.xm
 @@ -72,10 +72,11 @@ static NSMutableDictionary<NSString *, NSDictionary *> *managed_process_targets(
@@ -898,16 +1141,39 @@ index 7907eab..a6f57e5 100644
  
      // A newly launched disabled target starts from system defaults. If this
      // instance was previously managed, however, explicitly retire that policy.
-@@ -197,17 +204,24 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
+@@ -197,17 +204,47 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
              [tracked_process_instances() removeObject:instanceKey];
          }
      }
  }
  
++// One coalesced retry task, never a resident timer or repeated PID scan.
++static BOOL nice_retry_scheduled;
++static NSUInteger nice_retry_generation;
++static void invalidate_nice_retry_sync(void){
++    ++nice_retry_generation;
++    nice_retry_scheduled = NO;
++}
++static void schedule_nice_retry_sync(void){
++    NSTimeInterval delay = vdt_nice_next_retry_delay();
++    if (nice_retry_scheduled || delay < 0) return;
++    nice_retry_scheduled = YES;
++    NSUInteger generation = nice_retry_generation;
++    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0.05, delay) * NSEC_PER_SEC)),
++                   vedette_serial_queue(), ^{
++        if (generation != nice_retry_generation) return;
++        nice_retry_scheduled = NO;
++        vdt_nice_reconcile();
++        vdt_nice_publish();
++        schedule_nice_retry_sync();
++    });
++}
++
 +static void apply_nice_targets_sync(NSArray<NSDictionary *> *targets){
 +    // Never send these identity-only targets through vdt_apply_target: a
 +    // nice-only rule must neither clear CPU limits nor replace CPU inheritance.
 +    for (NSDictionary *target in targets) vdt_nice_apply(target);
++    schedule_nice_retry_sync();
 +}
 +
  static void reconcile_unreported_processes_sync(){
@@ -923,7 +1189,7 @@ index 7907eab..a6f57e5 100644
          if (instanceKey) [liveInstances addObject:instanceKey];
          apply_launch_target_if_needed(target);
      }
-@@ -233,17 +247,19 @@ static void schedule_launch_catch_up_sync(){
+@@ -233,17 +270,19 @@ static void schedule_launch_catch_up_sync(){
  }
  
  static void handle_reported_pid_sync(pid_t pid){
@@ -945,13 +1211,14 @@ index 7907eab..a6f57e5 100644
      schedule_launch_catch_up_sync();
  }
  
-@@ -253,21 +269,22 @@ static void reloadPrefsSync(){
+@@ -253,21 +292,23 @@ static void reloadPrefsSync(){
      NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);
      NSArray<NSDictionary *> *resourceRules = vdt_resource_rules_from_prefs(newPrefs);
      VDTSetPrefs(newPrefs);
      normalized_configs_snapshot = [configs copy];
      normalized_resource_rules_snapshot = [resourceRules copy];
 +    normalized_nice_rules_snapshot = [VDTNiceRulesFromPrefs(newPrefs) copy];
++    invalidate_nice_retry_sync();
      vdt_nice_reload(newPrefs);
  
      NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, resourceRules);
@@ -969,7 +1236,7 @@ index 7907eab..a6f57e5 100644
  
          BOOL enabled = target_has_enabled_policy(target);
          BOOL success = YES;
-@@ -292,12 +309,14 @@ static void reloadPrefs(){
+@@ -292,12 +333,15 @@ static void reloadPrefs(){
  
  static void restoreAllMonitors(){
      dispatch_async(vedette_serial_queue(), ^{
@@ -977,6 +1244,7 @@ index 7907eab..a6f57e5 100644
          // notification alone. Its durable records do not depend on the CPU temp file.
 -        vdt_nice_reload(getPrefs());
 +        NSDictionary *prefs = getPrefs();
++        invalidate_nice_retry_sync();
 +        vdt_nice_reload(prefs);
          vdt_nice_reconcile();
 +        apply_nice_targets_sync(vdt_nice_resolve_targets(prefs));
@@ -985,10 +1253,13 @@ index 7907eab..a6f57e5 100644
          // resolved target takes the restore path and hands the process back to
          // the system. The previous implementation inferred app-vs-daemon from an
          // index comparison that mis-typed daemon entries whenever both sections
-@@ -355,12 +374,11 @@ static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
+@@ -353,16 +397,17 @@ static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
+     dispatch_async(vedette_serial_queue(), ^{
+         if (nice_refresh_scheduled) return;
          nice_refresh_scheduled = YES;
          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), vedette_serial_queue(), ^{
              NSDictionary *prefs = getPrefs();
++            invalidate_nice_retry_sync();
              vdt_nice_reload(prefs);
              vdt_nice_reconcile();
 -            for (NSDictionary *target in vdt_resolve_targets(vdt_configs_from_prefs(prefs),
@@ -996,9 +1267,12 @@ index 7907eab..a6f57e5 100644
 +            for (NSDictionary *target in vdt_nice_resolve_targets(prefs))
                  vdt_nice_apply(target);
              vdt_nice_publish();
++            schedule_nice_retry_sync();
              nice_refresh_scheduled = NO;
          });
      });
+ }
+ 
 diff --git a/ci/stage_release.py b/ci/stage_release.py
 index 0d1f328..12ca362 100644
 --- a/ci/stage_release.py
@@ -1030,11 +1304,691 @@ index ffb89a4..211dfe8 100644
  Conflicts: com.udevs.vedette
  Replaces: com.udevs.vedette
  Maintainer: doimty
+diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.h b/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.h
+index 07e6419..69e213b 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.h
++++ b/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.h
+@@ -18,11 +18,11 @@
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ // SOFTWARE.
+ 
+ #import "../../Common.h"
+ 
+-@interface CHPDaemonInfo : NSObject
++@interface VDTDaemonInfo : NSObject
+ 
+ @property(nonatomic) NSString* executablePath;
+ @property(nonatomic) NSString* plistIdentifier;
+ @property(nonatomic) NSSet* linkedFrameworkIdentifiers;
+ 
+diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.m b/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.m
+index 8a36c4a..bf33343 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.m
++++ b/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.m
+@@ -18,18 +18,18 @@
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ // SOFTWARE.
+ 
+ #import "CHPDaemonInfo.h"
+ 
+-@implementation CHPDaemonInfo
++@implementation VDTDaemonInfo
+ 
+ - (NSString*)displayName
+ {
+     return [self.executablePath lastPathComponent];
+ }
+ 
+ - (NSString*)description
+ {
+-	return [NSString stringWithFormat:@"<CHPDaemonInfo: executablePath = %@, plistIdentifier = %@ linkedFrameworkIdentifiers = %@>", self.executablePath, self.plistIdentifier, self.linkedFrameworkIdentifiers];
++	return [NSString stringWithFormat:@"<VDTDaemonInfo: executablePath = %@, plistIdentifier = %@ linkedFrameworkIdentifiers = %@>", self.executablePath, self.plistIdentifier, self.linkedFrameworkIdentifiers];
+ }
+ 
+ @end
+\ No newline at end of file
+diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonList.h b/vedetteprefs/ChoicyPreferences/CHPDaemonList.h
+index ad4d505..ec92f1c 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPDaemonList.h
++++ b/vedetteprefs/ChoicyPreferences/CHPDaemonList.h
+@@ -18,20 +18,25 @@
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ // SOFTWARE.
+ 
+ #import "../../Common.h"
+ #import "CHPDaemonListObserver.h"
++#import "../VDTListCatalog.h"
+ 
+-@interface CHPDaemonList : NSObject
++@interface VDTDaemonList : NSObject
+ {
+ 	NSHashTable* _observers;
++	VDTListCatalogState _state;
++	NSArray* _daemonList;
+ }
+ @property(nonatomic,readonly) BOOL loaded;
+ @property(nonatomic,readonly) BOOL loading;
+-@property(nonatomic,readonly) NSArray* daemonList;
++@property(nonatomic,readonly) BOOL failed;
++@property(nonatomic,readonly,copy) NSArray* daemonList;
+ + (instancetype)sharedInstance;
+ - (BOOL)daemonList:(NSArray*)daemonList containsDisplayName:(NSString*)displayName;
+ - (void)updateDaemonListIfNeeded;
+-- (void)addObserver:(id<CHPDaemonListObserver>)observer;
+-- (void)removeObserver:(id<CHPDaemonListObserver>)observer;
++- (void)refresh;
++- (void)addObserver:(id<VDTDaemonListObserver>)observer;
++- (void)removeObserver:(id<VDTDaemonListObserver>)observer;
+ - (void)sendReloadToObservers;
+ @end
+diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonList.m b/vedetteprefs/ChoicyPreferences/CHPDaemonList.m
+index c0266d6..d2a4499 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPDaemonList.m
++++ b/vedetteprefs/ChoicyPreferences/CHPDaemonList.m
+@@ -22,61 +22,104 @@
+ #import "CHPDaemonInfo.h"
+ #import "../../Common.h"
+ #import "../../VDTSpringBoardIdentity.h"
+ 
+ #import <dirent.h>
++#import <errno.h>
++
++// Missing optional sources are normal; IO errors are never successful empties.
++static NSArray *VDTDaemonDirectory(NSString *path, BOOL optional) {
++    NSError *error = nil;
++    NSArray *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:
++        [NSURL fileURLWithPath:path isDirectory:YES] includingPropertiesForKeys:nil options:0 error:&error];
++    if (!entries && optional && [error.domain isEqualToString:NSCocoaErrorDomain] &&
++        (error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError)) return @[];
++    return entries;
++}
+ 
+-@implementation CHPDaemonList
++@implementation VDTDaemonList
+ 
+ + (instancetype)sharedInstance
+ {
+-	static CHPDaemonList* sharedInstance = nil;
++	NSAssert(NSThread.isMainThread, @"Daemon catalog access must be on main");
++	static VDTDaemonList* sharedInstance = nil;
+ 	static dispatch_once_t onceToken;
+ 	dispatch_once(&onceToken, ^
+ 	{
+ 		//Initialise instance
+-		sharedInstance = [[CHPDaemonList alloc] init];
++		sharedInstance = [[VDTDaemonList alloc] init];
+ 	});
+ 	return sharedInstance;
+ }
+ 
+ - (instancetype)init
+ {
+-	self = [super init];
+-
+-	_observers = [NSHashTable weakObjectsHashTable];
+-
++	if ((self = [super init])) {
++		NSAssert(NSThread.isMainThread, @"Main only");
++		_observers = [NSHashTable weakObjectsHashTable];
++		VDTListCatalogInit(&_state);
++	}
+ 	return self;
+ }
+ 
+ - (BOOL)daemonList:(NSArray*)daemonList containsDisplayName:(NSString*)displayName
+ {
+-	for(CHPDaemonInfo* info in daemonList)
++	for(VDTDaemonInfo* info in daemonList)
+ 	{
+ 		if([info.displayName isEqualToString:displayName])
+ 		{
+ 			return YES;
+ 		}
+ 	}
+ 
+ 	return NO;
+ }
+ 
++- (BOOL)loaded { NSAssert(NSThread.isMainThread, @"Main only"); return _state.loaded; }
++- (BOOL)loading { NSAssert(NSThread.isMainThread, @"Main only"); return _state.loading; }
++- (BOOL)failed { NSAssert(NSThread.isMainThread, @"Main only"); return _state.failed; }
++- (NSArray *)daemonList { NSAssert(NSThread.isMainThread, @"Main only"); return _daemonList; }
++
+ - (void)updateDaemonListIfNeeded
+ {
+-	if(_loaded || _loading)
+-	{
+-		return;
+-	}
+-
+-	_loading = YES;
+-
+-	NSMutableArray<NSURL*>* daemonPlists = [[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/System/Library/LaunchDaemons"] includingPropertiesForKeys:nil options:0 error:nil] mutableCopy];
++	NSAssert(NSThread.isMainThread, @"Main only");
++	// Preserve the original loaded gate: warm opens never re-enumerate daemons.
++	if (!VDTListCatalogEnsure(&_state, NSProcessInfo.processInfo.systemUptime, false)) return;
++	uint64_t generation = _state.activeGeneration;
++	[self sendReloadToObservers];
++	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
++		@autoreleasepool {
++			NSArray *records = nil;
++			@try { records = [self scanDaemonList]; }
++			@catch (NSException *exception) { (void)exception; }
++			dispatch_async(dispatch_get_main_queue(), ^{
++				VDTListCatalogCompletion completion = VDTListCatalogComplete(&self->_state, generation, records != nil);
++				if (completion == VDTListCatalogIgnored) return;
++				if (completion == VDTListCatalogPublish) self->_daemonList = [records copy];
++				if (completion != VDTListCatalogSuperseded) [self sendReloadToObservers];
++				[self updateDaemonListIfNeeded];
++			});
++		}
++	});
++}
+ 
+-	[daemonPlists addObjectsFromArray:[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/System/Library/NanoLaunchDaemons"] includingPropertiesForKeys:nil options:0 error:nil]];
++- (void)refresh
++{
++	NSAssert(NSThread.isMainThread, @"Main only");
++	VDTListCatalogInvalidate(&_state);
++	[self updateDaemonListIfNeeded];
++}
+ 
+-	[daemonPlists addObjectsFromArray:[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:VDT_JBROOT_PATH("/Library/LaunchDaemons")] includingPropertiesForKeys:nil options:0 error:nil]];
++- (NSArray *)scanDaemonList
++{
++	NSArray *system = VDTDaemonDirectory(@"/System/Library/LaunchDaemons", NO);
++	NSArray *nano = VDTDaemonDirectory(@"/System/Library/NanoLaunchDaemons", YES);
++	NSArray *extra = VDTDaemonDirectory(VDT_JBROOT_PATH("/Library/LaunchDaemons"), YES);
++	if (!system || !nano || !extra) return nil;
++	NSMutableArray<NSURL*>* daemonPlists = [system mutableCopy];
++	[daemonPlists addObjectsFromArray:nano];
++	[daemonPlists addObjectsFromArray:extra];
+ 
+ 	for(NSURL* daemonPlistURL in [daemonPlists reverseObjectEnumerator])
+ 	{
+ 		if(![daemonPlistURL.pathExtension isEqualToString:@"plist"])
+ 		{
+@@ -87,27 +130,30 @@
+ 	NSMutableArray* daemonListM = [NSMutableArray new];
+ 
+ 	// Known system entry, not an assertion that it is currently running. This
+ 	// remains available when LaunchDaemons/LaunchServices omit SpringBoard.
+ 	// Seed first so later discovery cannot replace it with a same-named binary.
+-	CHPDaemonInfo* springBoard = [[CHPDaemonInfo alloc] init];
++	VDTDaemonInfo* springBoard = [[VDTDaemonInfo alloc] init];
+ 	springBoard.executablePath = @VDT_SPRINGBOARD_EXECUTABLE;
+ 	springBoard.plistIdentifier = @VDT_SPRINGBOARD_LAUNCHD_ID;
+ 	[daemonListM addObject:springBoard];
+ 
+ 	for(NSURL* daemonPlistURL in daemonPlists)
+ 	{
+ 		NSDictionary* daemonDictionary = [NSDictionary dictionaryWithContentsOfURL:daemonPlistURL];
++		if (!daemonDictionary) return nil;
+ 		
+-		CHPDaemonInfo* info = [[CHPDaemonInfo alloc] init];
++		VDTDaemonInfo* info = [[VDTDaemonInfo alloc] init];
+ 
+-		info.executablePath = [daemonDictionary objectForKey:@"Program"];
++		id program = [daemonDictionary objectForKey:@"Program"];
++		info.executablePath = [program isKindOfClass:NSString.class] ? program : nil;
+ 
+ 		if(!info.executablePath)
+ 		{
+ 			NSArray* programArguments = [daemonDictionary objectForKey:@"ProgramArguments"];
+-			if(programArguments.count > 0)
++			if ([programArguments isKindOfClass:NSArray.class] && programArguments.count > 0 &&
++				[programArguments.firstObject isKindOfClass:NSString.class])
+ 			{
+ 				info.executablePath = programArguments.firstObject;
+ 			}
+ 		}
+ 
+@@ -120,18 +166,23 @@
+ 				[daemonListM addObject:info];
+ 			}
+ 		}
+ 	}
+ 
++	__block BOOL frameworkReadFailed = NO;
+ 	NSDirectoryEnumerator* systemLibraryFrameworksEnumerator = [[NSFileManager defaultManager] enumeratorAtURL:[NSURL fileURLWithPath:@"/System/Library/Frameworks" isDirectory:YES] includingPropertiesForKeys:nil options:0 errorHandler:^(NSURL *url, NSError *error)
+ 	{
+-		return YES;
++		(void)url; (void)error;
++		frameworkReadFailed = YES;
++		return NO;
+ 	}];
+ 
+ 	NSDirectoryEnumerator* systemLibraryPrivateFrameworksEnumerator = [[NSFileManager defaultManager] enumeratorAtURL:[NSURL fileURLWithPath:@"/System/Library/PrivateFrameworks" isDirectory:YES] includingPropertiesForKeys:nil options:0 errorHandler:^(NSURL *url, NSError *error)
+ 	{
+-		return YES;
++		(void)url; (void)error;
++		frameworkReadFailed = YES;
++		return NO;
+ 	}];
+ 
+ 	NSMutableArray* XPCUrls = [NSMutableArray new];
+ 
+ 	for(NSURL* fileURL in systemLibraryFrameworksEnumerator)
+@@ -148,21 +199,22 @@
+ 		{
+ 			[XPCUrls addObject:fileURL];
+ 		}
+ 	}
+ 
++	if (!systemLibraryFrameworksEnumerator || !systemLibraryPrivateFrameworksEnumerator || frameworkReadFailed) return nil;
+ 	for(NSURL* XPCUrl in XPCUrls)
+ 	{
+ 		NSString* XPCPath = XPCUrl.path;
+ 
+ 		NSString* XPCName = [XPCUrl.lastPathComponent stringByReplacingOccurrencesOfString:@".xpc" withString:@""];
+ 
+ 		NSString* XPCExecutablePath = [XPCPath stringByAppendingPathComponent:XPCName];
+ 
+ 		if([[NSFileManager defaultManager] fileExistsAtPath:XPCExecutablePath])
+ 		{
+-			CHPDaemonInfo* info = [[CHPDaemonInfo alloc] init];
++			VDTDaemonInfo* info = [[VDTDaemonInfo alloc] init];
+ 			info.executablePath = XPCExecutablePath;
+ 
+ 			if(![self daemonList:daemonListM containsDisplayName:info.displayName])
+ 			{
+ 				[daemonListM addObject:info];
+@@ -174,93 +226,70 @@
+ 
+ 	// On A12 unc0ver, using contentsOfDirectoryAtURL on /usr/libexec locks the thread and leaves a kernel thread looping
+ 	// This causes all sorts of issues and heats the device up
+ 	// This has been fixed in unc0ver 4.0, but we still use the old solution because some people might not be updated to 4.0
+ 	// The C API is not affected by this issue, so we just use it instead
+-	DIR *dir;
+-    struct dirent* dp;
+-    dir = opendir("/usr/libexec");
+-    while ((dp=readdir(dir)) != NULL)
+-	{
+-        if (!(!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..")))
+-        {
+-            NSString* filename = [NSString stringWithCString:dp->d_name encoding:NSUTF8StringEncoding];
+-            if(filename)
+-			{
+-				NSURL* URL = [NSURL fileURLWithPath:[@"/usr/libexec" stringByAppendingPathComponent:filename]];
+-				HBLogDebug(@"added %@", URL);
+-				[additionalPotentialDaemons addObject:URL];
+-			}
+-        }
+-    }
+-    closedir(dir);
+-
+-	/*[additionalPotentialDaemons addObjectsFromArray:[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/usr/libexec" isDirectory:YES] 
+-                    includingPropertiesForKeys:nil 
+-                                       options:0 
+-                                         error:nil]];*/
+-	
+-	[additionalPotentialDaemons addObjectsFromArray:[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/usr/bin" isDirectory:YES] 
+-                    includingPropertiesForKeys:nil 
+-                                       options:0 
+-                                         error:nil]];
+-	
+-	[additionalPotentialDaemons addObjectsFromArray:[[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/usr/sbin" isDirectory:YES] 
+-                    includingPropertiesForKeys:nil 
+-                                       options:0 
+-                                         error:nil]];
++	DIR *dir = opendir("/usr/libexec");
++	if (!dir) return nil;
++	int readError = 0;
++	for (;;) {
++		errno = 0;
++		struct dirent *dp = readdir(dir);
++		if (!dp) { readError = errno; break; }
++		if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..")) continue;
++		NSString *filename = [NSString stringWithCString:dp->d_name encoding:NSUTF8StringEncoding];
++		if (filename) {
++			NSURL *URL = [NSURL fileURLWithPath:[@"/usr/libexec" stringByAppendingPathComponent:filename]];
++			[additionalPotentialDaemons addObject:URL];
++		}
++	}
++	if (closedir(dir) != 0 || readError != 0) return nil;
++
++	NSArray *bin = VDTDaemonDirectory(@"/usr/bin", NO);
++	NSArray *sbin = VDTDaemonDirectory(@"/usr/sbin", NO);
++	if (!bin || !sbin) return nil;
++	[additionalPotentialDaemons addObjectsFromArray:bin];
++	[additionalPotentialDaemons addObjectsFromArray:sbin];
+ 	
+ 
+ 	for(NSURL* URL in additionalPotentialDaemons)
+ 	{
+ 		if([URL.lastPathComponent hasSuffix:@"d"])
+ 		{
+-			CHPDaemonInfo* info = [[CHPDaemonInfo alloc] init];
++			VDTDaemonInfo* info = [[VDTDaemonInfo alloc] init];
+ 			info.executablePath = [URL path];
+ 
+ 			if(![self daemonList:daemonListM containsDisplayName:info.displayName])
+ 			{
+ 				[daemonListM addObject:info];
+ 			}
+ 		}
+ 	}
+ 
+-	[daemonListM sortUsingComparator:^NSComparisonResult(CHPDaemonInfo* a, CHPDaemonInfo* b)  //Sort alphabetically
++	[daemonListM sortUsingComparator:^NSComparisonResult(VDTDaemonInfo* a, VDTDaemonInfo* b)  //Sort alphabetically
+ 	{
+ 		return [[a displayName] localizedCaseInsensitiveCompare:[b displayName]];
+ 	}];
+ 
+-	_daemonList = [daemonListM copy];
+-	_loading = NO;
+-	_loaded = YES;
+-
+-	[self sendReloadToObservers];
++	return [daemonListM copy];
+ }
+ 
+-- (void)addObserver:(id<CHPDaemonListObserver>)observer
++- (void)addObserver:(id<VDTDaemonListObserver>)observer
+ {
+-	if(![_observers containsObject:observer])
+-	{
+-		[_observers addObject:observer];
+-	}
++	NSAssert(NSThread.isMainThread, @"Main only");
++	[_observers addObject:observer];
+ }
+ 
+-- (void)removeObserver:(id<CHPDaemonListObserver>)observer
++- (void)removeObserver:(id<VDTDaemonListObserver>)observer
+ {
+-	if([_observers containsObject:observer])
+-	{
+-		[_observers removeObject:observer];
+-	}
++	NSAssert(NSThread.isMainThread, @"Main only");
++	[_observers removeObject:observer];
+ }
+ 
+ - (void)sendReloadToObservers
+ {
+-	for(id<CHPDaemonListObserver> observer in _observers)
+-	{
+-		dispatch_async(dispatch_get_main_queue(), ^
+-		{
+-			[observer daemonListDidUpdate:self];
+-		});
+-	}
++	NSAssert(NSThread.isMainThread, @"Main only");
++	for(id<VDTDaemonListObserver> observer in _observers.allObjects)
++		[observer daemonListDidUpdate:self];
+ }
+ 
+ @end
+diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonListController.h b/vedetteprefs/ChoicyPreferences/CHPDaemonListController.h
+index 2937b22..f0f73db 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPDaemonListController.h
++++ b/vedetteprefs/ChoicyPreferences/CHPDaemonListController.h
+@@ -22,13 +22,13 @@
+ 
+ #import "CHPListController.h"
+ 
+ #import "CHPDaemonListObserver.h"
+ 
+-@interface CHPDaemonListController : CHPListController <CHPDaemonListObserver>
++@interface VDTDaemonListController : VDTListController <VDTDaemonListObserver>
+ {
+-	NSSet* _suggestedDaemons;
+ 	BOOL _showsAllDaemons;
++	BOOL _vdtVisible;
++	BOOL _vdtNeedsReload;
+ }
+-- (void)updateSuggestedDaemons;
+ - (void)reloadValueOfSelectedSpecifier;
+ @end
+diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonListController.m b/vedetteprefs/ChoicyPreferences/CHPDaemonListController.m
+index 2b06a04..eeac313 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPDaemonListController.m
++++ b/vedetteprefs/ChoicyPreferences/CHPDaemonListController.m
+@@ -28,42 +28,60 @@
+ 
+ @interface PSListController()
+ - (id)controllerForSpecifier:(PSSpecifier*)specifier;
+ @end
+ 
+-@implementation CHPDaemonListController
++@implementation VDTDaemonListController
+ 
+ - (void)viewDidLoad
+ {
+ 	[super viewDidLoad];
+ 	[self applySearchControllerHideWhileScrolling:NO];
+-	[[CHPDaemonList sharedInstance] addObserver:self];
+-
+-	if(![CHPDaemonList sharedInstance].loaded)
+-	{
+-		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+-		{
+-			[[CHPDaemonList sharedInstance] updateDaemonListIfNeeded];
+-		});
+-	}
+-	else
+-	{
+-		[self updateSuggestedDaemons];
+-	}
+-
++	[[VDTDaemonList sharedInstance] addObserver:self];
++	self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
++		initWithTitle:VDTLoc(self.class, @"Refresh") style:UIBarButtonItemStylePlain
++		target:self action:@selector(refreshDaemonRecords)];
+ }
+ 
+ - (void)dealloc
+ {
+-	[[CHPDaemonList sharedInstance] removeObserver:self];
++	[[VDTDaemonList sharedInstance] removeObserver:self];
+ }
+ 
+ - (void)viewWillAppear:(BOOL)animated
+ {
++	_vdtVisible = NO;
++	_specifiers = nil;
++	_vdtNeedsReload = YES;
+ 	[super viewWillAppear:animated];
+-	// Keep the active query; a changed switch may move a row to another group.
+-	[self reloadSpecifiers];
++	[[VDTDaemonList sharedInstance] updateDaemonListIfNeeded];
++}
++
++- (void)viewDidAppear:(BOOL)animated
++{
++	[super viewDidAppear:animated];
++	_vdtVisible = YES;
++	if (_vdtNeedsReload) [self reloadSpecifiers];
++}
++
++- (void)viewWillDisappear:(BOOL)animated
++{
++	_vdtVisible = NO;
++	[super viewWillDisappear:animated];
++}
++
++- (void)reloadSpecifiers
++{
++	_vdtNeedsReload = YES;
++	if (!_vdtVisible) return;
++	_vdtNeedsReload = NO;
++	[super reloadSpecifiers];
++}
++
++- (void)refreshDaemonRecords
++{
++	[[VDTDaemonList sharedInstance] refresh];
+ }
+ 
+ - (NSString*)topTitle
+ {
+ 	return VDTLoc(self.class, @"Daemons");
+@@ -77,23 +95,31 @@
+ - (NSMutableArray*)specifiers
+ {
+ 	if (!_specifiers)
+ 	{
+ 		NSMutableArray *rows = [NSMutableArray new];
+-		if (![CHPDaemonList sharedInstance].loaded)
++		VDTDaemonList *catalog = [VDTDaemonList sharedInstance];
++		if (!catalog.loaded)
+ 		{
+-			PSSpecifier *loading = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Loading…")
+-				target:self set:nil get:nil detail:nil
+-				cell:[PSTableCell cellTypeFromString:@"PSSpinnerCell"] edit:nil];
+-			[rows addObject:loading];
++			if (catalog.failed) {
++				PSSpecifier *status = [PSSpecifier emptyGroupSpecifier];
++				[status setProperty:VDTLoc(self.class, @"Unable to load Daemons.") forKey:@"footerText"];
++				[rows addObject:status];
++				[rows addObject:[self catalogRetrySpecifier]];
++			} else {
++				PSSpecifier *loading = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Loading…")
++					target:self set:nil get:nil detail:nil
++					cell:[PSTableCell cellTypeFromString:@"PSSpinnerCell"] edit:nil];
++				[rows addObject:loading];
++			}
+ 			_specifiers = rows;
+ 		}
+ 		else
+ 		{
+ 			_showsAllDaemons = YES;
+-			NSArray<CHPDaemonInfo *> *daemonList = [CHPDaemonList sharedInstance].daemonList;
+-			for (CHPDaemonInfo *info in daemonList)
++			NSArray<VDTDaemonInfo *> *daemonList = [VDTDaemonList sharedInstance].daemonList;
++			for (VDTDaemonInfo *info in daemonList)
+ 			{
+ 				NSString *name = [info displayName];
+ 				if (![name isKindOfClass:[NSString class]] || name.length == 0) continue;
+ 				PSSpecifier *specifier = [PSSpecifier preferenceSpecifierNamed:name
+ 					target:self set:nil get:@selector(previewStringForSpecifier:)
+@@ -108,15 +134,31 @@
+ 			NSString *query = [_searchKey copy] ?: @"";
+ 			_specifiers = VDTGroupedListSpecifiers(rows, @"daemonName", VDTConfigTypeDaemon,
+ 				self.class, ^BOOL(PSSpecifier *specifier) {
+ 					return query.length == 0 || [specifier.name localizedStandardContainsString:query];
+ 				}, query.length ? @"No Results" : @"No Daemons");
++			if (catalog.failed) {
++				NSMutableArray *withFailure = [_specifiers mutableCopy];
++				PSSpecifier *status = [PSSpecifier emptyGroupSpecifier];
++				[status setProperty:VDTLoc(self.class, @"Refresh failed. Showing the previous list.") forKey:@"footerText"];
++				[withFailure addObject:status];
++				[withFailure addObject:[self catalogRetrySpecifier]];
++				_specifiers = withFailure;
++			}
+ 		}
+ 	}
+ 	return _specifiers;
+ }
+ 
++- (PSSpecifier *)catalogRetrySpecifier
++{
++	PSSpecifier *retry = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Retry")
++		target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
++	[retry setButtonAction:@selector(refreshDaemonRecords)];
++	return retry;
++}
++
+ - (id)previewStringForSpecifier:(PSSpecifier*)specifier
+ {
+ 	return VDTListConfigurationEnabled([specifier propertyForKey:@"daemonName"], VDTConfigTypeDaemon, nil)
+ 		? VDTLoc(self.class, @"Configuration enabled") : @"";
+ }
+@@ -125,34 +167,18 @@
+ {
+ 	// The previous index path may now belong to another group, or to no row.
+ 	[self reloadSpecifiers];
+ }
+ 
+-- (void)updateSuggestedDaemons
+-{
+-	NSMutableSet* suggestedDaemons = [NSMutableSet new];
+-
+-	for(CHPDaemonInfo* info in [CHPDaemonList sharedInstance].daemonList)
+-	{
+-		if([info.linkedFrameworkIdentifiers containsObject:@"com.apple.UIKit"])
+-		{
+-			[suggestedDaemons addObject:[info displayName]];
+-		}
+-	}
+-
+-	_suggestedDaemons = [suggestedDaemons copy];
+-}
+-
+-- (void)daemonListDidUpdate:(CHPDaemonList*)list
++- (void)daemonListDidUpdate:(VDTDaemonList*)list
+ {
+ 	// The enumerator currently delivers on main; also tolerate an off-main caller.
+ 	if (![NSThread isMainThread])
+ 	{
+ 		dispatch_async(dispatch_get_main_queue(), ^{ [self daemonListDidUpdate:list]; });
+ 		return;
+ 	}
+-	[self updateSuggestedDaemons];
+ 	[self reloadSpecifiers];
+ }
+ 
+ - (id)controllerForSpecifier:(PSSpecifier*)specifier
+ {
+diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonListObserver.h b/vedetteprefs/ChoicyPreferences/CHPDaemonListObserver.h
+index e275e74..a80ad67 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPDaemonListObserver.h
++++ b/vedetteprefs/ChoicyPreferences/CHPDaemonListObserver.h
+@@ -18,11 +18,11 @@
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ // SOFTWARE.
+ 
+ #import "../../Common.h"
+ 
+-@class CHPDaemonList;
++@class VDTDaemonList;
+ 
+-@protocol CHPDaemonListObserver
++@protocol VDTDaemonListObserver
+ @required
+-- (void)daemonListDidUpdate:(CHPDaemonList*)list;
++- (void)daemonListDidUpdate:(VDTDaemonList*)list;
+ @end
+diff --git a/vedetteprefs/ChoicyPreferences/CHPListController.h b/vedetteprefs/ChoicyPreferences/CHPListController.h
+index 7c103cb..c09769d 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPListController.h
++++ b/vedetteprefs/ChoicyPreferences/CHPListController.h
+@@ -19,11 +19,11 @@
+ // SOFTWARE.
+ 
+ #import <Preferences/PSListController.h>
+ #import <Preferences/PSSpecifier.h>
+ 
+-@interface CHPListController : PSListController <UISearchResultsUpdating> {
++@interface VDTListController : PSListController <UISearchResultsUpdating> {
+     NSString *_searchKey;
+     UISearchController *_searchController;
+ }
+ - (void)applySearchControllerHideWhileScrolling:(BOOL)hideWhileScrolling;
+ - (NSString*)topTitle;
+diff --git a/vedetteprefs/ChoicyPreferences/CHPListController.m b/vedetteprefs/ChoicyPreferences/CHPListController.m
+index b7ed792..d761aa0 100644
+--- a/vedetteprefs/ChoicyPreferences/CHPListController.m
++++ b/vedetteprefs/ChoicyPreferences/CHPListController.m
+@@ -21,11 +21,11 @@
+ #import "CHPListController.h"
+ #import "../../VDTShared.h"
+ #import "../VDTLocalization.h"
+ #import "../VDTStyle.h"
+ 
+-@implementation CHPListController
++@implementation VDTListController
+ 
+ - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
+ 
+ - (void)viewDidLoad
+ {
 diff --git a/vedetteprefs/Resources/en.lproj/Localizable.strings b/vedetteprefs/Resources/en.lproj/Localizable.strings
-index 2ef0acf..54dba76 100644
+index 2ef0acf..8a5767c 100644
 --- a/vedetteprefs/Resources/en.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/en.lproj/Localizable.strings
-@@ -124,7 +124,19 @@
+@@ -124,7 +124,27 @@
  "Reclaim priority" = "Reclaim priority";
  "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB." = "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.";
  "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.";
@@ -1054,11 +2008,19 @@ index 2ef0acf..54dba76 100644
 +"Follow containing app nice" = "Follow containing app nice";
 +"Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged." = "Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged.";
 +"Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept." = "Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept.";
++"Last check: %@" = "Last check: %@";
++"Last read back: %@" = "Last read back: %@";
++"Bounded retry pending" = "Bounded retry pending";
++"Refresh" = "Refresh";
++"Retry" = "Retry";
++"Unable to load App extensions." = "Unable to load App extensions.";
++"Unable to load Daemons." = "Unable to load Daemons.";
++"Refresh failed. Showing the previous list." = "Refresh failed. Showing the previous list.";
 diff --git a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-index ed4be14..5afcace 100644
+index ed4be14..a83c618 100644
 --- a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-@@ -124,7 +124,19 @@
+@@ -124,7 +124,27 @@
  "Reclaim priority" = "回收优先级";
  "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB." = "保存的内存规则与生效状态分开显示：当前版本仅保存。0 = 系统默认、-1 = 不限制、正数 = MiB。";
  "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "保存的回收优先级规则与生效状态分开显示：当前版本仅保存。档位因系统版本而异；0 = idle、-1 会实际写入默认档。";
@@ -1078,11 +2040,189 @@ index ed4be14..5afcace 100644
 +"Follow containing app nice" = "nice 跟随所属 App";
 +"Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged." = "没有自己的 nice 字段时，跟随所属 App 的 nice 规则。保存开关或数值后创建独立 nice 规则；CPU 和资源规则不受影响。";
 +"Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept." = "仅删除此扩展的 nice 设置并恢复跟随所属 App？CPU、内存和 Jetsam 规则将保留。";
++"Last check: %@" = "上次检查：%@";
++"Last read back: %@" = "上次读回：%@";
++"Bounded retry pending" = "等待有限重试";
++"Refresh" = "刷新";
++"Retry" = "重试";
++"Unable to load App extensions." = "无法加载 App 扩展目录。";
++"Unable to load Daemons." = "无法加载守护目录。";
++"Refresh failed. Showing the previous list." = "刷新失败，继续显示上次的列表。";
+diff --git a/vedetteprefs/VDTExtensionListController.h b/vedetteprefs/VDTExtensionListController.h
+index 92fc862..d82e04d 100644
+--- a/vedetteprefs/VDTExtensionListController.h
++++ b/vedetteprefs/VDTExtensionListController.h
+@@ -1,7 +1,8 @@
+ // Copyright (c) 2026 Vedette contributors.
+ // SPDX-License-Identifier: GPL-3.0-only
+ #import <Preferences/PSListController.h>
+ #import <Preferences/PSSpecifier.h>
+-@interface VDTExtensionListController : PSListController <UISearchResultsUpdating>
++#import "VDTExtensionCatalog.h"
++@interface VDTExtensionListController : PSListController <UISearchResultsUpdating, VDTExtensionCatalogObserver>
+ - (void)reloadExtensionRule:(NSString *)identifier;
+ @end
 diff --git a/vedetteprefs/VDTExtensionListController.m b/vedetteprefs/VDTExtensionListController.m
-index 6aca7c1..1679627 100644
+index 6aca7c1..b2e6d4a 100644
 --- a/vedetteprefs/VDTExtensionListController.m
 +++ b/vedetteprefs/VDTExtensionListController.m
-@@ -114,10 +114,11 @@ static NSArray<NSDictionary *> *extension_records(void) {
+@@ -3,67 +3,28 @@
+ #import "VDTExtensionListController.h"
+ #import "VDTProcessConfiguration.h"
+ #import "VDTListPresentation.h"
+ #import "VDTLocalization.h"
+ #import "VDTStyle.h"
+-#import "../PrivateHeaders.h"
+-#import "../VDTBundleIdentity.h"
++#import "VDTExtensionCatalog.h"
+ 
+ @interface VDTExtensionListController ()
+-@property (nonatomic, copy) NSArray<NSDictionary *> *extensionRecords;
+ @property (nonatomic, strong) UISearchController *extensionSearch;
+ @property (nonatomic, copy) NSString *extensionQuery;
+-@property (nonatomic) NSUInteger enumerationGeneration;
+-@property (nonatomic) BOOL enumerating;
++@property (nonatomic) BOOL catalogVisible;
++@property (nonatomic) BOOL catalogNeedsReload;
+ @end
+ 
+-// Read-only one-level PlugIns enumeration, never a recursive filesystem scan.
+-static NSArray<NSDictionary *> *extension_records(void) {
+-    Class workspaceClass = objc_getClass("LSApplicationWorkspace");
+-    if (![workspaceClass respondsToSelector:@selector(defaultWorkspace)]) return @[];
+-    LSApplicationWorkspace *workspace = [workspaceClass defaultWorkspace];
+-    if (![workspace respondsToSelector:@selector(allApplications)]) return @[];
+-    id rawApplications = [workspace allApplications];
+-    if (![rawApplications isKindOfClass:[NSArray class]]) return @[];
+-    NSMutableDictionary<NSString *, NSDictionary *> *byIdentifier = [NSMutableDictionary new];
+-    for (LSApplicationProxy *proxy in rawApplications) {
+-        @autoreleasepool {
+-            if (![proxy respondsToSelector:@selector(bundleURL)]) continue;
+-            NSURL *appURL = proxy.bundleURL;
+-            if (![appURL isKindOfClass:[NSURL class]] || !appURL.isFileURL ||
+-                [appURL.path.pathExtension caseInsensitiveCompare:@"app"] != NSOrderedSame) continue;
+-            NSString *pluginsPath = [appURL.path stringByAppendingPathComponent:@"PlugIns"];
+-            NSArray *children = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:pluginsPath error:nil];
+-            for (NSString *child in [children sortedArrayUsingSelector:@selector(compare:)]) {
+-                if ([child.pathExtension caseInsensitiveCompare:@"appex"] != NSOrderedSame) continue;
+-                NSString *path = [pluginsPath stringByAppendingPathComponent:child];
+-                NSDictionary *info = VDTReadExtensionBundleInfo(path, nil);
+-                NSString *identifier = info[@"extensionIdentifier"];
+-                if (!identifier || byIdentifier[identifier]) continue;
+-                NSMutableDictionary *record = [info mutableCopy];
+-                NSString *appName = appURL.path.lastPathComponent.stringByDeletingPathExtension;
+-                record[@"containingAppName"] = appName ?: @"";
+-                if ([proxy respondsToSelector:@selector(bundleIdentifier)] &&
+-                    [proxy.bundleIdentifier isKindOfClass:[NSString class]]) {
+-                    record[@"containingAppIdentifier"] = proxy.bundleIdentifier;
+-                }
+-                byIdentifier[identifier] = [record copy];
+-            }
+-        }
+-    }
+-    // Fixed order before localized list sorting also makes duplicate handling stable.
+-    NSMutableArray *result = [NSMutableArray new];
+-    for (NSString *identifier in [[byIdentifier allKeys] sortedArrayUsingSelector:@selector(compare:)])
+-        [result addObject:byIdentifier[identifier]];
+-    return [result copy];
+-}
+-
+ @implementation VDTExtensionListController
+ - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
+ 
+ - (void)viewDidLoad {
+     [super viewDidLoad];
++    [[VDTExtensionCatalog sharedInstance] addObserver:self];
++    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
++        initWithTitle:VDTLoc(self.class, @"Refresh") style:UIBarButtonItemStylePlain
++        target:self action:@selector(refreshExtensionRecords)];
+     self.title = VDTLoc(self.class, @"App extensions");
+     self.definesPresentationContext = YES;
+     self.view.tintColor = VDTAccentColor();
+     VDTStyleTable(self.table);
+     self.extensionSearch = [[UISearchController alloc] initWithSearchResultsController:nil];
+@@ -72,52 +33,70 @@ static NSArray<NSDictionary *> *extension_records(void) {
+     self.extensionSearch.searchBar.placeholder = VDTLoc(self.class, @"Search");
+     self.navigationItem.searchController = self.extensionSearch;
+     self.navigationItem.hidesSearchBarWhenScrolling = YES;
+ }
+ 
++- (void)dealloc {
++    [[VDTExtensionCatalog sharedInstance] removeObserver:self];
++}
++
+ - (void)viewWillAppear:(BOOL)animated {
++    self.catalogVisible = NO;
++    _specifiers = nil; // Only rule grouping/search is rebuilt from the warm snapshot.
++    self.catalogNeedsReload = YES;
+     [super viewWillAppear:animated];
++    [[VDTExtensionCatalog sharedInstance] ensureLoaded];
++}
++
++- (void)viewDidAppear:(BOOL)animated {
++    [super viewDidAppear:animated];
++    self.catalogVisible = YES;
++    if (self.catalogNeedsReload) [self reloadSpecifiers];
++}
++
++- (void)viewWillDisappear:(BOOL)animated {
++    self.catalogVisible = NO;
++    [super viewWillDisappear:animated];
++}
++
++- (void)reloadSpecifiers {
++    self.catalogNeedsReload = YES;
++    if (!self.catalogVisible) return;
++    self.catalogNeedsReload = NO;
++    [super reloadSpecifiers];
++}
++
++- (void)extensionCatalogDidUpdate:(VDTExtensionCatalog *)catalog {
++    (void)catalog;
++    NSAssert(NSThread.isMainThread, @"Main only");
+     [self reloadSpecifiers];
+-    [self refreshExtensionRecords];
+ }
+ 
+ - (void)refreshExtensionRecords {
+-    if (self.enumerating) return;
+-    self.enumerating = YES;
+-    NSUInteger generation = ++self.enumerationGeneration;
+-    __weak typeof(self) weakSelf = self;
+-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+-        @autoreleasepool {
+-            NSArray *records = extension_records();
+-            dispatch_async(dispatch_get_main_queue(), ^{
+-                VDTExtensionListController *owner = weakSelf;
+-                if (!owner || generation != owner.enumerationGeneration) return;
+-                owner.enumerating = NO;
+-                owner.extensionRecords = records;
+-                [owner reloadSpecifiers];
+-            });
+-        }
+-    });
++    [[VDTExtensionCatalog sharedInstance] refresh];
+ }
+ 
+ - (NSArray *)specifiers {
+     if (!_specifiers) {
+         NSMutableArray *rows = [NSMutableArray new];
+-        if (!self.extensionRecords) {
+-            PSSpecifier *loading = [PSSpecifier emptyGroupSpecifier];
+-            [loading setProperty:VDTLoc(self.class, @"Loading…") forKey:@"footerText"];
+-            [rows addObject:loading];
++        VDTExtensionCatalog *catalog = [VDTExtensionCatalog sharedInstance];
++        if (!catalog.loaded) {
++            PSSpecifier *status = [PSSpecifier emptyGroupSpecifier];
++            [status setProperty:VDTLoc(self.class, catalog.failed ? @"Unable to load App extensions." : @"Loading…") forKey:@"footerText"];
++            [rows addObject:status];
++            if (catalog.failed) [rows addObject:[self catalogRetrySpecifier]];
+             _specifiers = rows;
+             return _specifiers;
+         }
+-        for (NSDictionary *record in self.extensionRecords) {
++        for (NSDictionary *record in catalog.records) {
+             PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:record[@"displayName"]
                  target:self set:nil get:@selector(previewStringForSpecifier:)
                  detail:VDTProcessConfiguration.class cell:PSLinkListCell edit:nil];
              [row setProperty:record[@"extensionIdentifier"] forKey:@"extensionIdentifier"];
@@ -1094,10 +2234,31 @@ index 6aca7c1..1679627 100644
              [rows addObject:row];
          }
          NSString *query = self.extensionQuery ?: @"";
-@@ -131,15 +132,12 @@ static NSArray<NSDictionary *> *extension_records(void) {
+@@ -125,21 +104,33 @@ static NSArray<NSDictionary *> *extension_records(void) {
+             self.class, ^BOOL(PSSpecifier *row) {
+                 return query.length == 0 || [row.name localizedStandardContainsString:query] ||
+                     [[row propertyForKey:@"extensionIdentifier"] localizedStandardContainsString:query] ||
+                     [[row propertyForKey:@"containingAppName"] localizedStandardContainsString:query];
+             }, query.length ? @"No Results" : @"No App extensions");
++        if (catalog.failed) {
++            NSMutableArray *withFailure = [_specifiers mutableCopy];
++            PSSpecifier *status = [PSSpecifier emptyGroupSpecifier];
++            [status setProperty:VDTLoc(self.class, @"Refresh failed. Showing the previous list.") forKey:@"footerText"];
++            [withFailure addObject:status];
++            [withFailure addObject:[self catalogRetrySpecifier]];
++            _specifiers = withFailure;
++        }
+     }
      return _specifiers;
  }
  
++- (PSSpecifier *)catalogRetrySpecifier {
++    PSSpecifier *retry = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Retry")
++        target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
++    [retry setButtonAction:@selector(refreshExtensionRecords)];
++    return retry;
++}
++
  - (id)previewStringForSpecifier:(PSSpecifier *)specifier {
      NSString *identifier = [specifier propertyForKey:@"extensionIdentifier"];
 -    NSDictionary *prefs = getPrefs();
@@ -1242,7 +2403,7 @@ index b0678e1..7b145b3 100644
  - (id)readPreferenceValue:(PSSpecifier *)specifier;
  - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
 diff --git a/vedetteprefs/VDTNicePreferences.m b/vedetteprefs/VDTNicePreferences.m
-index 82a212b..bc5f38e 100644
+index 82a212b..5ccfd57 100644
 --- a/vedetteprefs/VDTNicePreferences.m
 +++ b/vedetteprefs/VDTNicePreferences.m
 @@ -5,15 +5,39 @@
@@ -1400,7 +2561,7 @@ index 82a212b..bc5f38e 100644
  - (void)presentSaveError:(NSError *)error {
      NSString *reason = error.localizedDescription.length ? error.localizedDescription
          : VDTLoc(self.class, @"The preference could not be saved.");
-@@ -247,11 +330,15 @@
+@@ -247,23 +330,35 @@
      return key ? VDTLoc(self.class, key) : VDTLoc(self.class, @"Nice state unavailable");
  }
  
@@ -1417,6 +2578,27 @@ index 82a212b..bc5f38e 100644
      } else {
          NSMutableArray<NSString *> *details = [NSMutableArray array];
          id original = receipt[@"original"];
+         id current = receipt[@"observed"] ?: receipt[@"current"];
+         id error = receipt[@"error"];
+         id pending = receipt[@"pendingCount"];
++        id checked = receipt[@"oldestCheckedAt"] ?: receipt[@"checkedAt"];
++        if ([checked isKindOfClass:NSNumber.class] && [checked doubleValue] > 0) {
++            NSDate *date = [NSDate dateWithTimeIntervalSince1970:[checked doubleValue]];
++            NSString *stamp = [NSDateFormatter localizedStringFromDate:date
++                dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle];
++            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Last check: %@"), stamp]];
++        }
++        if ([receipt[@"retryPending"] boolValue]) [details addObject:VDTLoc(self.class, @"Bounded retry pending")];
+         if ([original isKindOfClass:[NSNumber class]])
+             [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Original: %@"), original]];
+         if ([current isKindOfClass:[NSNumber class]])
+-            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Read back: %@"), current]];
++            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Last read back: %@"), current]];
+         if ([error isKindOfClass:[NSNumber class]])
+             [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"errno: %@"), error]];
+         if ([pending isKindOfClass:[NSNumber class]])
+             [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Pending targets: %@"), pending]];
+         NSString *state = [self localizedState:receipt[@"state"]];
 diff --git a/vedetteprefs/VDTProcessConfiguration.h b/vedetteprefs/VDTProcessConfiguration.h
 index a3e969f..38408a1 100644
 --- a/vedetteprefs/VDTProcessConfiguration.h
@@ -1430,7 +2612,7 @@ index a3e969f..38408a1 100644
 +- (void)vdtReloadIndependentRules;
  @end
 diff --git a/vedetteprefs/VDTProcessConfiguration.m b/vedetteprefs/VDTProcessConfiguration.m
-index aa04ade..30414aa 100644
+index aa04ade..84a83b5 100644
 --- a/vedetteprefs/VDTProcessConfiguration.m
 +++ b/vedetteprefs/VDTProcessConfiguration.m
 @@ -222,19 +222,20 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
@@ -1521,3 +2703,33 @@ index aa04ade..30414aa 100644
  
  - (id)readResourceRuleValue:(PSSpecifier*)specifier{
      NSString *key = [specifier propertyForKey:@"key"];
+@@ -363,11 +380,11 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+             case VDTConfigTypeApp:{
+                 [(VDTApplicationListSubcontrollerController *)parentController reloadSpecifier:[(VDTApplicationListSubcontrollerController *)parentController specifierForApplicationWithIdentifier:[self validIdentifier]] animated:NO];
+                 break;
+             }
+             case VDTConfigTypeDaemon:{
+-                [(CHPDaemonListController *)parentController reloadValueOfSelectedSpecifier];
++                [(VDTDaemonListController *)parentController reloadValueOfSelectedSpecifier];
+                 break;
+             }
+             case VDTConfigTypeExtension:{
+                 if ([parentController isKindOfClass:VDTExtensionListController.class])
+                     [(VDTExtensionListController *)parentController reloadExtensionRule:[self validIdentifier]];
+diff --git a/vedetteprefs/VDTRootListController.m b/vedetteprefs/VDTRootListController.m
+index 9804b03..54ffd91 100644
+--- a/vedetteprefs/VDTRootListController.m
++++ b/vedetteprefs/VDTRootListController.m
+@@ -61,11 +61,11 @@
+             target:nil set:nil get:nil detail:VDTExtensionListController.class cell:PSLinkCell edit:nil];
+         [extensionListSpec setProperty:VDTSettingsSymbol(@"puzzlepiece.extension") forKey:@"iconImage"];
+         [rootSpecifiers addObject:extensionListSpec];
+ 
+         //Daemons
+-        PSSpecifier *daemonListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Daemons") target:nil set:nil get:nil detail:NSClassFromString(@"CHPDaemonListController") cell:PSLinkCell edit:nil];
++        PSSpecifier *daemonListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Daemons") target:nil set:nil get:nil detail:NSClassFromString(@"VDTDaemonListController") cell:PSLinkCell edit:nil];
+         [daemonListSpec setProperty:VDTSettingsSymbol(@"gearshape.2") forKey:@"iconImage"];
+         [rootSpecifiers addObject:daemonListSpec];
+         
+         //reset
+         PSSpecifier *resetGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];

@@ -21,6 +21,7 @@ DETAIL = 'vedetteprefs/VDTProcessConfiguration.m'
 LIST = 'vedetteprefs/VDTExtensionListController.m'
 METADATA = 'VDTBundleIdentity.mm'
 SOURCES = [SHARED, 'VDTShared.h', MANAGER, DETAIL, LIST, METADATA,
+           'vedetteprefs/VDTExtensionCatalog.m',
            'Vedette.xm', 'vedetteprefs/VDTRootListController.m', 'vedetteprefs/VDTListPresentation.m']
 
 
@@ -108,19 +109,27 @@ def metadata_contract(sources):
 
 def ui_contract(sources):
     source = sources[LIST]
-    records = function_source(source, 'static NSArray<NSDictionary *> *extension_records')
+    catalog = sources['vedetteprefs/VDTExtensionCatalog.m']
+    records = function_source(catalog, 'static NSArray *VDTScanExtensions')
     has(records, 'respondsToSelector:@selector(defaultWorkspace)', 'respondsToSelector:@selector(allApplications)',
         'respondsToSelector:@selector(bundleURL)', 'stringByAppendingPathComponent:@"PlugIns"',
         'contentsOfDirectoryAtPath:pluginsPath', 'VDTReadExtensionBundleInfo(path, nil)',
         'if (!identifier || byIdentifier[identifier]) continue;', 'byIdentifier[identifier] = [record copy];')
-    for token in ('enumeratorAtPath:', 'enumeratorAtURL:', 'subpathsAtPath:'): assert token not in source, 'no recursive scanning'
-    refresh = function_source(source, '- (void)refreshExtensionRecords')
-    stages = ['dispatch_async(dispatch_get_global_queue(', 'NSArray *records = extension_records();',
-              'dispatch_async(dispatch_get_main_queue(),', 'owner.extensionRecords = records;', '[owner reloadSpecifiers];']
+    for token in ('enumeratorAtPath:', 'enumeratorAtURL:', 'subpathsAtPath:'): assert token not in catalog, 'no recursive scanning'
+    refresh = function_source(catalog, '- (void)beginScanWithFallback:')
+    stages = ['VDTListCatalogEnsure(', 'dispatch_async(dispatch_get_global_queue(', 'VDTScanExtensions();',
+              'dispatch_async(dispatch_get_main_queue(),', 'VDTListCatalogComplete(', 'self->_records = [records copy];']
     has(refresh, *stages)
     positions = [refresh.index(stage) for stage in stages]
-    assert positions == sorted(positions), 'enumeration must be background, publication/reload main'
-    has(refresh, 'if (self.enumerating) return;', 'if (!owner || generation != owner.enumerationGeneration) return;')
+    assert positions == sorted(positions), 'enumeration must be background, publication main'
+    has(catalog, 'VDTListCatalogInvalidate(&_state)', 'applicationsDidInstall:', 'applicationsDidUninstall:')
+    marshal = function_source(catalog, '- (void)refresh')
+    has(marshal, 'if (!NSThread.isMainThread)', 'dispatch_async(dispatch_get_main_queue(), ^{ [self refresh]; }); return;')
+    appear = function_source(source, '- (void)viewWillAppear:')
+    has(appear, 'ensureLoaded]')
+    assert 'refreshExtensionRecords' not in appear, 'warm opening must not force a directory refresh'
+    display = function_source(source, '- (void)reloadSpecifiers')
+    has(display, 'if (!self.catalogVisible) return;', '[super reloadSpecifiers];')
     specifiers = function_source(source, '- (NSArray *)specifiers')
     has(specifiers, 'VDTGroupedListSpecifiers(rows, @"extensionIdentifier", VDTConfigTypeExtension,',
         'setProperty:@(VDTConfigTypeExtension) forKey:@"configurationType"',
@@ -225,8 +234,8 @@ class ExtensionContracts(unittest.TestCase):
             (MANAGER, 'extensionIdentifier != nil, extensionConfig != nil, appConfig != nil)', 'extensionIdentifier != nil, extensionConfig && [extensionConfig[VDTConfigEnabledKey] boolValue], appConfig != nil)'),
             (MANAGER, 'if (ruleChoice == VDTBundleRuleDaemon && daemonConfigs.count > 0)', 'if (daemonConfigs.count > 0)'),
             (METADATA, '![expectedPath isEqualToString:executablePath]', '![expectedPath hasPrefix:executablePath]'),
-            (LIST, 'dispatch_async(dispatch_get_main_queue(),', 'dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),'),
-            (LIST, 'if (!identifier || byIdentifier[identifier]) continue;', 'if (!identifier) continue;'),
+            ('vedetteprefs/VDTExtensionCatalog.m', 'dispatch_async(dispatch_get_main_queue(),', 'dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),'),
+            ('vedetteprefs/VDTExtensionCatalog.m', 'if (!identifier || byIdentifier[identifier]) continue;', 'if (!identifier) continue;'),
             (DETAIL, 'BOOL saved = VDTRemoveExtensionCPUConfigReportingResult([owner validIdentifier]);', 'BOOL saved = YES;'),
         ]
         for name, old, new in mutations:

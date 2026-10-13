@@ -7,6 +7,7 @@ from extension_projection import (ROOT, RELEASE_BASE, CI_PATH,
                                   baseline_bytes, assert_release_freeze, released_bytes)
 from formal_delta import FORMAL_VERSION as CANDIDATE_VERSION
 from test_resource_preferences_native import detail_contract, NICE_GUARD
+from ci_contract import workflow_test_source
 
 OLD_CANDIDATE = 'bb211c0dbbf21819d487c88f6030d9f071022025'
 
@@ -73,7 +74,7 @@ class RebuildBaseline(unittest.TestCase):
         with self.assertRaises(AssertionError):detail_contract(changed)
 
     def test_complete_double_scheme_build_and_version(self):
-        args=[(ROOT/path).read_text() for path in (CI_PATH,'control','ci/stage_release.py','Makefile','vedetteprefs/Makefile')]
+        args=[workflow_test_source()]+[(ROOT/path).read_text() for path in ('control','ci/stage_release.py','Makefile','vedetteprefs/Makefile')]
         build_contract(*args)
         for token in ('- scheme: rootless','sudo bash tests/run_nice_native_tests.sh',
                       'test_resource_preferences_native.py --require-native',

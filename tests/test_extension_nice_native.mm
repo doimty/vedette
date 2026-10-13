@@ -15,6 +15,10 @@ static NSString *hostPath, *extPath, *appExe, *extExe;
 static NSMutableDictionary<NSNumber *, NSMutableDictionary *> *kernel;
 static int writes, reads, cpuCalls, cpuDispatches, posts, writeError, readError;
 static BOOL ignoreWrite;
+static BOOL deferAfter;
+static NSMutableArray *deferredTasks;
+static NSTimeInterval retryTestNow;
+static NSTimeInterval VDTTestRetryClock(id owner, SEL command) { (void)owner; (void)command; return retryTestNow; }
 static long bootSeconds = 1000;
 static unsigned assertions;
 #define REQUIRE(...) do { ++assertions; if (!(__VA_ARGS__)) { fprintf(stderr, "ASSERTION FAILED: native line %d: %s\n", __LINE__, #__VA_ARGS__); abort(); } } while (0)
@@ -77,7 +81,10 @@ extern "C" void VDTTestCFObserve(CFNotificationCenterRef center, const void *obs
     (void)center; (void)observer; (void)callback; (void)name; (void)object; (void)behavior;
 }
 extern "C" void VDTTestAsync(dispatch_queue_t queue, dispatch_block_t block) { (void)queue; block(); }
-extern "C" void VDTTestAfter(dispatch_time_t when, dispatch_queue_t queue, dispatch_block_t block) { (void)when; (void)queue; block(); }
+extern "C" void VDTTestAfter(dispatch_time_t when, dispatch_queue_t queue, dispatch_block_t block) {
+    (void)when; (void)queue;
+    if (deferAfter) [deferredTasks addObject:[block copy]]; else block();
+}
 // Only the private LaunchServices boundary is replaced. Identity metadata is
 // read from the REAL fixture Info.plist; production BundleIdentity stays linked.
 @implementation _LSQueryResult @end
@@ -128,6 +135,7 @@ static void reset(void) {
     normalized_configs_snapshot=nil; normalized_resource_rules_snapshot=nil; normalized_nice_rules_snapshot=nil;
     [tracked_process_instances() removeAllObjects]; [managed_process_targets() removeAllObjects];
     launch_catch_up_scheduled=nice_refresh_scheduled=NO;
+    invalidate_nice_retry_sync(); deferAfter = NO; deferredTasks = [NSMutableArray array];
     REQUIRE([metadata() writeToFile:[extPath stringByAppendingPathComponent:@"Info.plist"] atomically:YES]);
 }
 static NSArray *niceTargets(NSDictionary *p) { return vdt_nice_resolve_targets(p); }
@@ -267,6 +275,24 @@ int main(void) {
         REQUIRE(writePlist(&c->store,VDT_NICE_JOURNAL,@{@"version":@1,@"boot":VDTNiceBootToken(),@"records":legacyRecords})==0);
         c=[VDTNiceCoordinator new]; cycle(c,@{}); REQUIRE(c->loadError==0 && c->records.count==0 && [process(424243)[@"nice"] isEqual:@(-1)]);
     }
+
+    // Same-generation automatic retry uses the REAL life callback, no CPU
+    // dispatch, and an explicit fake monotonic clock instead of sleeping.
+    reset(); p=preferences(own,nil); savePrefs(p); deferAfter=YES; retryTestNow=10;
+    Method clockMethod=class_getInstanceMethod(VDTNiceCoordinator.class,@selector(retryClock));
+    IMP realClock=method_setImplementation(clockMethod,(IMP)VDTTestRetryClock);
+    readError=EAGAIN; reloadPrefsSync();
+    REQUIRE(writes==0 && reads==1 && deferredTasks.count==1 && nice_retry_scheduled);
+    readError=0; retryTestNow=10.5;
+    dispatch_block_t retryBlock=[deferredTasks[0] copy]; [deferredTasks removeObjectAtIndex:0]; retryBlock();
+    REQUIRE(extensionNice()==5 && writes==1 && cpuCalls==0 && cpuDispatches==0 && deferredTasks.count==0);
+    REQUIRE(!nice_retry_scheduled && vdt_nice_next_retry_delay()<0);
+    // Old-generation delayed work cannot apply a rule after it was removed.
+    reset(); savePrefs(p); deferAfter=YES; retryTestNow=20; readError=EIO; reloadPrefsSync();
+    REQUIRE(deferredTasks.count==1); retryBlock=[deferredTasks[0] copy]; [deferredTasks removeObjectAtIndex:0];
+    readError=0; savePrefs(@{}); reloadPrefsSync(); int beforeStaleReads=reads; retryTestNow=200; retryBlock();
+    REQUIRE(writes==0 && reads==beforeStaleReads && extensionNice()==-1 && cpuDispatches==0);
+    method_setImplementation(clockMethod,realClock); deferAfter=NO;
 
     // Actual production life hooks: no CPU config, retries, proc start/end,
     // pref/global-off and public soft-remove are all separate from CPU success.

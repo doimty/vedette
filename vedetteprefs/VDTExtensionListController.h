@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
-@interface VDTExtensionListController : PSListController <UISearchResultsUpdating>
+#import "VDTExtensionCatalog.h"
+@interface VDTExtensionListController : PSListController <UISearchResultsUpdating, VDTExtensionCatalogObserver>
 - (void)reloadExtensionRule:(NSString *)identifier;
 @end

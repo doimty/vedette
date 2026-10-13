@@ -26,7 +26,35 @@ on:
       - 'tests/**'
 
 jobs:
+  validate:
+    name: Host and native regressions (once)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Select pinned Xcode 15.4
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          test "$(xcodebuild -version | head -n 1)" = "Xcode 15.4"
+          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "17.5"
+      - name: Install host packaging test tool
+        run: command -v dpkg-deb || brew install dpkg
+      - name: Run host regression tests
+        run: |
+          set -o pipefail
+          bash ci/run_host_tests.sh 2>&1 | tee host-regressions.log
+      - name: Preserve native verification log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vedette-native-verification
+          path: host-regressions.log
+          if-no-files-found: warn
+
   package:
+    needs: validate
     name: Package (${{ matrix.scheme }})
     runs-on: macos-14
     strategy:
@@ -132,34 +160,6 @@ jobs:
           cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/"
           cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/iphone/$THEOS_PACKAGE_SCHEME/"
           cp /tmp/AltList/*.h "$THEOS/vendor/include/AltList/"
-
-      - name: Run host regression tests
-        run: |
-          tests/run_process_identity_tests.sh
-          python3 tests/check_auto_monitor_path.py
-          sh tests/run_list_order_tests.sh
-          python3 -B tests/test_preferences_ui.py
-          python3 -B tests/test_ios15_cell_lifecycle.py
-          python3 -B tests/test_ui21_baseline.py
-          python3 -B tests/test_process_action_ui21.py
-          python3 -B tests/test_section_text.py
-          python3 -B tests/test_efficiency_contracts.py
-          python3 -B tests/test_diagnostic_preprocess.py
-          make -f Makefile.tests test-nice STORE_RUNNER=sudo
-          sudo bash tests/run_nice_native_tests.sh
-          sudo bash tests/run_springboard_native_tests.sh
-          python3 -B tests/test_extension_contracts.py
-          python3 -B tests/test_bundle_rules.py
-          python3 -B tests/test_extensions_native.py --require-native
-          sudo python3 -B tests/test_extension_nice_native.py --require-native
-          sudo python3 -B tests/test_independent_rules_native.py --require-native
-          python3 -B tests/test_memory_policy.py
-          python3 -B tests/test_resource_apply.py
-          python3 -B tests/test_resource_manager.py
-          python3 -B tests/test_resource_ui21.py
-          python3 -B tests/test_resource_preferences_native.py --require-native
-          python3 -B tests/test_rebuild_baseline.py
-          python3 -B tests/test_formal_projection.py
 
       - name: Build package
         run: |

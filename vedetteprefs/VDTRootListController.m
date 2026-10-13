@@ -63,7 +63,7 @@
         [rootSpecifiers addObject:extensionListSpec];
 
         //Daemons
-        PSSpecifier *daemonListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Daemons") target:nil set:nil get:nil detail:NSClassFromString(@"CHPDaemonListController") cell:PSLinkCell edit:nil];
+        PSSpecifier *daemonListSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Daemons") target:nil set:nil get:nil detail:NSClassFromString(@"VDTDaemonListController") cell:PSLinkCell edit:nil];
         [daemonListSpec setProperty:VDTSettingsSymbol(@"gearshape.2") forKey:@"iconImage"];
         [rootSpecifiers addObject:daemonListSpec];
         

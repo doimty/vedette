@@ -24,11 +24,11 @@
 
 #import "CHPDaemonListObserver.h"
 
-@interface CHPDaemonListController : CHPListController <CHPDaemonListObserver>
+@interface VDTDaemonListController : VDTListController <VDTDaemonListObserver>
 {
-	NSSet* _suggestedDaemons;
 	BOOL _showsAllDaemons;
+	BOOL _vdtVisible;
+	BOOL _vdtNeedsReload;
 }
-- (void)updateSuggestedDaemons;
 - (void)reloadValueOfSelectedSpecifier;
 @end

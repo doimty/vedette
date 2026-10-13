@@ -140,3 +140,11 @@
 "Follow containing app nice" = "Follow containing app nice";
 "Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged." = "Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged.";
 "Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept." = "Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept.";
+"Last check: %@" = "Last check: %@";
+"Last read back: %@" = "Last read back: %@";
+"Bounded retry pending" = "Bounded retry pending";
+"Refresh" = "Refresh";
+"Retry" = "Retry";
+"Unable to load App extensions." = "Unable to load App extensions.";
+"Unable to load Daemons." = "Unable to load Daemons.";
+"Refresh failed. Showing the previous list." = "Refresh failed. Showing the previous list.";

@@ -206,10 +206,33 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
     }
 }
 
+// One coalesced retry task, never a resident timer or repeated PID scan.
+static BOOL nice_retry_scheduled;
+static NSUInteger nice_retry_generation;
+static void invalidate_nice_retry_sync(void){
+    ++nice_retry_generation;
+    nice_retry_scheduled = NO;
+}
+static void schedule_nice_retry_sync(void){
+    NSTimeInterval delay = vdt_nice_next_retry_delay();
+    if (nice_retry_scheduled || delay < 0) return;
+    nice_retry_scheduled = YES;
+    NSUInteger generation = nice_retry_generation;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0.05, delay) * NSEC_PER_SEC)),
+                   vedette_serial_queue(), ^{
+        if (generation != nice_retry_generation) return;
+        nice_retry_scheduled = NO;
+        vdt_nice_reconcile();
+        vdt_nice_publish();
+        schedule_nice_retry_sync();
+    });
+}
+
 static void apply_nice_targets_sync(NSArray<NSDictionary *> *targets){
     // Never send these identity-only targets through vdt_apply_target: a
     // nice-only rule must neither clear CPU limits nor replace CPU inheritance.
     for (NSDictionary *target in targets) vdt_nice_apply(target);
+    schedule_nice_retry_sync();
 }
 
 static void reconcile_unreported_processes_sync(){
@@ -272,6 +295,7 @@ static void reloadPrefsSync(){
     normalized_configs_snapshot = [configs copy];
     normalized_resource_rules_snapshot = [resourceRules copy];
     normalized_nice_rules_snapshot = [VDTNiceRulesFromPrefs(newPrefs) copy];
+    invalidate_nice_retry_sync();
     vdt_nice_reload(newPrefs);
 
     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, resourceRules);
@@ -312,6 +336,7 @@ static void restoreAllMonitors(){
         // Nice restore follows the CURRENT saved settings, never a public
         // notification alone. Its durable records do not depend on the CPU temp file.
         NSDictionary *prefs = getPrefs();
+        invalidate_nice_retry_sync();
         vdt_nice_reload(prefs);
         vdt_nice_reconcile();
         apply_nice_targets_sync(vdt_nice_resolve_targets(prefs));
@@ -374,11 +399,13 @@ static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
         nice_refresh_scheduled = YES;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), vedette_serial_queue(), ^{
             NSDictionary *prefs = getPrefs();
+            invalidate_nice_retry_sync();
             vdt_nice_reload(prefs);
             vdt_nice_reconcile();
             for (NSDictionary *target in vdt_nice_resolve_targets(prefs))
                 vdt_nice_apply(target);
             vdt_nice_publish();
+            schedule_nice_retry_sync();
             nice_refresh_scheduled = NO;
         });
     });

@@ -21,6 +21,8 @@ test-ui:
 	@python3 -B tests/test_ios15_cell_lifecycle.py
 	@python3 -B tests/test_package_identity.py
 	@sh tests/run_list_order_tests.sh
+	@python3 -B tests/test_list_catalog.py
+	@python3 -B tests/test_list_catalog_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
 
 
 test-nice:
@@ -28,6 +30,7 @@ test-nice:
 	  $(CC) $(CFLAGS) -I. VDTNicePolicy.c tests/test_nice_policy.c -o "$$bin"; "$$bin"
 	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
 	  $(CC) $(CFLAGS) -I. VDTNiceStore.c tests/test_nice_store.c -o "$$bin"; $(STORE_RUNNER) "$$bin"
+	@python3 -B tests/test_nice_attempt.py
 	@python3 -B tests/test_nice_contracts.py
 	@python3 -B tests/test_nice_packaging.py
 	@python3 -B tests/test_nice_tool.py

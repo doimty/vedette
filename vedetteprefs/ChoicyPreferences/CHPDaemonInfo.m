@@ -20,7 +20,7 @@
 
 #import "CHPDaemonInfo.h"
 
-@implementation CHPDaemonInfo
+@implementation VDTDaemonInfo
 
 - (NSString*)displayName
 {
@@ -29,7 +29,7 @@
 
 - (NSString*)description
 {
-	return [NSString stringWithFormat:@"<CHPDaemonInfo: executablePath = %@, plistIdentifier = %@ linkedFrameworkIdentifiers = %@>", self.executablePath, self.plistIdentifier, self.linkedFrameworkIdentifiers];
+	return [NSString stringWithFormat:@"<VDTDaemonInfo: executablePath = %@, plistIdentifier = %@ linkedFrameworkIdentifiers = %@>", self.executablePath, self.plistIdentifier, self.linkedFrameworkIdentifiers];
 }
 
 @end

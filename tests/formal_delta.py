@@ -22,6 +22,12 @@ FORMAL_PATHS = frozenset({
     'vedetteprefs/VDTListPresentation.m', 'vedetteprefs/VDTExtensionListController.m',
     'vedetteprefs/VDTApplicationListSubcontrollerController.m',
     'vedetteprefs/ChoicyPreferences/CHPDaemonListController.m',
+    'vedetteprefs/ChoicyPreferences/CHPDaemonInfo.h', 'vedetteprefs/ChoicyPreferences/CHPDaemonInfo.m',
+    'vedetteprefs/ChoicyPreferences/CHPDaemonList.h', 'vedetteprefs/ChoicyPreferences/CHPDaemonList.m',
+    'vedetteprefs/ChoicyPreferences/CHPDaemonListController.h',
+    'vedetteprefs/ChoicyPreferences/CHPDaemonListObserver.h',
+    'vedetteprefs/ChoicyPreferences/CHPListController.h', 'vedetteprefs/ChoicyPreferences/CHPListController.m',
+    'vedetteprefs/VDTRootListController.m', 'vedetteprefs/VDTExtensionListController.h',
     'vedetteprefs/Resources/en.lproj/Localizable.strings',
     'vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings',
     '.github/workflows/roothide-build.yml', 'ci/stage_release.py', 'control',
@@ -58,8 +64,15 @@ def formal_regions():
             result[name] = []
         elif line.startswith('@@ '):
             finish(); old, new = [], []
+        elif line == '\\ No newline at end of file\n':
+            assert old is not None and last_prefix in ' +-', 'orphan no-newline marker'
+            if last_prefix in ' -':
+                assert old and old[-1].endswith('\n'); old[-1] = old[-1][:-1]
+            if last_prefix in ' +':
+                assert new and new[-1].endswith('\n'); new[-1] = new[-1][:-1]
         elif old is not None:
             assert line[0] in ' +-', 'bad formal hunk data'
+            last_prefix = line[0]
             if line[0] in ' -': old.append(line[1:])
             if line[0] in ' +': new.append(line[1:])
         else:

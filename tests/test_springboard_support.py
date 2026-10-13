@@ -69,7 +69,8 @@ class SpringBoardSupport(unittest.TestCase):
         self.assertIn(BASE+':VDTProcessManager.mm',runner)
         self.assertIn("grep -Fq 'targets.count==1'",runner)
         self.assertIn('exit 77',runner)
-        self.assertIn('sudo bash tests/run_springboard_native_tests.sh',(ROOT/'.github/workflows/roothide-build.yml').read_text())
+        from ci_contract import workflow_test_source
+        self.assertIn('sudo bash tests/run_springboard_native_tests.sh',workflow_test_source())
         native=(ROOT/'tests/test_springboard_native.mm').read_text()
         for expected in ['#import VDT_RESOLVER_IMPLEMENTATION','#import "../VDTNiceRuntime.mm"','MockStart=101',
                          'MockPath=NULL','nice->records.count==0','CpuCalls==0','LsCalls==0']:

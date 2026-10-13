@@ -49,6 +49,18 @@ static BOOL fakeCurrent(NSDictionary *target) { (void)target; return !missing &&
 #undef proc_pidinfo
 #undef vdt_target_is_current
 
+static NSTimeInterval testRetryNow = 10;
+static int fixtureStoreError, fixtureStoreCalls;
+@interface VDTNiceFixtureClockCoordinator : VDTNiceCoordinator
+@end
+@implementation VDTNiceFixtureClockCoordinator
+- (NSTimeInterval)retryClock { return testRetryNow; }
+- (int)save:(const VDTNiceRecord *)r target:(NSDictionary *)t {
+    ++fixtureStoreCalls;
+    return fixtureStoreError ?: [super save:r target:t];
+}
+@end
+
 static unsigned assertions;
 #define REQUIRE(x) do { ++assertions; if (!(x)) { fprintf(stderr,"native line %d: %s\n",__LINE__,#x); abort(); } } while (0)
 static NSDictionary *target(void) {
@@ -63,6 +75,7 @@ static NSDictionary *prefs(BOOL enabled, int value, NSString *revision) {
 static void clearFixture(void) {
     [[NSFileManager defaultManager] removeItemAtPath:VDTNiceStateDirectory() error:nil];
     niceNow = -1; writeCount = readCount = writeError = readError = 0;
+    fixtureStoreError = fixtureStoreCalls = 0;
     missing = unavailable = reused = ignoreWrite = NO;
 }
 static void cycle(VDTNiceCoordinator *c, NSDictionary *p) {
@@ -142,6 +155,56 @@ int main(void) {
         REQUIRE(c->paused && niceNow == -1 && c->records.count == 0);
         int error = 0; NSDictionary *receipt = readPlist(&c->store,VDT_NICE_STATUS,&error);
         REQUIRE(!error && [receipt[@"restoreNonce"] isEqual:@"test-removal"] && [receipt[@"recordCount"] isEqual:@0]);
+
+        // No reload between a transient failure and its automatic retry.
+        clearFixture(); testRetryNow = 10; c = [VDTNiceFixtureClockCoordinator new];
+        readError = EAGAIN; cycle(c,prefs(YES,5,@"retry-read"));
+        REQUIRE(c->records.count == 0 && writeCount == 0 && [c nextRetryDelay] == 0.5);
+        int failedReads = readCount; readError = 0;
+        [c reconcile]; [c apply:target()]; REQUIRE(readCount == failedReads);
+        testRetryNow = 10.5; [c reconcile]; [c publish];
+        REQUIRE(niceNow == 5 && writeCount == 1 && [c nextRetryDelay] < 0);
+        REQUIRE([storedEntry(c)[@"original"] isEqual:@(-1)]);
+
+        // Disabled restoration retries independently, preserving the journal.
+        unavailable = YES; [c reload:prefs(NO,5,@"retry-restore")]; [c reconcile];
+        REQUIRE(niceNow == 5 && c->records.count == 1 && [c nextRetryDelay] == 0.5);
+        unavailable = NO; testRetryNow = 11; [c reconcile];
+        REQUIRE(niceNow == -1 && c->records.count == 0 && [c nextRetryDelay] < 0);
+
+        // No retry storm: exactly initial + 2 attempts, then explicit reload resets.
+        clearFixture(); testRetryNow = 20; c = [VDTNiceFixtureClockCoordinator new]; readError = EIO;
+        cycle(c,prefs(YES,5,@"retry-bound")); REQUIRE(readCount == 1);
+        testRetryNow = 20.5; [c reconcile]; REQUIRE(readCount == 2);
+        testRetryNow = 22.5; [c reconcile]; REQUIRE(readCount == 3 && [c nextRetryDelay] < 0);
+        testRetryNow = 200; [c reconcile]; [c apply:target()]; REQUIRE(readCount == 3);
+        readError = 0; cycle(c,prefs(YES,5,@"retry-bound")); REQUIRE(niceNow == 5 && writeCount == 1);
+
+        // Publish must keep the actual last check time, even if another event
+        // causes a new receipt. The UI labels this historical, never live.
+        NSMutableDictionary *historical = [c->outcomes[instanceKey(target())] mutableCopy];
+        historical[@"checkedAt"] = @123; c->outcomes[instanceKey(target())] = historical;
+        c->receiptDirty = YES; [c publish];
+        NSDictionary *oldStatus = VDTNiceMatchingStatus(@"test-worker",VDTConfigTypeDaemon,prefs(YES,5,@"retry-bound"));
+        REQUIRE([oldStatus[@"checkedAt"] isEqual:@123] && [oldStatus[@"oldestCheckedAt"] isEqual:@123]);
+        int oldReads = readCount; niceNow = 17; [c reconcile]; [c apply:target()];
+        c->receiptDirty = YES; [c publish];
+        REQUIRE(readCount == oldReads && [VDTNiceMatchingStatus(@"test-worker",VDTConfigTypeDaemon,prefs(YES,5,@"retry-bound"))[@"checkedAt"] isEqual:@123]);
+        cycle(c,prefs(YES,5,@"retry-bound"));
+        REQUIRE([c->outcomes[instanceKey(target())][@"state"] isEqual:@"conflict"] && niceNow == 17);
+        REQUIRE([c nextRetryDelay] < 0);
+
+        // Gone cleanup has a bounded STORE retry too, even while the saved
+        // rule is enabled; repeated reconcile must not reset its budget.
+        clearFixture(); testRetryNow = 30; c = [VDTNiceFixtureClockCoordinator new];
+        cycle(c,prefs(YES,5,@"gone-store")); missing = YES; fixtureStoreError = EIO;
+        int oldStoreCalls = fixtureStoreCalls; [c reconcile];
+        REQUIRE(fixtureStoreCalls == oldStoreCalls + 1 && [c nextRetryDelay] == 0.5);
+        testRetryNow = 30.5; [c reconcile]; REQUIRE(fixtureStoreCalls == oldStoreCalls + 2);
+        testRetryNow = 32.5; [c reconcile]; REQUIRE(fixtureStoreCalls == oldStoreCalls + 3 && [c nextRetryDelay] < 0);
+        testRetryNow = 300; [c reconcile]; REQUIRE(fixtureStoreCalls == oldStoreCalls + 3 && writeCount == 1);
+        fixtureStoreError = 0; cycle(c,prefs(YES,5,@"gone-store"));
+        REQUIRE(c->records.count == 0 && writeCount == 1);
 
         // Strict independent save preserves CPU configuration and updates only nice.
         NSDictionary *cpu = @{@"enabled":@YES,@"daemonConfigs":@[@{@"daemonName":@"test-worker",@"enabled":@YES,

@@ -23,7 +23,7 @@
 #import "../VDTLocalization.h"
 #import "../VDTStyle.h"
 
-@implementation CHPListController
+@implementation VDTListController
 
 - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
 

@@ -20,18 +20,23 @@
 
 #import "../../Common.h"
 #import "CHPDaemonListObserver.h"
+#import "../VDTListCatalog.h"
 
-@interface CHPDaemonList : NSObject
+@interface VDTDaemonList : NSObject
 {
 	NSHashTable* _observers;
+	VDTListCatalogState _state;
+	NSArray* _daemonList;
 }
 @property(nonatomic,readonly) BOOL loaded;
 @property(nonatomic,readonly) BOOL loading;
-@property(nonatomic,readonly) NSArray* daemonList;
+@property(nonatomic,readonly) BOOL failed;
+@property(nonatomic,readonly,copy) NSArray* daemonList;
 + (instancetype)sharedInstance;
 - (BOOL)daemonList:(NSArray*)daemonList containsDisplayName:(NSString*)displayName;
 - (void)updateDaemonListIfNeeded;
-- (void)addObserver:(id<CHPDaemonListObserver>)observer;
-- (void)removeObserver:(id<CHPDaemonListObserver>)observer;
+- (void)refresh;
+- (void)addObserver:(id<VDTDaemonListObserver>)observer;
+- (void)removeObserver:(id<VDTDaemonListObserver>)observer;
 - (void)sendReloadToObservers;
 @end

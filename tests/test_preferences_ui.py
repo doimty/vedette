@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PREFS = ROOT / 'vedetteprefs'
 BASELINE = 'd54fc36cb03e75fbe8699099abc747199ae570b6'
 DYNAMIC_KEYS = {'Project source', 'Support original developer', 'Twitter', 'Reddit',
-                'Enabled Configurations', 'Other', 'No Results', 'No Applications', 'No Daemons'}
+                'Enabled Configurations', 'Other', 'No Results', 'No Applications', 'No Daemons',
+                'Unable to load App extensions.', 'Unable to load Daemons.',
+                'Refresh failed. Showing the previous list.'}
 
 
 def read_strings(path):

@@ -5,63 +5,24 @@
 #import "VDTListPresentation.h"
 #import "VDTLocalization.h"
 #import "VDTStyle.h"
-#import "../PrivateHeaders.h"
-#import "../VDTBundleIdentity.h"
+#import "VDTExtensionCatalog.h"
 
 @interface VDTExtensionListController ()
-@property (nonatomic, copy) NSArray<NSDictionary *> *extensionRecords;
 @property (nonatomic, strong) UISearchController *extensionSearch;
 @property (nonatomic, copy) NSString *extensionQuery;
-@property (nonatomic) NSUInteger enumerationGeneration;
-@property (nonatomic) BOOL enumerating;
+@property (nonatomic) BOOL catalogVisible;
+@property (nonatomic) BOOL catalogNeedsReload;
 @end
-
-// Read-only one-level PlugIns enumeration, never a recursive filesystem scan.
-static NSArray<NSDictionary *> *extension_records(void) {
-    Class workspaceClass = objc_getClass("LSApplicationWorkspace");
-    if (![workspaceClass respondsToSelector:@selector(defaultWorkspace)]) return @[];
-    LSApplicationWorkspace *workspace = [workspaceClass defaultWorkspace];
-    if (![workspace respondsToSelector:@selector(allApplications)]) return @[];
-    id rawApplications = [workspace allApplications];
-    if (![rawApplications isKindOfClass:[NSArray class]]) return @[];
-    NSMutableDictionary<NSString *, NSDictionary *> *byIdentifier = [NSMutableDictionary new];
-    for (LSApplicationProxy *proxy in rawApplications) {
-        @autoreleasepool {
-            if (![proxy respondsToSelector:@selector(bundleURL)]) continue;
-            NSURL *appURL = proxy.bundleURL;
-            if (![appURL isKindOfClass:[NSURL class]] || !appURL.isFileURL ||
-                [appURL.path.pathExtension caseInsensitiveCompare:@"app"] != NSOrderedSame) continue;
-            NSString *pluginsPath = [appURL.path stringByAppendingPathComponent:@"PlugIns"];
-            NSArray *children = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:pluginsPath error:nil];
-            for (NSString *child in [children sortedArrayUsingSelector:@selector(compare:)]) {
-                if ([child.pathExtension caseInsensitiveCompare:@"appex"] != NSOrderedSame) continue;
-                NSString *path = [pluginsPath stringByAppendingPathComponent:child];
-                NSDictionary *info = VDTReadExtensionBundleInfo(path, nil);
-                NSString *identifier = info[@"extensionIdentifier"];
-                if (!identifier || byIdentifier[identifier]) continue;
-                NSMutableDictionary *record = [info mutableCopy];
-                NSString *appName = appURL.path.lastPathComponent.stringByDeletingPathExtension;
-                record[@"containingAppName"] = appName ?: @"";
-                if ([proxy respondsToSelector:@selector(bundleIdentifier)] &&
-                    [proxy.bundleIdentifier isKindOfClass:[NSString class]]) {
-                    record[@"containingAppIdentifier"] = proxy.bundleIdentifier;
-                }
-                byIdentifier[identifier] = [record copy];
-            }
-        }
-    }
-    // Fixed order before localized list sorting also makes duplicate handling stable.
-    NSMutableArray *result = [NSMutableArray new];
-    for (NSString *identifier in [[byIdentifier allKeys] sortedArrayUsingSelector:@selector(compare:)])
-        [result addObject:byIdentifier[identifier]];
-    return [result copy];
-}
 
 @implementation VDTExtensionListController
 - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    [[VDTExtensionCatalog sharedInstance] addObserver:self];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:VDTLoc(self.class, @"Refresh") style:UIBarButtonItemStylePlain
+        target:self action:@selector(refreshExtensionRecords)];
     self.title = VDTLoc(self.class, @"App extensions");
     self.definesPresentationContext = YES;
     self.view.tintColor = VDTAccentColor();
@@ -74,42 +35,59 @@ static NSArray<NSDictionary *> *extension_records(void) {
     self.navigationItem.hidesSearchBarWhenScrolling = YES;
 }
 
+- (void)dealloc {
+    [[VDTExtensionCatalog sharedInstance] removeObserver:self];
+}
+
 - (void)viewWillAppear:(BOOL)animated {
+    self.catalogVisible = NO;
+    _specifiers = nil; // Only rule grouping/search is rebuilt from the warm snapshot.
+    self.catalogNeedsReload = YES;
     [super viewWillAppear:animated];
+    [[VDTExtensionCatalog sharedInstance] ensureLoaded];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    self.catalogVisible = YES;
+    if (self.catalogNeedsReload) [self reloadSpecifiers];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    self.catalogVisible = NO;
+    [super viewWillDisappear:animated];
+}
+
+- (void)reloadSpecifiers {
+    self.catalogNeedsReload = YES;
+    if (!self.catalogVisible) return;
+    self.catalogNeedsReload = NO;
+    [super reloadSpecifiers];
+}
+
+- (void)extensionCatalogDidUpdate:(VDTExtensionCatalog *)catalog {
+    (void)catalog;
+    NSAssert(NSThread.isMainThread, @"Main only");
     [self reloadSpecifiers];
-    [self refreshExtensionRecords];
 }
 
 - (void)refreshExtensionRecords {
-    if (self.enumerating) return;
-    self.enumerating = YES;
-    NSUInteger generation = ++self.enumerationGeneration;
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        @autoreleasepool {
-            NSArray *records = extension_records();
-            dispatch_async(dispatch_get_main_queue(), ^{
-                VDTExtensionListController *owner = weakSelf;
-                if (!owner || generation != owner.enumerationGeneration) return;
-                owner.enumerating = NO;
-                owner.extensionRecords = records;
-                [owner reloadSpecifiers];
-            });
-        }
-    });
+    [[VDTExtensionCatalog sharedInstance] refresh];
 }
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
         NSMutableArray *rows = [NSMutableArray new];
-        if (!self.extensionRecords) {
-            PSSpecifier *loading = [PSSpecifier emptyGroupSpecifier];
-            [loading setProperty:VDTLoc(self.class, @"Loading…") forKey:@"footerText"];
-            [rows addObject:loading];
+        VDTExtensionCatalog *catalog = [VDTExtensionCatalog sharedInstance];
+        if (!catalog.loaded) {
+            PSSpecifier *status = [PSSpecifier emptyGroupSpecifier];
+            [status setProperty:VDTLoc(self.class, catalog.failed ? @"Unable to load App extensions." : @"Loading…") forKey:@"footerText"];
+            [rows addObject:status];
+            if (catalog.failed) [rows addObject:[self catalogRetrySpecifier]];
             _specifiers = rows;
             return _specifiers;
         }
-        for (NSDictionary *record in self.extensionRecords) {
+        for (NSDictionary *record in catalog.records) {
             PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:record[@"displayName"]
                 target:self set:nil get:@selector(previewStringForSpecifier:)
                 detail:VDTProcessConfiguration.class cell:PSLinkListCell edit:nil];
@@ -128,8 +106,23 @@ static NSArray<NSDictionary *> *extension_records(void) {
                     [[row propertyForKey:@"extensionIdentifier"] localizedStandardContainsString:query] ||
                     [[row propertyForKey:@"containingAppName"] localizedStandardContainsString:query];
             }, query.length ? @"No Results" : @"No App extensions");
+        if (catalog.failed) {
+            NSMutableArray *withFailure = [_specifiers mutableCopy];
+            PSSpecifier *status = [PSSpecifier emptyGroupSpecifier];
+            [status setProperty:VDTLoc(self.class, @"Refresh failed. Showing the previous list.") forKey:@"footerText"];
+            [withFailure addObject:status];
+            [withFailure addObject:[self catalogRetrySpecifier]];
+            _specifiers = withFailure;
+        }
     }
     return _specifiers;
+}
+
+- (PSSpecifier *)catalogRetrySpecifier {
+    PSSpecifier *retry = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Retry")
+        target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+    [retry setButtonAction:@selector(refreshExtensionRecords)];
+    return retry;
 }
 
 - (id)previewStringForSpecifier:(PSSpecifier *)specifier {

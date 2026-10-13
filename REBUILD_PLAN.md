@@ -24,9 +24,13 @@
 
 ## 进行中的正式补丁（历史 rc1 完成记录保持不改）
 
-用户后续明确指出Extension nice与资源置顶遗漏，授权修复并正式发包。本轮选1.1.13-2（dpkg大于rc1），工作分支release/1.1.13，非fork私有库doimty/vedette-private。扩展nice独立resolver/lifecycle/来源/恢复、四侧enablepin、按族Follow/失败反馈及混合重复记录一致性已接；全量本地与双架构SDK通过，新增Foundation原生留CI实际验证。旧App/Daemon固定发布合同经本轮正式逐字投影后继续冻住，原策略、工具、卸载脚本未动。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。
+用户后续明确指出Extension nice与资源置顶遗漏，授权修复并正式发包。本轮选1.1.13-2（dpkg大于rc1），工作分支release/1.1.13。此前使用私有开发库；2026-10-13用户明确改为保持开源，授权推回原公开 `doimty/vedette` 的同名新分支并编译，默认分支保持不变。扩展nice独立resolver/lifecycle/来源/恢复、四侧enablepin、按族Follow/失败反馈及混合重复记录一致性已接；已有一轮全量本地与双架构SDK通过。私有CI的扩展nice Foundation baseline及6个runtime变异已执行通过，整体回归仍未全绿，最新0e4cd02因账户计费限制未启动runner。旧App/Daemon固定发布合同经本轮正式逐字投影后继续冻住，原策略、工具、卸载脚本未动。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。
 
-相较最初只重建的授权，现允许commit/push私有新分支/云编译及验收后更新软件源，但GPL对应源码公开归档尚待用户确认。未安装/改设备，未新CI或发APT；本地SKIP非PASS。PanCake兼容与真实冷pushUI仍未验收，不用host模型充真机。资源backend仍NULL/能力全false。
+相较最初只重建的授权，现允许commit/push公开新分支/云编译及验收后更新软件源；对应源码按GPLv3继续公开，不再等待公开源码授权。未安装/改设备、未发APT；本地SKIP非PASS。PanCake兼容与真实冷pushUI仍未验收，不用host模型充真机。资源backend仍NULL/能力全false。
+
+## 本批接续修复（2026-10-13，云验证前）
+
+用户继续推进后，本地已接有界nice重试、真实检查时间、CHP→VDT类/协议隔离、共享扩展目录快照及失败保留/刷新，守护仍进程内singleton目录。运行时PID/出生token/路径及原C策略、Store、48pt图标、偏好域、关闭的内存/Jetsam backend冻结。SDK双架构生产对象与C预算/目录状态机变异通过；新Foundation故障/真实目录夹具尚待云执行，不算本地native通过。工作流改为唯一全量原生validate后双环境打包，测试命令不删；完整的字面投影和负例继续保留。不宣称修好PanCake/冷push、不安装/改设备、不在完整验收前发APT。
 
 ## 完成回执（2026-10-13）
 

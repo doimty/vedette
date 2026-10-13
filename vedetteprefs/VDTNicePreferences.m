@@ -345,10 +345,18 @@ id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSS
         id current = receipt[@"observed"] ?: receipt[@"current"];
         id error = receipt[@"error"];
         id pending = receipt[@"pendingCount"];
+        id checked = receipt[@"oldestCheckedAt"] ?: receipt[@"checkedAt"];
+        if ([checked isKindOfClass:NSNumber.class] && [checked doubleValue] > 0) {
+            NSDate *date = [NSDate dateWithTimeIntervalSince1970:[checked doubleValue]];
+            NSString *stamp = [NSDateFormatter localizedStringFromDate:date
+                dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle];
+            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Last check: %@"), stamp]];
+        }
+        if ([receipt[@"retryPending"] boolValue]) [details addObject:VDTLoc(self.class, @"Bounded retry pending")];
         if ([original isKindOfClass:[NSNumber class]])
             [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Original: %@"), original]];
         if ([current isKindOfClass:[NSNumber class]])
-            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Read back: %@"), current]];
+            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Last read back: %@"), current]];
         if ([error isKindOfClass:[NSNumber class]])
             [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"errno: %@"), error]];
         if ([pending isKindOfClass:[NSNumber class]])

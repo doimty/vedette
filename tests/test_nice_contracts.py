@@ -141,7 +141,8 @@ class NiceContracts(unittest.TestCase):
             self.assertEqual(run('postinst','configure').returncode,0)
             self.assertEqual(log.read_text().splitlines(),['resume','kill'])
     def test_cloud_native_execution_is_explicit(self):
-        w=source('.github/workflows/roothide-build.yml'); runner=source('tests/run_nice_native_tests.sh')
+        from ci_contract import workflow_test_source
+        w=workflow_test_source(); runner=source('tests/run_nice_native_tests.sh')
         self.assertIn('sudo bash tests/run_nice_native_tests.sh',w)
         self.assertIn('verify_nice_archive.py',w)
         self.assertIn('exit 77',runner)

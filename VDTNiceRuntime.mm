@@ -3,9 +3,11 @@
 #import "VDTNiceShared.h"
 #import "VDTNiceStore.h"
 #import "VDTNicePolicy.h"
+#import "VDTNiceAttempt.h"
 #import "VDTProcessIdentity.h"
 #import "VDTBundleIdentity.h"
 #include <errno.h>
+#include <float.h>
 #include <limits.h>
 #include <math.h>
 #include <notify.h>
@@ -168,6 +170,8 @@ static NSString *outcomeCode(VDTNiceOutcome outcome) {
     NSMutableDictionary<NSString *, NSDictionary *> *records;
     NSMutableDictionary<NSString *, NSDictionary *> *outcomes;
     NSMutableSet<NSString *> *attempted;
+    NSMutableDictionary<NSString *, NSDictionary *> *attemptStates;
+    NSMutableSet<NSString *> *goneCleanupStarted;
     NSDictionary<NSString *, NSDictionary *> *rules;
     NSString *boot;
     NSString *restoreNonce;
@@ -180,6 +184,8 @@ static NSString *outcomeCode(VDTNiceOutcome outcome) {
 - (void)reconcile;
 - (void)apply:(NSDictionary *)target;
 - (void)publish;
+- (NSTimeInterval)retryClock;
+- (NSTimeInterval)nextRetryDelay;
 - (BOOL)restoreAll;
 - (int)save:(const VDTNiceRecord *)record target:(NSDictionary *)target;
 @end
@@ -220,7 +226,8 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     if ((self = [super init])) {
         store = (VDTNiceStore){.parentFD = -1, .directoryFD = -1, .parentPath = NULL, .leaf = NULL};
         records = [NSMutableDictionary dictionary]; outcomes = [NSMutableDictionary dictionary];
-        attempted = [NSMutableSet set]; rules = @{};
+        attempted = [NSMutableSet set]; attemptStates = [NSMutableDictionary dictionary];
+        goneCleanupStarted = [NSMutableSet set]; rules = @{};
     }
     return self;
 }
@@ -289,7 +296,7 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
 - (void)reload:(NSDictionary *)prefs {
     rules = VDTNiceRulesFromPrefs(prefs);
     receiptDirty = YES;
-    [attempted removeAllObjects]; [outcomes removeAllObjects];
+    [attempted removeAllObjects]; [attemptStates removeAllObjects]; [goneCleanupStarted removeAllObjects]; [outcomes removeAllObjects];
     VDTNiceStoreClose(&store); loaded = NO;
     [self load];
     if (rules.count > VDTNiceMaximumRecords) loadError = E2BIG;
@@ -306,10 +313,30 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     if (!error) records = next;
     return error;
 }
+- (NSTimeInterval)retryClock { return NSProcessInfo.processInfo.systemUptime; }
+- (NSTimeInterval)nextRetryDelay {
+    if (loadError || store.directoryFD < 0) return -1;
+    NSTimeInterval now = [self retryClock], delay = -1;
+    for (NSDictionary *outcome in outcomes.allValues) {
+        NSDictionary *target = outcome[@"target"], *rule = ruleForTarget(target, rules);
+        BOOL enabled = [outcome[@"attemptEnabled"] boolValue] && !paused && [rule[@"enabled"] boolValue];
+        if (enabled && protectedRule(rule)) continue;
+        NSString *key = [instanceKey(target) stringByAppendingString:enabled ? @":apply" : @":restore"];
+        NSDictionary *state = attemptStates[key];
+        if (![state[@"pending"] boolValue]) continue;
+        NSTimeInterval candidate = MAX(0, [state[@"due"] doubleValue] - now);
+        if (delay < 0 || candidate < delay) delay = candidate;
+    }
+    return delay;
+}
 - (void)runTarget:(NSDictionary *)target enabled:(BOOL)enabled desired:(int)desired {
     NSString *key = instanceKey(target);
     NSString *attemptKey = [key stringByAppendingString:enabled ? @":apply" : @":restore"];
-    if ([attempted containsObject:attemptKey]) return;
+    NSDictionary *savedAttempt = attemptStates[attemptKey];
+    VDTNiceAttempt attempt = {.count = [savedAttempt[@"count"] unsignedIntValue],
+        .pending = (bool)[savedAttempt[@"pending"] boolValue], .due = [savedAttempt[@"due"] doubleValue]};
+    NSTimeInterval now = [self retryClock];
+    if (!VDTNiceAttemptAllowed(attempt, now)) return;
     [attempted addObject:attemptKey];
     VDTNiceRecord r = {};
     if (records[key] && !decodeRecord(records[key][@"record"], &r)) { loadError = EINVAL; return; }
@@ -324,8 +351,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         int error = [self save:&r target:target];
         if (error) { result.outcome = VDTNiceStoreFailed; result.error = error; }
     }
+    attempt = VDTNiceAttemptFinished(attempt, [self retryClock], result.outcome, result.error);
+    attemptStates[attemptKey] = @{@"count": @(attempt.count), @"pending": @(attempt.pending), @"due": @(attempt.due)};
     NSMutableDictionary *outcome = [@{@"target": target, @"state": outcomeCode(result.outcome),
-        @"error": @(result.error), @"checkedAt": @(NSDate.date.timeIntervalSince1970)} mutableCopy];
+        @"error": @(result.error), @"checkedAt": @(NSDate.date.timeIntervalSince1970),
+        @"attemptEnabled": @(enabled), @"retryPending": @(attempt.pending), @"attemptCount": @(attempt.count)} mutableCopy];
     if (result.observedValid) outcome[@"observed"] = @(result.observedValue);
     if (r.captured) outcome[@"original"] = @(r.originalValue);
     outcomes[key] = outcome;
@@ -336,8 +366,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         for (NSString *oldKey in [outcomes.allKeys copy]) {
             if (records[oldKey]) continue;
             [outcomes removeObjectForKey:oldKey];
+            [goneCleanupStarted removeObject:oldKey];
             [attempted removeObject:[oldKey stringByAppendingString:@":apply"]];
             [attempted removeObject:[oldKey stringByAppendingString:@":restore"]];
+            [attemptStates removeObjectForKey:[oldKey stringByAppendingString:@":apply"]];
+            [attemptStates removeObjectForKey:[oldKey stringByAppendingString:@":restore"]];
             if (outcomes.count <= VDTNiceMaximumRecords) break;
         }
     }
@@ -352,11 +385,26 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         if (identity == VDTNiceIdentityGone) {
             // Forgetting an old instance must not be suppressed by a previous
             // successful apply in this config generation.
-            [attempted removeObject:[key stringByAppendingString:@":restore"]];
+            if (![goneCleanupStarted containsObject:key]) {
+                [goneCleanupStarted addObject:key];
+                [attempted removeObject:[key stringByAppendingString:@":restore"]];
+                [attemptStates removeObjectForKey:[key stringByAppendingString:@":restore"]];
+            }
             [self runTarget:target enabled:NO desired:0];
         } else if (paused || ![rule[@"enabled"] boolValue]) {
             [self runTarget:target enabled:NO desired:0];
         }
+    }
+    // Failed first attempts may have no captured journal (identity/read error).
+    // Retry their already-bound targets too; every IO still goes through the
+    // production lifetime/path guards. No PID scan, CPU call or polling here.
+    for (NSDictionary *outcome in [outcomes.allValues copy]) {
+        NSDictionary *target = outcome[@"target"], *rule = ruleForTarget(target, rules);
+        BOOL enabled = [outcome[@"attemptEnabled"] boolValue] && !paused && [rule[@"enabled"] boolValue];
+        NSString *attemptKey = [instanceKey(target) stringByAppendingString:enabled ? @":apply" : @":restore"];
+        if (![attemptStates[attemptKey][@"pending"] boolValue]) continue;
+        if (enabled) [self apply:target];
+        else [self runTarget:target enabled:NO desired:0];
     }
 }
 - (void)apply:(NSDictionary *)rawTarget {
@@ -372,7 +420,7 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     [self runTarget:target enabled:enabled desired:[rule[@"value"] intValue]];
 }
 - (BOOL)restoreAll {
-    [attempted removeAllObjects];
+    [attempted removeAllObjects]; [attemptStates removeAllObjects]; [goneCleanupStarted removeAllObjects];
     [self load];
     if (loadError) return NO;
     for (NSString *key in [records.allKeys copy]) [self runTarget:records[key][@"target"] enabled:NO desired:0];
@@ -409,9 +457,14 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         NSString *state = enabled ? @"target-not-running" : @"disabled";
         NSUInteger targetCount = 0, appliedCount = 0, pendingCount = 0;
         int error = 0; BOOL sawFailure = NO;
+        NSTimeInterval newestCheck = 0, oldestCheck = DBL_MAX;
+        BOOL retryPending = NO;
         NSArray *group = groups[key] ?: @[];
         for (NSDictionary *item in group) {
             NSDictionary *outcome = item[@"outcome"]; NSString *current = outcome[@"state"];
+            NSTimeInterval checked = [outcome[@"checkedAt"] doubleValue];
+            if (checked > 0) { newestCheck = MAX(newestCheck, checked); oldestCheck = MIN(oldestCheck, checked); }
+            retryPending = retryPending || [outcome[@"retryPending"] boolValue];
             if (![current isEqual:@"target-not-running"]) ++targetCount;
             if ([current isEqual:@"applied"]) ++appliedCount;
             BOOL failure = ![@[@"applied", @"restored", @"disabled", @"target-not-running"] containsObject:current];
@@ -434,7 +487,8 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         if (loadError) { state = boot ? @"state-unavailable" : @"boot-unavailable"; error = loadError; }
         row[@"state"] = state; row[@"error"] = @(error);
         row[@"targetCount"] = @(targetCount); row[@"appliedCount"] = @(appliedCount);
-        row[@"pendingCount"] = @(pendingCount); row[@"checkedAt"] = @(NSDate.date.timeIntervalSince1970);
+        row[@"pendingCount"] = @(pendingCount); row[@"retryPending"] = @(retryPending);
+        if (newestCheck > 0) { row[@"checkedAt"] = @(newestCheck); row[@"oldestCheckedAt"] = @(oldestCheck); }
         rows[key] = row;
     }
     NSDictionary *receipt = @{@"version": @1, @"boot": boot, @"rules": rows,
@@ -458,4 +512,5 @@ void vdt_nice_reload(NSDictionary *prefs) { [coordinator() reload:prefs]; }
 void vdt_nice_reconcile(void) { [coordinator() reconcile]; }
 void vdt_nice_apply(NSDictionary *target) { [coordinator() apply:target]; }
 void vdt_nice_publish(void) { [coordinator() publish]; }
+NSTimeInterval vdt_nice_next_retry_delay(void) { return [coordinator() nextRetryDelay]; }
 BOOL vdt_nice_restore_all(void) { return [coordinator() restoreAll]; }

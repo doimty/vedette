@@ -20,7 +20,7 @@
 
 #import "../../Common.h"
 
-@interface CHPDaemonInfo : NSObject
+@interface VDTDaemonInfo : NSObject
 
 @property(nonatomic) NSString* executablePath;
 @property(nonatomic) NSString* plistIdentifier;

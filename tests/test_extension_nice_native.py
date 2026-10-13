@@ -116,7 +116,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--static-only', action='store_true', help='source contracts only; no native claims')
     parser.add_argument('--require-native', action='store_true')
-    parser.add_argument('--sdk', type=Path, default=Path('/var/minis/workspace/netshield2-review/apple-sdk/iPhoneOS16.5.sdk'))
+    parser.add_argument('--sdk', type=Path, help='Optional explicit iPhoneOS SDK for cross-syntax checks; not native evidence')
     parser.add_argument('--skip-mutants', action='store_true', help='diagnostic baseline only; not full acceptance')
     args = parser.parse_args()
     source_checks(ROOT)
@@ -126,10 +126,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='vdt-extension-nice-') as tmp:
         base = Path(tmp) / 'baseline'; base.mkdir(); snapshot(base)
         if platform.system() != 'Darwin':
-            if not args.sdk.is_dir():
-                raise SystemExit('FAIL: SDK absent; specify --sdk')
-            for arch in ('arm64', 'arm64e'):
-                compile_fixture(base, args.sdk, arch)
+            if args.sdk:
+                if not args.sdk.is_dir(): raise SystemExit('FAIL: explicitly provided SDK absent')
+                for arch in ('arm64', 'arm64e'):
+                    compile_fixture(base, args.sdk, arch)
             print('SKIP: Foundation native/mutants require Darwin root; NEVER PASS', flush=True)
             return 1 if args.require_native else 77
         if os.geteuid() != 0:
