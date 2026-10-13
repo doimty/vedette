@@ -99,6 +99,8 @@ def compile_fixture(root, sdk=None, arch='arm64'):
             ([] if sdk else ['-o', str(obj)]))
         objects.append(str(obj))
     common = cxx + cross + ['-std=c++17', '-fobjc-arc', '-fblocks'] + warnings + includes + [
+        '-D_LSQueryResult=VDTFixtureLSQueryResult', '-DLSResourceProxy=VDTFixtureLSResourceProxy',
+        '-DLSBundleProxy=VDTFixtureLSBundleProxy', '-DLSApplicationProxy=VDTFixtureLSApplicationProxy',
         '-include', str(root / 'tests/extension_nice_stubs/kernel.h')]
     if sdk:
         for source in MM_SOURCES:

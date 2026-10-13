@@ -13,7 +13,7 @@ extern "C" NSString *VDTTestJbroot(NSString *path) { return [testRoot stringByAp
 static NSString *hostID = @"example.host", *extID = @"example.host.widget";
 static NSString *hostPath, *extPath, *appExe, *extExe;
 static NSMutableDictionary<NSNumber *, NSMutableDictionary *> *kernel;
-static int writes, reads, cpuCalls, posts, writeError, readError;
+static int writes, reads, cpuCalls, cpuDispatches, posts, writeError, readError;
 static BOOL ignoreWrite;
 static long bootSeconds = 1000;
 static unsigned assertions;
@@ -95,7 +95,15 @@ extern "C" void VDTTestAfter(dispatch_time_t when, dispatch_queue_t queue, dispa
 }
 @end
 #import "VDTNiceRuntime.mm"
+// Observe the real CPU entry boundary even if its no-policy target causes no
+// kernel call. The production implementation still executes unchanged.
+static BOOL VDTFixtureCPUApplyTarget(NSDictionary *target) {
+    ++cpuDispatches;
+    return vdt_apply_target(target);
+}
+#define vdt_apply_target VDTFixtureCPUApplyTarget
 #import "Vedette.fixture.mm"
+#undef vdt_apply_target
 
 static NSDictionary *metadata(void) {
     return @{@"CFBundleIdentifier":extID,@"CFBundleExecutable":@"Widget",@"NSExtension":@{@"NSExtensionPointIdentifier":@"com.apple.widgetkit-extension"}};
@@ -116,8 +124,8 @@ static NSDictionary *preferences(NSDictionary *own, NSDictionary *host) {
 static void reset(void) {
     [[NSFileManager defaultManager] removeItemAtPath:VDTNiceStateDirectory() error:nil];
     kernel = [NSMutableDictionary dictionary]; addProcess(424242,extExe);
-    writes=reads=cpuCalls=posts=writeError=readError=0; ignoreWrite=NO; bootSeconds=1000;
-    normalized_configs_snapshot=nil; normalized_resource_rules_snapshot=nil;
+    writes=reads=cpuCalls=cpuDispatches=posts=writeError=readError=0; ignoreWrite=NO; bootSeconds=1000;
+    normalized_configs_snapshot=nil; normalized_resource_rules_snapshot=nil; normalized_nice_rules_snapshot=nil;
     [tracked_process_instances() removeAllObjects]; [managed_process_targets() removeAllObjects];
     launch_catch_up_scheduled=nice_refresh_scheduled=NO;
     REQUIRE([metadata() writeToFile:[extPath stringByAppendingPathComponent:@"Info.plist"] atomically:YES]);
@@ -263,7 +271,7 @@ int main(void) {
     // Actual production life hooks: no CPU config, retries, proc start/end,
     // pref/global-off and public soft-remove are all separate from CPU success.
     reset(); p=preferences(own,nil); savePrefs(p); reloadPrefsSync();
-    REQUIRE(extensionNice()==5 && writes==1 && cpuCalls==0);
+    REQUIRE(extensionNice()==5 && writes==1 && cpuCalls==0 && cpuDispatches==0);
     int published=posts; reconcile_unreported_processes_sync(); handle_reported_pid_sync(424242);
     REQUIRE(writes==1 && cpuCalls==0 && posts==published);
     niceRefreshCallback(NULL,NULL,NULL,NULL,NULL); REQUIRE(writes==1 && cpuCalls==0);
