@@ -356,13 +356,13 @@ def build_and_run(directory, label, list_text, nice_text, owner_text, shared_tex
          directory / (label + '-store.o')),
         (['xcrun', 'clang', *common, '-x', 'objective-c', '-c', str(extracted),
           '-o', str(directory / (label + '-ui.o'))], directory / (label + '-ui.o')),
-        (['xcrun', 'clang++', '-std=c++17', *strict, '-c', str(shared_path),
+        (['xcrun', 'clang++', '-std=c++17', *strict, '-DCFNotificationCenterPostNotification=VDTTestPostNotification', '-c', str(shared_path),
           '-o', str(directory / (label + '-shared.o'))], directory / (label + '-shared.o')),
         (['xcrun', 'clang++', '-std=c++17', *strict, '-Dnotify_post=VDTTestNotifyPost', '-c',
           str(nice_shared_path), '-o', str(directory / (label + '-niceshared.o'))],
          directory / (label + '-niceshared.o')),
         (['xcrun', 'clang++', '-std=c++17', '-fobjc-arc', '-fblocks', '-Wall', '-Wextra',
-          '-Dnotify_post=VDTTestNotifyPost', '-I' + str(ROOT), '-I' + str(STUBS), '-c',
+          '-Dnotify_post=VDTTestNotifyPost', '-DCFNotificationCenterPostNotification=VDTTestPostNotification', '-I' + str(ROOT), '-I' + str(STUBS), '-c',
           str(FIXTURE), '-o', str(directory / (label + '-fixture.o'))],
          directory / (label + '-fixture.o')),
     )
@@ -446,6 +446,9 @@ def main(argv):
     if not static.wasSuccessful():
         return 1
     if args.static_only:
+        if args.require_native:
+            print('FAIL: static-only cannot satisfy require-native')
+            return 1
         print('STATIC OK (source/mutation evidence only; not native execution)')
         return 0
     if platform.system() != 'Darwin':

@@ -36,7 +36,7 @@ extern "C" void VDTTestPostNotification(CFNotificationCenterRef center, CFString
     ++posts; // Counted only; no notification reaches any system consumer.
 }
 
-extern "C" int VDTTestNotifyPost(const char *name) {
+extern "C" uint32_t VDTTestNotifyPost(const char *name) {
     (void)name; ++nicePosts; return 0;
 }
 
@@ -106,6 +106,7 @@ extern "C" int VDTTestNotifyPost(const char *name) {
 @implementation PSListController
 - (void)reloadSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated {
     (void)animated;
+    if (!self.reloadLog) self.reloadLog = [NSMutableArray new];
     if (specifier) [self.reloadLog addObject:specifier];
     ++self.reloadCount;
 }
