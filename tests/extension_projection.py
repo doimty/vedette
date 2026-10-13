@@ -28,6 +28,10 @@ CI_ADDITIONS = (
     '          python3 -B tests/test_extension_contracts.py\n'
     '          python3 -B tests/test_bundle_rules.py\n'
     '          python3 -B tests/test_extensions_native.py --require-native\n'
+    '          python3 -B tests/test_memory_policy.py\n'
+    '          python3 -B tests/test_resource_apply.py\n'
+    '          python3 -B tests/test_resource_manager.py\n'
+    '          python3 -B tests/test_resource_ui21.py\n'
 )
 
 @lru_cache(maxsize=None)

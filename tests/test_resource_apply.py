@@ -12,6 +12,7 @@ import resource
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -20,6 +21,16 @@ FLAGS = ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', '-pedantic']
 SOURCES = ('VDTResourceApply.c', 'VDTMemoryPolicy.c', 'VDTJetsamPolicy.c',
            'VDTProcessIdentity.c', 'tests/fake_resource_backend.c')
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+ALLOWED_UNDEFINED = {'memset', 'memcpy', '__stack_chk_fail', '__stack_chk_guard',
+                     'VDTPlanMemoryRule', 'VDTPlanJetsamRule', 'VDTProcessInstanceMatches'}
+
+
+def undefined_symbols(output, platform):
+    symbols = {line.split()[-1] for line in output.splitlines() if line.strip()}
+    # Mach-O adds exactly one ABI prefix; preserve any underscores in C names.
+    if platform == 'darwin':
+        return {symbol[1:] if symbol.startswith('_') else symbol for symbol in symbols}
+    return symbols
 
 
 class ResourceApply(unittest.TestCase):
@@ -71,14 +82,31 @@ class ResourceApply(unittest.TestCase):
             listing = subprocess.run([nm, '-u', str(d / 'engine.o')],
                                      capture_output=True, text=True, timeout=60)
             self.assertEqual(listing.returncode, 0, listing.stderr)
-            symbols = {line.split()[-1] for line in listing.stdout.splitlines() if line.strip()}
+            symbols = undefined_symbols(listing.stdout, sys.platform)
             # Only intended project-internal imports may appear: the frozen
             # policy cores and the identity comparator. Anything OS-level,
             # syscall-level or allocation-level must be absent.
-            allowed = {'memset', 'memcpy', '__stack_chk_fail', '__stack_chk_guard',
-                       'VDTPlanMemoryRule', 'VDTPlanJetsamRule', 'VDTProcessInstanceMatches'}
-            self.assertLessEqual(symbols, allowed,
-                                 'unexpected undefined symbols: ' + str(sorted(symbols - allowed)))
+            self.assertLessEqual(symbols, ALLOWED_UNDEFINED,
+                                 'unexpected undefined symbols: ' + str(sorted(symbols - ALLOWED_UNDEFINED)))
+
+    def test_symbol_normalization(self):
+        linux = '\n'.join('                 U ' + symbol for symbol in sorted(ALLOWED_UNDEFINED))
+        darwin = '\n'.join('_' + symbol for symbol in sorted(ALLOWED_UNDEFINED))
+        self.assertEqual(undefined_symbols(linux, 'linux'), ALLOWED_UNDEFINED)
+        self.assertEqual(undefined_symbols(darwin, 'darwin'), ALLOWED_UNDEFINED)
+        # Lookalikes and OS imports must remain outside the unchanged allowlist.
+        for platform, raw, expected in [
+            ('linux', '_memcpy', '_memcpy'),
+            ('linux', '__VDTPlanMemoryRule', '__VDTPlanMemoryRule'),
+            ('darwin', '__memcpy', '_memcpy'),
+            ('darwin', '__VDTPlanMemoryRule', '_VDTPlanMemoryRule'),
+            ('linux', 'memorystatus_control', 'memorystatus_control'),
+            ('darwin', '_memorystatus_control', 'memorystatus_control'),
+        ]:
+            with self.subTest(platform=platform, symbol=raw):
+                symbols = undefined_symbols('U ' + raw, platform)
+                self.assertEqual(symbols, {expected})
+                self.assertTrue(symbols.isdisjoint(ALLOWED_UNDEFINED))
 
     def test_cpp_headers(self):
         cpp = shlex.split(os.environ.get('CXX', 'clang++'))

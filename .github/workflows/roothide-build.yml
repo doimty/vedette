@@ -134,6 +134,10 @@ jobs:
           python3 -B tests/test_extension_contracts.py
           python3 -B tests/test_bundle_rules.py
           python3 -B tests/test_extensions_native.py --require-native
+          python3 -B tests/test_memory_policy.py
+          python3 -B tests/test_resource_apply.py
+          python3 -B tests/test_resource_manager.py
+          python3 -B tests/test_resource_ui21.py
 
       - name: Build package
         run: |
