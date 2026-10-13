@@ -349,9 +349,6 @@ def build_and_run(directory, label, list_text, nice_text, owner_text, shared_tex
 
     steps = (
         (['xcrun', 'clang', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', '-I' + str(ROOT),
-          '-c', str(ROOT / 'vedetteprefs/VDTListOrder.c'), '-o', str(directory / (label + '-order.o'))],
-         directory / (label + '-order.o')),
-        (['xcrun', 'clang', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', '-I' + str(ROOT),
           '-c', str(ROOT / 'VDTNiceStore.c'), '-o', str(directory / (label + '-store.o'))],
          directory / (label + '-store.o')),
         (['xcrun', 'clang', *common, '-x', 'objective-c', '-c', str(extracted),

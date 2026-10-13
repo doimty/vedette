@@ -1113,10 +1113,10 @@ index 6aca7c1..1679627 100644
      (void)identifier;
      [self reloadSpecifiers];
 diff --git a/vedetteprefs/VDTListPresentation.h b/vedetteprefs/VDTListPresentation.h
-index 0fdd20b..f72b690 100644
+index 0fdd20b..95f20e6 100644
 --- a/vedetteprefs/VDTListPresentation.h
 +++ b/vedetteprefs/VDTListPresentation.h
-@@ -2,13 +2,16 @@
+@@ -2,14 +2,25 @@
  // SPDX-License-Identifier: MIT
  
  #import <Preferences/PSSpecifier.h>
@@ -1124,6 +1124,10 @@ index 0fdd20b..f72b690 100644
  
 -// Invalid/missing values are off. Uses the same first matching configuration and
 -// original identity keys as the detail controller. Never consults the main switch.
++#ifdef __cplusplus
++extern "C" {
++#endif
++
 +// Same snapshot for CPU || nice || memory || jetsam. Nice/resource switches
 +// require CFBoolean; CPU retains legacy NSNumber/NSString boolValue semantics.
 +// Never consults the global switch, inherited rules, or runtime receipts.
@@ -1135,6 +1139,11 @@ index 0fdd20b..f72b690 100644
  // A nil predicate means the source has already been filtered by AltList.
  NSMutableArray<PSSpecifier *> *VDTGroupedListSpecifiers(
      NSArray<PSSpecifier *> *source, NSString *identityKey, VDTConfigType type,
+     Class localizationClass, BOOL (^matchesSearch)(PSSpecifier *), NSString *emptyTextKey);
++
++#ifdef __cplusplus
++}
++#endif
 diff --git a/vedetteprefs/VDTListPresentation.m b/vedetteprefs/VDTListPresentation.m
 index 774d525..f1cae50 100644
 --- a/vedetteprefs/VDTListPresentation.m
@@ -1208,18 +1217,24 @@ index 774d525..f1cae50 100644
      }
      size_t enabledCount = 0;
 diff --git a/vedetteprefs/VDTNicePreferences.h b/vedetteprefs/VDTNicePreferences.h
-index b0678e1..ce0e89d 100644
+index b0678e1..7b145b3 100644
 --- a/vedetteprefs/VDTNicePreferences.h
 +++ b/vedetteprefs/VDTNicePreferences.h
-@@ -3,10 +3,14 @@
+@@ -3,10 +3,20 @@
  #import "../VDTShared.h"
  
  @class VDTProcessConfiguration;
  @class VDTNiceValueListController;
  
++#ifdef __cplusplus
++extern "C" {
++#endif
 +// Reads only this snapshot and cached verified list metadata; never scans bundles.
 +id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSString *key,
 +    id fallback, NSDictionary *prefs, NSDictionary *extensionMetadata);
++#ifdef __cplusplus
++}
++#endif
 +
  @interface VDTNicePreferences : NSObject
  - (instancetype)initWithOwner:(VDTProcessConfiguration *)owner;
