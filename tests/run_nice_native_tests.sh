@@ -11,10 +11,10 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT HUP INT TERM
-for name in VDTNicePolicy VDTNiceStore; do
+for name in VDTNicePolicy VDTNiceStore VDTBundleRules; do
     xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -I. -c "$name.c" -o "$out/$name.o"
 done
 xcrun clang++ -std=c++17 -fobjc-arc -fblocks -O1 -Wall -Wextra -Werror \
     -Itests/native_stubs -I. -framework Foundation tests/test_nice_native.mm \
-    VDTNiceShared.mm VDTShared.mm "$out/VDTNicePolicy.o" "$out/VDTNiceStore.o" -o "$out/native"
+    VDTNiceShared.mm VDTShared.mm VDTBundleIdentity.mm "$out/VDTNicePolicy.o" "$out/VDTNiceStore.o" "$out/VDTBundleRules.o" -o "$out/native"
 "$out/native"

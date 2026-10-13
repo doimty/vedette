@@ -7,11 +7,35 @@
 #import <notify.h>
 #import <CoreFoundation/CoreFoundation.h>
 
+// Metadata is populated only by the list's verified background enumeration.
+static NSString *VDTNiceContainingAppIdentifier(NSString *identifier, NSDictionary *metadata) {
+    if (![metadata isKindOfClass:[NSDictionary class]] ||
+        ![identifier isKindOfClass:[NSString class]] || identifier.length == 0 ||
+        ![metadata[@"extensionIdentifier"] isEqual:identifier]) return nil;
+    id host = metadata[@"containingAppIdentifier"];
+    return [host isKindOfClass:[NSString class]] && [host length] > 0 ? host : nil;
+}
+
+id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSString *key,
+    id fallback, NSDictionary *prefs, NSDictionary *extensionMetadata) {
+    if (![key isEqualToString:VDT_NICE_ENABLED_KEY] && ![key isEqualToString:VDT_NICE_VALUE_KEY]) return fallback;
+    NSDictionary *snapshot = prefs ?: getPrefs();
+    NSString *host = VDTNiceContainingAppIdentifier(identifier, extensionMetadata);
+    // Use the same field-presence, duplicate and source rules as execution;
+    // requestedEnabled is saved state and deliberately excludes the global switch.
+    NSDictionary *rule = VDTNiceEffectiveRule(identifier, type, host, snapshot);
+    NSString *field = [key isEqualToString:VDT_NICE_ENABLED_KEY] ? @"requestedEnabled" : @"value";
+    return rule[field] ?: fallback;
+}
+
 @interface VDTNicePreferences () {
     __weak VDTProcessConfiguration *_owner;
     NSMutableArray<PSSpecifier *> *_specifiers;
     PSSpecifier *_statusSpecifier;
     PSSpecifier *_enabledSpecifier;
+    PSSpecifier *_valueSpecifier;
+    PSSpecifier *_inheritanceSpecifier;
+    PSSpecifier *_followSpecifier;
     NSString *_statusText;
     int _notifyToken;
     BOOL _observerRegistered;
@@ -75,7 +99,8 @@
 }
 
 - (BOOL)storedNiceEnabled {
-    id value = valueForProcessConfigKey(self.identifier, VDT_NICE_ENABLED_KEY, @NO, self.configurationType);
+    id value = VDTNicePreferenceValueWithPrefs(self.identifier, self.configurationType,
+        VDT_NICE_ENABLED_KEY, @NO, getPrefs(), [_owner.specifier propertyForKey:@"vdtExtensionMetadata"]);
     return [self isEnabledValue:value];
 }
 
@@ -120,7 +145,20 @@
         [value setProperty:@0 forKey:@"default"];
         [value setProperty:VDT_NICE_VALUE_KEY forKey:@"key"];
         [value setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
+        _valueSpecifier = value;
         [_specifiers addObject:value];
+
+        if (self.configurationType == VDTConfigTypeExtension) {
+            _inheritanceSpecifier = [PSSpecifier emptyGroupSpecifier];
+            [_inheritanceSpecifier setProperty:VDTLoc(self.class,
+                @"Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged.") forKey:@"footerText"];
+            [_specifiers addObject:_inheritanceSpecifier];
+            _followSpecifier = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app nice")
+                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+            [_followSpecifier setButtonAction:@selector(confirmFollowContainingAppNice)];
+            [_specifiers addObject:_followSpecifier];
+            [self updateInheritancePresentation];
+        }
 
         PSSpecifier *statusGroup = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Nice execution status")
             target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
@@ -139,12 +177,54 @@
     return _specifiers;
 }
 
+- (void)updateInheritancePresentation {
+    if (!_inheritanceSpecifier) return;
+    BOOL own = VDTNiceHasIndependentRule(self.identifier, self.configurationType, getPrefs());
+    _inheritanceSpecifier.name = VDTLoc(self.class, own ? @"Independent nice rule" : @"Nice follows containing app");
+    [_followSpecifier setProperty:@(own) forKey:@"enabled"];
+    if (!_buildingSpecifiers) {
+        [_owner reloadSpecifier:_inheritanceSpecifier animated:NO];
+        [_owner reloadSpecifier:_followSpecifier animated:NO];
+    }
+}
+
+- (void)confirmFollowContainingAppNice {
+    if (self.configurationType != VDTConfigTypeExtension) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app nice")
+        message:VDTLoc(self.class, @"Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept.")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel")
+        style:UIAlertActionStyleCancel handler:nil]];
+    __weak VDTNicePreferences *weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app nice")
+        style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            [weakSelf removeIndependentNiceRule];
+        }]];
+    [_owner presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)removeIndependentNiceRule {
+    if (self.configurationType != VDTConfigTypeExtension) return;
+    NSError *error = nil;
+    BOOL saved = VDTNiceRemoveIndependentRule(self.identifier, self.configurationType, &error);
+    if (!saved) [self presentSaveError:error];
+    [self updateInheritancePresentation];
+    [self updateProtectedSwitchAvailability];
+    [_owner reloadSpecifier:_enabledSpecifier animated:NO];
+    [_owner reloadSpecifier:_valueSpecifier animated:NO];
+    if (saved) {
+        [self setPendingStatusAndReload];
+        [_owner vdtReloadIndependentRules];
+    }
+}
+
 - (id)readPreferenceValue:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
     id fallback = [specifier propertyForKey:@"default"];
     if (![key isEqualToString:VDT_NICE_ENABLED_KEY] && ![key isEqualToString:VDT_NICE_VALUE_KEY])
         return fallback;
-    id value = valueForProcessConfigKey(self.identifier, key, fallback, self.configurationType);
+    id value = VDTNicePreferenceValueWithPrefs(self.identifier, self.configurationType,
+        key, fallback, getPrefs(), [_owner.specifier propertyForKey:@"vdtExtensionMetadata"]);
     if ([key isEqualToString:VDT_NICE_ENABLED_KEY]) return @([self isEnabledValue:value]);
     int parsed = 0;
     return VDTNiceParseValue(value, &parsed) ? @(parsed) : @0;
@@ -201,7 +281,10 @@
     }
     // A save is only a request. Do not turn this into an applied-success claim.
     [self setPendingStatusAndReload];
+    [self updateInheritancePresentation];
+    [self updateProtectedSwitchAvailability];
     [_owner reloadSpecifier:specifier animated:NO];
+    [_owner vdtReloadIndependentRules];
 }
 
 - (void)presentSaveError:(NSError *)error {
@@ -249,7 +332,11 @@
 
 - (void)refreshMatchingStatus {
     if (!_owner) return;
-    NSDictionary *receipt = VDTNiceMatchingStatus(self.identifier, self.configurationType, getPrefs());
+    NSDictionary *prefs = getPrefs();
+    NSString *host = VDTNiceContainingAppIdentifier(self.identifier, [_owner.specifier propertyForKey:@"vdtExtensionMetadata"]);
+    NSDictionary *receipt = VDTNiceMatchingStatusWithHost(self.identifier, self.configurationType, host, prefs);
+    [self updateInheritancePresentation];
+    [self updateProtectedSwitchAvailability];
     if (![receipt isKindOfClass:[NSDictionary class]]) {
         _statusText = VDTLoc(self.class, @"Waiting for execution result");
     } else {

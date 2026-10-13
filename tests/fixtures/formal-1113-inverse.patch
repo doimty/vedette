@@ -1,0 +1,1496 @@
+diff --git a/.gitattributes b/.gitattributes
+index 9c030ba..d52738f 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -2,5 +2,6 @@
+ * text=auto
+ 
+ # Literal inverse-diff fixture includes context-only spaces and frozen old
+ # whitespace; do not rewrite those bytes or relax checks on production files.
+ tests/fixtures/appex-ui21-inverse.patch whitespace=-blank-at-eol
++tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol
+diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
+index 4c5466c..8b73523 100644
+--- a/.github/workflows/roothide-build.yml
++++ b/.github/workflows/roothide-build.yml
+@@ -42,11 +42,11 @@ jobs:
+     env:
+       THEOS: ${{ github.workspace }}/theos
+       THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
+       PACKAGE_ARCH: ${{ matrix.package_arch }}
+       PACKAGE_PREFIX: ${{ matrix.prefix }}
+-      PACKAGE_VERSION: 1.1.13-1+rc1
++      PACKAGE_VERSION: 1.1.13-2
+       FINALPACKAGE: 1
+       PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
+ 
+     steps:
+       - name: Checkout
+@@ -148,16 +148,19 @@ jobs:
+           sudo bash tests/run_nice_native_tests.sh
+           sudo bash tests/run_springboard_native_tests.sh
+           python3 -B tests/test_extension_contracts.py
+           python3 -B tests/test_bundle_rules.py
+           python3 -B tests/test_extensions_native.py --require-native
++          sudo python3 -B tests/test_extension_nice_native.py --require-native
++          sudo python3 -B tests/test_independent_rules_native.py --require-native
+           python3 -B tests/test_memory_policy.py
+           python3 -B tests/test_resource_apply.py
+           python3 -B tests/test_resource_manager.py
+           python3 -B tests/test_resource_ui21.py
+           python3 -B tests/test_resource_preferences_native.py --require-native
+           python3 -B tests/test_rebuild_baseline.py
++          python3 -B tests/test_formal_projection.py
+ 
+       - name: Build package
+         run: |
+           set -o pipefail
+           export PATH="/opt/homebrew/opt/make/libexec/gnubin:$THEOS/bin:$PATH"
+diff --git a/VDTNiceRuntime.mm b/VDTNiceRuntime.mm
+index 4e5b626..071f0ab 100644
+--- a/VDTNiceRuntime.mm
++++ b/VDTNiceRuntime.mm
+@@ -2,10 +2,11 @@
+ #import "VDTNiceRuntime.h"
+ #import "VDTNiceShared.h"
+ #import "VDTNiceStore.h"
+ #import "VDTNicePolicy.h"
+ #import "VDTProcessIdentity.h"
++#import "VDTBundleIdentity.h"
+ #include <errno.h>
+ #include <limits.h>
+ #include <math.h>
+ #include <notify.h>
+ #include <sys/resource.h>
+@@ -33,23 +34,45 @@ static BOOL text(id value, NSUInteger limit) {
+ }
+ static NSDictionary *boundTarget(id raw) {
+     if (![raw isKindOfClass:NSDictionary.class]) return nil;
+     NSDictionary *target = raw; long long pid, type, seconds, microseconds;
+     if (!integer(target[VDTTargetPidKey], 2, INT_MAX, &pid) ||
+-        !integer(target[VDTConfigTypeKey], VDTConfigTypeApp, VDTConfigTypeDaemon, &type) ||
++        !integer(target[VDTConfigTypeKey], VDTConfigTypeApp, VDTConfigTypeExtension, &type) ||
+         !integer(target[VDTTargetStartSecondsKey], 1, LLONG_MAX, &seconds) ||
+         !integer(target[VDTTargetStartMicrosecondsKey], 0, 999999, &microseconds) ||
+         !text(target[VDTTargetNameKey], 1024)) return nil;
+     NSMutableDictionary *result = [@{VDTTargetPidKey: @(pid), VDTConfigTypeKey: @(type),
+         VDTTargetNameKey: target[VDTTargetNameKey], VDTTargetStartSecondsKey: @(seconds),
+         VDTTargetStartMicrosecondsKey: @(microseconds)} mutableCopy];
+     id path = target[VDTTargetExecutablePathKey], comm = target[VDTTargetProcCommKey];
+     if (path) {
+         if (!text(path, 4096) || ![path hasPrefix:@"/"]) return nil;
+         result[VDTTargetExecutablePathKey] = path;
+-    } else if (text(comm, 255)) result[VDTTargetProcCommKey] = comm;
++    } else if (type != VDTConfigTypeExtension && text(comm, 255)) result[VDTTargetProcCommKey] = comm;
+     else return nil;
++    if (type == VDTConfigTypeExtension && !VDTNearestBundlePath(path, @"appex")) return nil;
++    if (type != VDTConfigTypeExtension && path && VDTNearestBundlePath(path, @"appex")) return nil;
++    id host = target[@"containingAppIdentifier"];
++    if (host) {
++        if (type != VDTConfigTypeExtension || !text(host, 1024)) return nil;
++        result[@"containingAppIdentifier"] = host;
++    }
++    // Optional for legacy App/Daemon journals; new records retain source apart
++    // from the actual Extension identity. Partial/malformed source is rejected.
++    id sourceType = target[@"niceSourceType"], sourceName = target[@"niceSourceIdentifier"],
++       sourceRevision = target[@"niceSourceRevision"];
++    if (sourceType || sourceName || sourceRevision) {
++        long long source;
++        if (!integer(sourceType, VDTConfigTypeApp, VDTConfigTypeExtension, &source) ||
++            !text(sourceName, 1024) || ![sourceRevision isKindOfClass:NSString.class] ||
++            [sourceRevision length] > 80) return nil;
++        BOOL inherited = type == VDTConfigTypeExtension && source == VDTConfigTypeApp;
++        if (inherited ? ![sourceName isEqual:host] :
++            (source != type || ![sourceName isEqual:target[VDTTargetNameKey]])) return nil;
++        result[@"niceSourceType"] = sourceType; result[@"niceSourceIdentifier"] = sourceName;
++        result[@"niceSourceRevision"] = sourceRevision;
++    }
+     return result;
+ }
+ static NSString *instanceKey(NSDictionary *target) {
+     NSString *identity = target[VDTTargetExecutablePathKey] ?: target[VDTTargetProcCommKey];
+     return [NSString stringWithFormat:@"%d:%llu:%llu:%@", [target[VDTTargetPidKey] intValue],
+@@ -57,14 +80,28 @@ static NSString *instanceKey(NSDictionary *target) {
+         [target[VDTTargetStartMicrosecondsKey] unsignedLongLongValue], identity];
+ }
+ static NSString *ruleKey(NSDictionary *target) {
+     return VDTNiceRuleKey((VDTConfigType)[target[VDTConfigTypeKey] unsignedIntegerValue], target[VDTTargetNameKey]);
+ }
++static NSDictionary *ruleForTarget(NSDictionary *target, NSDictionary *rules) {
++    return VDTNiceEffectiveRuleFromRules(target[VDTTargetNameKey],
++        (VDTConfigType)[target[VDTConfigTypeKey] unsignedIntegerValue],
++        target[@"containingAppIdentifier"], rules);
++}
++static NSDictionary *targetWithSource(NSDictionary *target, NSDictionary *rule) {
++    NSMutableDictionary *updated = [target mutableCopy];
++    updated[@"niceSourceType"] = rule[@"sourceType"];
++    updated[@"niceSourceIdentifier"] = rule[@"sourceIdentifier"];
++    updated[@"niceSourceRevision"] = rule[@"sourceRevision"];
++    return updated;
++}
+ static BOOL protectedRule(NSDictionary *rule) {
+-    NSString *name = rule[@"identifier"];
+-    if ([rule[@"type"] unsignedIntegerValue] == VDTConfigTypeApp) return [name isEqual:@"com.apple.Preferences"];
+-    return [name isEqual:@"launchd"] || [name isEqual:@"runningboardd"];
++    NSString *name = rule[@"sourceIdentifier"] ?: rule[@"identifier"];
++    NSUInteger type = [rule[@"sourceType"] ?: rule[@"type"] unsignedIntegerValue];
++    if (type == VDTConfigTypeApp) return [name isEqual:@"com.apple.Preferences"];
++    if (type == VDTConfigTypeDaemon) return [name isEqual:@"launchd"] || [name isEqual:@"runningboardd"];
++    return NO;
+ }
+ static NSDictionary *encodeRecord(const VDTNiceRecord *r) {
+     return @{@"captured": @(r->captured), @"original": @(r->originalValue),
+         @"owns": @(r->ownsValue), @"owned": @(r->ownedValue),
+         @"hasIntent": @(r->hasIntent), @"intent": @(r->intentValue)};
+@@ -87,11 +124,28 @@ static VDTNiceIdentity nativeIdentity(pid_t pid, NSDictionary *target) {
+     int bytes = proc_pidinfo(pid, VDT_PROC_PIDTBSDINFO, 0, &info, sizeof(info));
+     if (bytes != (int)sizeof(info)) return errno == ESRCH ? VDTNiceIdentityGone : VDTNiceIdentityUnavailableValue;
+     if (info.pbi_pid != (uint32_t)pid) return VDTNiceIdentityUnavailableValue;
+     if (info.pbi_start_tvsec != [target[VDTTargetStartSecondsKey] unsignedLongLongValue] ||
+         info.pbi_start_tvusec != [target[VDTTargetStartMicrosecondsKey] unsignedLongLongValue]) return VDTNiceIdentityGone;
+-    return vdt_target_is_current(target) ? VDTNiceIdentityCurrent : VDTNiceIdentityUnavailableValue;
++    if (!vdt_target_is_current(target)) return VDTNiceIdentityUnavailableValue;
++    if ([target[VDTConfigTypeKey] unsignedIntegerValue] == VDTConfigTypeExtension) {
++        NSString *path = target[VDTTargetExecutablePathKey];
++        NSDictionary *info = VDTReadExtensionBundleInfo(VDTNearestBundlePath(path, @"appex"), path);
++        if (![info[@"extensionIdentifier"] isEqual:target[VDTTargetNameKey]])
++            return VDTNiceIdentityUnavailableValue;
++        NSString *host = target[@"containingAppIdentifier"];
++        if (host) {
++            NSString *appPath = info[@"containingAppPath"];
++            NSDictionary *appInfo = appPath ? [NSDictionary dictionaryWithContentsOfFile:
++                [appPath stringByAppendingPathComponent:@"Info.plist"]] : nil;
++            if (![appInfo[@"CFBundleIdentifier"] isEqual:host])
++                return VDTNiceIdentityUnavailableValue;
++        }
++        // Recheck lifetime/path after metadata I/O as well as before it.
++        if (!vdt_target_is_current(target)) return VDTNiceIdentityUnavailableValue;
++    }
++    return VDTNiceIdentityCurrent;
+ }
+ static NSString *outcomeCode(VDTNiceOutcome outcome) {
+     switch (outcome) {
+         case VDTNiceUnmanaged: return @"disabled";
+         case VDTNiceApplied: return @"applied";
+@@ -261,10 +315,17 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+     if (records[key] && !decodeRecord(records[key][@"record"], &r)) { loadError = EINVAL; return; }
+     NativeContext context = {self, target};
+     VDTNiceOperations ops = {.identity = identityCallback, .readValue = readCallback,
+         .writeValue = writeCallback, .saveRecord = saveCallback, .context = &context};
+     VDTNiceResult result = VDTNiceTransition([target[VDTTargetPidKey] intValue], enabled, desired, &r, &ops);
++    // Same-value source changes still need a durable, real identity/source
++    // update; the frozen C policy correctly avoids a redundant value save.
++    if (result.outcome == VDTNiceApplied && r.captured &&
++        ![records[key][@"target"] isEqual:target]) {
++        int error = [self save:&r target:target];
++        if (error) { result.outcome = VDTNiceStoreFailed; result.error = error; }
++    }
+     NSMutableDictionary *outcome = [@{@"target": target, @"state": outcomeCode(result.outcome),
+         @"error": @(result.error), @"checkedAt": @(NSDate.date.timeIntervalSince1970)} mutableCopy];
+     if (result.observedValid) outcome[@"observed"] = @(result.observedValue);
+     if (r.captured) outcome[@"original"] = @(r.originalValue);
+     outcomes[key] = outcome;
+@@ -284,11 +345,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+ - (void)reconcile {
+     [self load]; [self checkRestoreRequest];
+     if (loadError || store.directoryFD < 0) return;
+     for (NSString *key in [records.allKeys copy]) {
+         NSDictionary *target = records[key][@"target"];
+-        NSDictionary *rule = rules[ruleKey(target)];
++        NSDictionary *rule = ruleForTarget(target, rules);
+         VDTNiceIdentity identity = nativeIdentity([target[VDTTargetPidKey] intValue], target);
+         if (identity == VDTNiceIdentityGone) {
+             // Forgetting an old instance must not be suppressed by a previous
+             // successful apply in this config generation.
+             [attempted removeObject:[key stringByAppendingString:@":restore"]];
+@@ -300,14 +361,16 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+ }
+ - (void)apply:(NSDictionary *)rawTarget {
+     if (loadError || store.directoryFD < 0) return;
+     NSDictionary *target = boundTarget(rawTarget);
+     if (!target) return;
+-    NSDictionary *rule = rules[ruleKey(target)];
++    NSDictionary *rule = ruleForTarget(target, rules);
+     if (protectedRule(rule) || [target[VDTTargetPidKey] intValue] == getpid()) return;
++    target = targetWithSource(target, rule);
+     BOOL enabled = !paused && [rule[@"enabled"] boolValue];
+-    if (!enabled && !records[instanceKey(target)]) return;
++    // An unmanaged disabled/invalid target is a policy no-op, but retaining
++    // its verified host identity is necessary for a source-matching receipt.
+     [self runTarget:target enabled:enabled desired:[rule[@"value"] intValue]];
+ }
+ - (BOOL)restoreAll {
+     [attempted removeAllObjects];
+     [self load];
+@@ -316,18 +379,21 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+     [self publish];
+     return records.count == 0;
+ }
+ - (void)publish {
+     if (!receiptDirty || store.directoryFD < 0 || !boot) return;
+-    NSMutableDictionary *allRules = [rules mutableCopy];
+-    // Deleted rules with a pending restoration remain visible when reopening
+-    // that target's details, even though the saved CPU/nice entry is gone.
++    NSMutableDictionary *allRules = [NSMutableDictionary dictionary];
++    for (NSString *key in rules) {
++        NSDictionary *rule = rules[key];
++        allRules[key] = VDTNiceEffectiveRuleFromRules(rule[@"identifier"],
++            (VDTConfigType)[rule[@"type"] unsignedIntegerValue], nil, rules);
++    }
++    // Derive receipts from the REAL target and its current effective source,
++    // including inherited extensions and pending restorations after deletion.
+     for (NSDictionary *entry in [records.allValues arrayByAddingObjectsFromArray:outcomes.allValues]) {
+         NSDictionary *target = entry[@"target"]; NSString *key = ruleKey(target);
+-        if (!allRules[key]) allRules[key] = @{@"identifier": target[VDTTargetNameKey],
+-            @"type": target[VDTConfigTypeKey], @"value": @0, @"valid": @YES,
+-            @"enabled": @NO, @"requestedEnabled": @NO, @"revision": @""};
++        if (key) allRules[key] = ruleForTarget(target, rules);
+     }
+     NSMutableDictionary *groups = [NSMutableDictionary dictionary];
+     for (NSString *key in outcomes) {
+         NSDictionary *outcome = outcomes[key]; NSString *configKey = ruleKey(outcome[@"target"]);
+         if (!configKey) continue;
+diff --git a/VDTNiceShared.h b/VDTNiceShared.h
+index 2cdd13d..c7f0d88 100644
+--- a/VDTNiceShared.h
++++ b/VDTNiceShared.h
+@@ -21,18 +21,32 @@ NSString *VDTNiceRuleKey(VDTConfigType type, NSString *identifier);
+ NSString *VDTNiceStateDirectory(void);
+ NSString *VDTNiceBootToken(void);
+ // First-entry-wins. Each rule contains type/identifier/value/valid/revision,
+ // requestedEnabled (per-rule), enabled (folds global switch). CPU keys are not read.
+ NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *prefs);
++BOOL VDTNiceHasIndependentRule(NSString *identifier, VDTConfigType type, NSDictionary *prefs);
++// Effective rule keeps the real target type/identifier. Source fields name the
++// independent rule or containing App. Disabled/invalid own records block inheritance.
++NSDictionary *VDTNiceEffectiveRuleFromRules(NSString *identifier, VDTConfigType type,
++    NSString *containingAppIdentifier, NSDictionary<NSString *, NSDictionary *> *rules);
++NSDictionary *VDTNiceEffectiveRule(NSString *identifier, VDTConfigType type,
++    NSString *containingAppIdentifier, NSDictionary *prefs);
++// Clears ONLY the three nice fields on ALL duplicate IDs. Preserves CPU,
++// unknown fields and every other section; checked atomic write + notification.
++BOOL VDTNiceRemoveIndependentRule(NSString *identifier, VDTConfigType type, NSError **error);
+ // Separate checked atomic writer; preserves all legacy CPU keys. Only niceEnabled
+ // or niceValue may be changed. Enabling an untouched rule atomically stores value 0.
+ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type,
+                            NSString *key, id value, NSError **error);
+ // Last execution receipt, not a live kernel query. Returns nil if boot, revision,
+ // enabled/valid/value differ from CURRENT prefs, or the receipt is unavailable.
+ // A receipt row contains state (stable ASCII code), error, checkedAt, targetCount,
+ // appliedCount, pendingCount; observed/original may be present for a single target.
+ NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type,
+                                     NSDictionary *prefs);
++// Extension UI should pass its verified containingAppIdentifier. The legacy
++// entry point uses the receipt's host but still rejects stale own/inherit source.
++NSDictionary *VDTNiceMatchingStatusWithHost(NSString *identifier, VDTConfigType type,
++    NSString *containingAppIdentifier, NSDictionary *prefs);
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/VDTNiceShared.mm b/VDTNiceShared.mm
+index f7c52fd..46512e7 100644
+--- a/VDTNiceShared.mm
++++ b/VDTNiceShared.mm
+@@ -35,33 +35,64 @@ BOOL VDTNiceParseValue(id value, int *result) {
+     errno = 0; char *end = NULL; long n = strtol(text, &end, 10);
+     if (errno || !end || *end || n < VDTNiceMinimum || n > VDTNiceMaximum) return NO;
+     *result = (int)n; return YES;
+ }
+ NSString *VDTNiceRuleKey(VDTConfigType type, NSString *identifier) {
+-    if ((type != VDTConfigTypeApp && type != VDTConfigTypeDaemon) ||
+-        ![identifier isKindOfClass:NSString.class] || !identifier.length || identifier.length > 1024) return nil;
++    if ((type != VDTConfigTypeApp && type != VDTConfigTypeDaemon && type != VDTConfigTypeExtension) ||
++        ![identifier isKindOfClass:NSString.class] || !identifier.length || identifier.length > 1024 ||
++        [identifier rangeOfString:[NSString stringWithFormat:@"%C", (unichar)0]].location != NSNotFound) return nil;
+     return [NSString stringWithFormat:@"%lu:%@", (unsigned long)type, identifier];
+ }
+ NSString *VDTNiceStateDirectory(void) { return jbroot(@"/var/tmp/com.doimty.vedette.nice"); }
+ NSString *VDTNiceBootToken(void) {
+     struct timeval boot = {}; size_t length = sizeof(boot);
+     if (sysctlbyname("kern.boottime", &boot, &length, NULL, 0) || length != sizeof(boot) ||
+         boot.tv_sec <= 0 || boot.tv_usec < 0 || boot.tv_usec >= 1000000) return nil;
+     return [NSString stringWithFormat:@"%lld:%ld", (long long)boot.tv_sec, (long)boot.tv_usec];
+ }
++static NSString *niceSection(VDTConfigType type) {
++    switch (type) {
++        case VDTConfigTypeApp: return @"appConfigs";
++        case VDTConfigTypeDaemon: return @"daemonConfigs";
++        case VDTConfigTypeExtension: return @"extensionConfigs";
++    }
++    return nil;
++}
++static NSString *niceIdentifierKey(VDTConfigType type) {
++    switch (type) {
++        case VDTConfigTypeApp: return @"bundleIdentifier";
++        case VDTConfigTypeDaemon: return @"daemonName";
++        case VDTConfigTypeExtension: return @"extensionIdentifier";
++    }
++    return nil;
++}
++static BOOL niceFieldsPresent(NSDictionary *entry) {
++    return entry[VDT_NICE_ENABLED_KEY] || entry[VDT_NICE_VALUE_KEY] || entry[VDT_NICE_REVISION_KEY];
++}
++BOOL VDTNiceHasIndependentRule(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
++    if (!VDTNiceRuleKey(type, identifier) || ![prefs isKindOfClass:NSDictionary.class]) return NO;
++    id raw = prefs[niceSection(type)];
++    if (![raw isKindOfClass:NSArray.class]) return NO;
++    for (id entry in raw)
++        if ([entry isKindOfClass:NSDictionary.class] && [entry[niceIdentifierKey(type)] isEqual:identifier] &&
++            niceFieldsPresent(entry)) return YES;
++    return NO;
++}
+ NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *prefs) {
+     if (![prefs isKindOfClass:NSDictionary.class]) return @{};
+     BOOL global = niceBoolean(prefs[@"enabled"], YES);
+     NSMutableDictionary *rules = [NSMutableDictionary dictionary];
+-    for (NSUInteger type = VDTConfigTypeApp; type <= VDTConfigTypeDaemon; ++type) {
+-        NSString *section = type == VDTConfigTypeApp ? @"appConfigs" : @"daemonConfigs";
+-        NSString *identifierKey = type == VDTConfigTypeApp ? @"bundleIdentifier" : @"daemonName";
++    for (NSUInteger type = VDTConfigTypeApp; type <= VDTConfigTypeExtension; ++type) {
++        NSString *section = niceSection((VDTConfigType)type);
++        NSString *identifierKey = niceIdentifierKey((VDTConfigType)type);
+         id raw = prefs[section];
+         if (![raw isKindOfClass:NSArray.class]) continue;
+         for (id item in (NSArray *)raw) {
+             if (![item isKindOfClass:NSDictionary.class]) continue;
+             NSDictionary *entry = item; NSString *identifier = entry[identifierKey];
++            // A CPU-only extension row is NOT an independent nice override.
++            if (type == VDTConfigTypeExtension && !niceFieldsPresent(entry)) continue;
+             NSString *key = VDTNiceRuleKey((VDTConfigType)type, identifier);
+             if (!key || rules[key]) continue; // Includes disabled first entries.
+             id flag = entry[VDT_NICE_ENABLED_KEY];
+             BOOL requested = niceBoolean(flag, NO);
+             BOOL valid = !flag || ([flag isKindOfClass:NSNumber.class] &&
+@@ -73,16 +104,43 @@ NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *pr
+             if (revision && (![revision isKindOfClass:NSString.class] || [revision length] > 80)) {
+                 valid = NO; revision = nil;
+             }
+             rules[key] = @{@"identifier": identifier, @"type": @(type), @"value": @(value),
+                 @"requestedEnabled": @(requested), @"enabled": @(global && requested && valid),
+-                @"valid": @(valid), @"revision": revision ?: @""};
++                @"valid": @(valid), @"revision": revision ?: @"", @"present": @(niceFieldsPresent(entry))};
+         }
+     }
+     return [rules copy];
+ }
+ 
++NSDictionary *VDTNiceEffectiveRuleFromRules(NSString *identifier, VDTConfigType type,
++    NSString *host, NSDictionary<NSString *, NSDictionary *> *rules) {
++    NSString *key = VDTNiceRuleKey(type, identifier);
++    if (!key) return nil;
++    if (!VDTNiceRuleKey(VDTConfigTypeApp, host)) host = nil;
++    NSDictionary *source = rules[key];
++    BOOL inherited = NO;
++    if (type == VDTConfigTypeExtension && !source && host) {
++        NSDictionary *hostRule = rules[VDTNiceRuleKey(VDTConfigTypeApp, host)];
++        // A CPU-only host row is not a source nice rule.
++        if ([hostRule[@"present"] boolValue]) { source = hostRule; inherited = YES; }
++    }
++    NSMutableDictionary *rule = source ? [source mutableCopy] : [@{
++        @"value": @0, @"valid": @YES, @"enabled": @NO, @"requestedEnabled": @NO,
++        @"revision": @"", @"present": @NO} mutableCopy];
++    rule[@"identifier"] = identifier; rule[@"type"] = @(type);
++    rule[@"inherited"] = @(inherited);
++    rule[@"sourceType"] = @(inherited ? VDTConfigTypeApp : type);
++    rule[@"sourceIdentifier"] = inherited ? host : identifier;
++    rule[@"sourceRevision"] = rule[@"revision"];
++    if (type == VDTConfigTypeExtension) rule[@"containingAppIdentifier"] = host ?: @"";
++    return rule;
++}
++NSDictionary *VDTNiceEffectiveRule(NSString *identifier, VDTConfigType type, NSString *host, NSDictionary *prefs) {
++    return VDTNiceEffectiveRuleFromRules(identifier, type, host, VDTNiceRulesFromPrefs(prefs));
++}
++
+ static BOOL preferenceError(NSError **error, int code, NSString *text) {
+     if (error) *error = [NSError errorWithDomain:@"com.doimty.vedette.nice-preferences" code:code
+         userInfo:@{NSLocalizedDescriptionKey: text}];
+     return NO;
+ }
+@@ -124,22 +182,27 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type, NSString *k
+         return preferenceError(error, EINVAL, @"Nice must be an integer from -20 to 20.");
+     }
+     NSDictionary *old = readWritablePrefs(error);
+     if (!old) return NO;
+     NSMutableDictionary *prefs = [old mutableCopy];
+-    NSString *sectionKey = type == VDTConfigTypeApp ? @"appConfigs" : @"daemonConfigs";
+-    NSString *idKey = type == VDTConfigTypeApp ? @"bundleIdentifier" : @"daemonName";
++    NSString *sectionKey = niceSection(type);
++    NSString *idKey = niceIdentifierKey(type);
+     id rawSection = prefs[sectionKey];
+     if (rawSection && ![rawSection isKindOfClass:NSArray.class])
+         return preferenceError(error, EINVAL, @"Invalid existing rule list; it was not replaced.");
+     NSMutableArray *section = rawSection ? [rawSection mutableCopy] : [NSMutableArray array];
+-    NSUInteger index = NSNotFound;
++    NSUInteger index = NSNotFound, firstMatch = NSNotFound;
+     for (NSUInteger i = 0; i < section.count; ++i) {
+         id entry = section[i];
+         if ([entry isKindOfClass:NSDictionary.class] && [entry[idKey] isKindOfClass:NSString.class] &&
+-            [entry[idKey] isEqualToString:identifier]) { index = i; break; }
++            [entry[idKey] isEqualToString:identifier]) {
++            if (firstMatch == NSNotFound) firstMatch = i;
++            if (type == VDTConfigTypeExtension && !niceFieldsPresent(entry)) continue;
++            index = i; break;
++        }
+     }
++    if (index == NSNotFound) index = firstMatch;
+     NSMutableDictionary *entry = index == NSNotFound ? [@{idKey: identifier} mutableCopy] : [section[index] mutableCopy];
+     entry[key] = isSwitch ? value : @(numeric);
+     if (isSwitch && [value boolValue] && !entry[VDT_NICE_VALUE_KEY]) entry[VDT_NICE_VALUE_KEY] = @0;
+     entry[VDT_NICE_REVISION_KEY] = NSUUID.UUID.UUIDString;
+     if (index == NSNotFound) [section addObject:entry]; else section[index] = entry;
+@@ -148,17 +211,43 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type, NSString *k
+     if (!data || data.length > VDT_NICE_STORE_LIMIT) return preferenceError(error, EFBIG, @"Preferences exceed the safe size limit.");
+     if (![data writeToFile:PREFS_PATH options:NSDataWritingAtomic error:error]) return NO;
+     notify_post([PREFS_CHANGED_NN UTF8String]);
+     return YES;
+ }
++BOOL VDTNiceRemoveIndependentRule(NSString *identifier, VDTConfigType type, NSError **error) {
++    if (!VDTNiceRuleKey(type, identifier)) return preferenceError(error, EINVAL, @"Invalid target.");
++    NSDictionary *old = readWritablePrefs(error);
++    if (!old) return NO;
++    NSString *sectionKey = niceSection(type), *idKey = niceIdentifierKey(type);
++    id raw = old[sectionKey];
++    if (raw && ![raw isKindOfClass:NSArray.class])
++        return preferenceError(error, EINVAL, @"Invalid existing rule list; it was not replaced.");
++    NSMutableArray *remaining = [NSMutableArray array]; BOOL changed = NO;
++    for (id item in raw) {
++        if ([item isKindOfClass:NSDictionary.class] && [item[idKey] isEqual:identifier]) {
++            NSMutableDictionary *entry = [item mutableCopy];
++            changed = changed || niceFieldsPresent(entry);
++            for (NSString *field in @[VDT_NICE_ENABLED_KEY, VDT_NICE_VALUE_KEY, VDT_NICE_REVISION_KEY])
++                [entry removeObjectForKey:field];
++            if (entry.count > 1) [remaining addObject:entry];
++        } else [remaining addObject:item];
++    }
++    if (!changed) return YES;
++    NSMutableDictionary *prefs = [old mutableCopy]; prefs[sectionKey] = remaining;
++    NSData *data = [NSPropertyListSerialization dataWithPropertyList:prefs format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
++    if (!data || data.length > VDT_NICE_STORE_LIMIT) return preferenceError(error, EFBIG, @"Preferences exceed the safe size limit.");
++    if (![data writeToFile:PREFS_PATH options:NSDataWritingAtomic error:error]) return NO;
++    notify_post([PREFS_CHANGED_NN UTF8String]);
++    return YES;
++}
+ NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
++    return VDTNiceMatchingStatusWithHost(identifier, type, nil, prefs);
++}
++NSDictionary *VDTNiceMatchingStatusWithHost(NSString *identifier, VDTConfigType type, NSString *host, NSDictionary *prefs) {
+     NSString *key = VDTNiceRuleKey(type, identifier);
+-    NSDictionary *rule = key ? VDTNiceRulesFromPrefs(prefs)[key] : nil;
+-    if (key && !rule) rule = @{@"identifier": identifier, @"type": @(type), @"value": @0,
+-        @"valid": @YES, @"enabled": @NO, @"requestedEnabled": @NO, @"revision": @""};
+     NSString *boot = VDTNiceBootToken();
+-    if (!rule || !boot) return nil;
++    if (!key || !boot) return nil;
+     VDTNiceStore store;
+     if (VDTNiceStoreOpen(VDTNiceStateDirectory().fileSystemRepresentation, 0, &store)) return nil;
+     void *bytes = NULL; size_t length = 0;
+     int error = VDTNiceStoreRead(&store, VDT_NICE_STATUS, &bytes, &length);
+     VDTNiceStoreClose(&store);
+@@ -169,9 +258,14 @@ NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type, NS
+     NSDictionary *receipt = raw;
+     if (![receipt[@"version"] isEqual:@1] || ![receipt[@"boot"] isEqual:boot] ||
+         ![receipt[@"rules"] isKindOfClass:NSDictionary.class]) return nil;
+     id row = receipt[@"rules"][key];
+     if (![row isKindOfClass:NSDictionary.class] || ![row[@"state"] isKindOfClass:NSString.class]) return nil;
+-    for (NSString *field in @[@"value", @"valid", @"revision", @"enabled", @"requestedEnabled"])
++    if (type == VDTConfigTypeExtension && !host) host = row[@"containingAppIdentifier"];
++    NSDictionary *rule = VDTNiceEffectiveRule(identifier, type, host, prefs);
++    for (NSString *field in @[@"identifier", @"type", @"value", @"valid", @"revision", @"enabled", @"requestedEnabled"])
+         if (![row[field] isEqual:rule[field]]) return nil;
++    if (type == VDTConfigTypeExtension)
++        for (NSString *field in @[@"present", @"inherited", @"sourceType", @"sourceIdentifier", @"sourceRevision", @"containingAppIdentifier"])
++            if (![row[field] isEqual:rule[field]]) return nil;
+     return row;
+ }
+diff --git a/VDTProcessManager.h b/VDTProcessManager.h
+index 99f0626..3c18c39 100644
+--- a/VDTProcessManager.h
++++ b/VDTProcessManager.h
+@@ -31,10 +31,23 @@ extern NSString * const VDTTargetExecutablePathKey;
+ extern NSString * const VDTTargetProcCommKey;
+ extern NSString * const VDTTargetStartSecondsKey;
+ extern NSString * const VDTTargetStartMicrosecondsKey;
+ extern NSString * const VDTTargetMemoryRuleKey;
+ extern NSString * const VDTTargetJetsamRuleKey;
++extern NSString * const VDTTargetContainingAppIdentifierKey;
++extern NSString * const VDTTargetNiceSourceTypeKey;
++extern NSString * const VDTTargetNiceSourceIdentifierKey;
++extern NSString * const VDTTargetNiceSourceRevisionKey;
++
++// Strict independent nice resolution; never uses CPU presence/enabled state.
++// Extension targets retain their real identity; the containing App source is
++// carried separately. These targets are for vdt_nice_apply, NOT vdt_apply_target.
++NSArray<NSDictionary *> *vdt_nice_resolve_targets(NSDictionary *prefs);
++NSArray<NSDictionary *> *vdt_nice_targets_for_pid(pid_t pid, NSDictionary *prefs);
++// Hot paths consume a trusted VDTNiceRulesFromPrefs snapshot published on reload.
++NSArray<NSDictionary *> *vdt_nice_resolve_targets_from_rules(NSDictionary *rules);
++NSArray<NSDictionary *> *vdt_nice_targets_for_pid_from_rules(pid_t pid, NSDictionary *rules);
+ 
+ // Type-checked normalisation of the user-writable prefs plist. Entries without a
+ // valid identifier are dropped; entries with malformed parameters are retained
+ // as disabled so a reload can undo limits previously applied by Vedette. The
+ // global switch is folded into each entry's enabled flag.
+diff --git a/VDTProcessManager.mm b/VDTProcessManager.mm
+index 300ea07..a2ce369 100644
+--- a/VDTProcessManager.mm
++++ b/VDTProcessManager.mm
+@@ -11,10 +11,11 @@
+ #import "VDTPolicyTransition.h"
+ #import "VDTSpringBoardIdentity.h"
+ #import "VDTBundleIdentity.h"
+ #import "VDTBundleRules.h"
+ #import "VDTResourceApply.h"
++#import "VDTNiceShared.h"
+ 
+ #include <errno.h>
+ #include <limits.h>
+ #include <math.h>
+ #include <os/lock.h>
+@@ -189,10 +190,14 @@ NSString * const VDTTargetExecutablePathKey = @"executablePath";
+ NSString * const VDTTargetProcCommKey = @"procComm";
+ NSString * const VDTTargetStartSecondsKey = @"startSeconds";
+ NSString * const VDTTargetStartMicrosecondsKey = @"startMicroseconds";
+ NSString * const VDTTargetMemoryRuleKey = @"memoryRule";
+ NSString * const VDTTargetJetsamRuleKey = @"jetsamRule";
++NSString * const VDTTargetContainingAppIdentifierKey = @"containingAppIdentifier";
++NSString * const VDTTargetNiceSourceTypeKey = @"niceSourceType";
++NSString * const VDTTargetNiceSourceIdentifierKey = @"niceSourceIdentifier";
++NSString * const VDTTargetNiceSourceRevisionKey = @"niceSourceRevision";
+ 
+ static NSArray<NSDictionary *> *configs_from_section(NSDictionary *prefs,
+                                                      NSString *sectionKey,
+                                                      NSString *identifierKey,
+                                                      VDTConfigType type,
+@@ -201,10 +206,12 @@ static NSArray<NSDictionary *> *configs_from_section(NSDictionary *prefs,
+     NSArray *section = vdt_array(prefs[sectionKey]);
+ 
+     for (id rawEntry in section) {
+         NSDictionary *entry = vdt_dictionary(rawEntry);
+         if (!entry) continue;
++        // Nice-only/unknown-only rows must not suppress the containing App CPU rule.
++        if (type == VDTConfigTypeExtension && !VDTProcessConfigHasCPUFields(entry)) continue;
+ 
+         NSString *identifier = vdt_nonEmptyString(entry[identifierKey]);
+         if (!identifier) continue;
+ 
+         // The Settings app hosts the preference bundle itself; throttling it
+@@ -786,10 +793,107 @@ NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *>
+ 
+     NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs, resourceMaps);
+     return target ? @[target] : @[];
+ }
+ 
++#pragma mark - Independent nice target resolution
++
++static NSDictionary *nice_target_for_pid(pid_t pid, NSDictionary<NSString *, NSDictionary *> *rules){
++    if (pid <= 1 || !rules.count) return nil;
++    char pathBuffer[PROC_PIDPATHINFO_MAXSIZE];
++    NSString *path = executable_path_for_pid(pid, pathBuffer, sizeof(pathBuffer)) ?
++        [NSString stringWithUTF8String:pathBuffer] : nil;
++    VDTProcessInstanceToken token = {};
++    if (!process_instance_token_for_pid(pid, &token)) return nil;
++    NSString *extensionPath = VDTNearestBundlePath(path, @"appex");
++    if (!extensionPath && path) {
++        // A noncanonical/rejected appex ancestry is a blocker, not an App/daemon.
++        NSString *candidate = path.stringByDeletingLastPathComponent;
++        while (candidate.length > 1) {
++            if ([candidate.pathExtension caseInsensitiveCompare:@"appex"] == NSOrderedSame) return nil;
++            NSString *parent = candidate.stringByDeletingLastPathComponent;
++            if ([candidate isEqual:parent]) break;
++            candidate = parent;
++        }
++    }
++    NSDictionary *info = extensionPath ? VDTReadExtensionBundleInfo(extensionPath, path) : nil;
++    if (extensionPath && !info) return nil;
++    NSString *appPath = application_bundle_path_for_executable(extensionPath ?: path);
++    NSString *host = appPath ? vdt_nonEmptyString(appproxy_from_bundle_path(appPath).bundleIdentifier) : nil;
++    NSString *name = nil, *comm = nil;
++    VDTConfigType type = VDTConfigTypeDaemon;
++    NSDictionary *rule = nil;
++    if (extensionPath) {
++        type = VDTConfigTypeExtension; name = info[@"extensionIdentifier"];
++        if (!rules[VDTNiceRuleKey(type, name)] && !(host && rules[VDTNiceRuleKey(VDTConfigTypeApp, host)])) return nil;
++        rule = VDTNiceEffectiveRuleFromRules(name, type, host, rules);
++    } else if (VDTSpringBoardPathMatches(path.UTF8String) && rules[@"1:SpringBoard"]) {
++        name = @VDT_SPRINGBOARD_RULE_NAME;
++        rule = VDTNiceEffectiveRuleFromRules(name, type, nil, rules);
++    } else if (appPath) {
++        // Even an unconfigured App must not fall through to a same-name daemon.
++        type = VDTConfigTypeApp; name = host;
++        if (!name || !rules[VDTNiceRuleKey(type, name)]) return nil;
++        rule = VDTNiceEffectiveRuleFromRules(name, type, nil, rules);
++    } else {
++        char executableName[PROC_PIDPATHINFO_MAXSIZE], commBuffer[256];
++        BOOL hasName = path && VDTCopyLastPathComponent(path.UTF8String, executableName, sizeof(executableName));
++        if (!hasName && proc_comm_for_pid(pid, commBuffer, sizeof(commBuffer)))
++            comm = [NSString stringWithUTF8String:commBuffer];
++        if (!hasName && !comm.length) return nil;
++        for (NSDictionary *candidate in rules.allValues) {
++            if ([candidate[@"type"] unsignedIntegerValue] != VDTConfigTypeDaemon) continue;
++            const char *configured = [candidate[@"identifier"] UTF8String];
++            if (VDTSpringBoardRuleName(configured)) {
++                if (!VDTSpringBoardRuleMatches(configured, path.UTF8String)) continue;
++            } else if (!VDTProcessNameMatches(configured, hasName ? executableName : NULL, comm.UTF8String)) continue;
++            name = candidate[@"identifier"]; break;
++        }
++        if (!name) return nil;
++        rule = VDTNiceEffectiveRuleFromRules(name, type, nil, rules);
++    }
++    if (!rule || !VDTNiceRuleKey(type, name)) return nil;
++    NSMutableDictionary *target = [@{
++        VDTTargetPidKey: @(pid), VDTConfigTypeKey: @(type), VDTTargetNameKey: name,
++        VDTTargetStartSecondsKey: @(token.seconds), VDTTargetStartMicrosecondsKey: @(token.microseconds),
++        VDTTargetNiceSourceTypeKey: rule[@"sourceType"],
++        VDTTargetNiceSourceIdentifierKey: rule[@"sourceIdentifier"],
++        VDTTargetNiceSourceRevisionKey: rule[@"sourceRevision"]} mutableCopy];
++    if (path.length) target[VDTTargetExecutablePathKey] = path;
++    else if (comm.length && type == VDTConfigTypeDaemon) target[VDTTargetProcCommKey] = comm;
++    else return nil;
++    if (type == VDTConfigTypeExtension && host) target[VDTTargetContainingAppIdentifierKey] = host;
++    return target;
++}
++
++NSArray<NSDictionary *> *vdt_nice_targets_for_pid(pid_t pid, NSDictionary *prefs){
++    return vdt_nice_targets_for_pid_from_rules(pid, VDTNiceRulesFromPrefs(prefs));
++}
++NSArray<NSDictionary *> *vdt_nice_resolve_targets(NSDictionary *prefs){
++    return vdt_nice_resolve_targets_from_rules(VDTNiceRulesFromPrefs(prefs));
++}
++NSArray<NSDictionary *> *vdt_nice_targets_for_pid_from_rules(pid_t pid, NSDictionary *rules){
++    NSDictionary *target = nice_target_for_pid(pid, rules);
++    return target ? @[target] : @[];
++}
++NSArray<NSDictionary *> *vdt_nice_resolve_targets_from_rules(NSDictionary *rules){
++    if (!rules.count) return @[];
++    int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
++    if (bytes <= 0) return @[];
++    pid_t *pids = (pid_t *)malloc((size_t)bytes);
++    if (!pids) return @[];
++    int written = proc_listpids(PROC_ALL_PIDS, 0, pids, bytes);
++    NSMutableArray *targets = [NSMutableArray array];
++    if (written > bytes) written = bytes;
++    for (int i = 0; i < written / (int)sizeof(pid_t); ++i) {
++        NSDictionary *target = nice_target_for_pid(pids[i], rules);
++        if (target) [targets addObject:target];
++    }
++    free(pids);
++    return targets;
++}
++
+ #pragma mark - Monitor / throttle
+ 
+ static BOOL target_instance_token(NSDictionary *target, VDTProcessInstanceToken *outToken){
+     if (!outToken) return NO;
+ 
+diff --git a/VDTShared.h b/VDTShared.h
+index 013137d..94b5770 100644
+--- a/VDTShared.h
++++ b/VDTShared.h
+@@ -30,14 +30,19 @@ void setValueForKey(NSString *key, id value);
+ void setValueForKeyWithPrefs(NSString *key, id value, NSDictionary *prefs);
+ id valueForProcessConfigKey(NSString *identifier, NSString *key, id defaultValue, VDTConfigType type);
+ id valueForProcessConfigKeyWithPrefs(NSString *identifier, NSString *key, id defaultValue, VDTConfigType type, NSDictionary *prefs);
+ void setValueForProcessConfigKey(NSString *identifier, NSString *key, id value, VDTConfigType type);
+ void setValueForProcessConfigKeyWithPrefs(NSString *identifier, NSString *key, id value, VDTConfigType type, NSDictionary *prefs);
+-// Presence, not enabled state, determines whether an extension overrides its app.
++// CPU field presence is independent of nice fields (including invalid values).
++BOOL VDTProcessConfigHasCPUFields(NSDictionary *entry);
++// Extension presence means CPU fields, not merely an extensionConfigs record.
+ BOOL VDTHasProcessConfig(NSString *identifier, VDTConfigType type, NSDictionary *prefs);
+-// Removes all matching records. For an extension this restores host inheritance.
++// App/Daemon: removes records. Extension: clears only CPU fields on every
++// matching record, preserving nice/unknown fields and all resource sections.
+ void VDTRemoveProcessConfig(NSString *identifier, VDTConfigType type);
++// Extension CPU Follow reports atomic save failure; no notification on failure.
++BOOL VDTRemoveExtensionCPUConfigReportingResult(NSString *identifier);
+ 
+ // Independent per-resource rule storage. memoryRules / jetsamRules sections
+ // mirror appConfigs/daemonConfigs/extensionConfigs but never share a record
+ // with the CPU parameters; every record carries a schema marker.
+ id valueForProcessResourceRuleKey(NSString *identifier, NSString *key, id defaultValue, VDTConfigType type, NSString *sectionKey);
+diff --git a/VDTShared.mm b/VDTShared.mm
+index 13c6627..89df94b 100644
+--- a/VDTShared.mm
++++ b/VDTShared.mm
+@@ -90,13 +90,21 @@ id valueForProcessConfigKeyWithPrefs(NSString *identifier,
+ 
+     NSDictionary *source = prefs ? VDTValidatedPrefs(prefs) : VDTDictionaryFromFile(PREFS_PATH);
+     NSString *identifierKey = VDTConfigIdentifier(type);
+     NSString *sectionKey = VDTConfigSection(type);
+     if (!identifierKey || !sectionKey) return defaultValue;
++    BOOL cpuField = [@[@"enabled", @"percentage", @"interval", @"violationPolicy"] containsObject:key];
++    BOOL niceField = [@[@"niceEnabled", @"niceValue", @"niceRevision"] containsObject:key];
+     for (id rawConfig in VDTConfigArray(source[sectionKey])) {
+         if (![rawConfig isKindOfClass:[NSDictionary class]]) continue;
+         NSDictionary *config = rawConfig;
++        // First record with this family's intent wins, including disabled or
++        // malformed intent. A row containing only the other family must not
++        // hide a later independent rule for the same extension identifier.
++        if (type == VDTConfigTypeExtension &&
++            ((cpuField && !VDTProcessConfigHasCPUFields(config)) ||
++             (niceField && !config[@"niceEnabled"] && !config[@"niceValue"] && !config[@"niceRevision"]))) continue;
+         id configuredIdentifier = config[identifierKey];
+         if ([configuredIdentifier isKindOfClass:[NSString class]] &&
+             [configuredIdentifier isEqualToString:identifier]) {
+             return config[key] ?: defaultValue;
+         }
+@@ -121,22 +129,26 @@ void setValueForProcessConfigKeyWithPrefs(NSString *identifier,
+     NSDictionary *source = prefs ? VDTValidatedPrefs(prefs) : VDTDictionaryFromFile(PREFS_PATH);
+     NSString *sectionKey = VDTConfigSection(type);
+     NSString *identifierKey = VDTConfigIdentifier(type);
+     if (!identifierKey || !sectionKey) return;
+     NSMutableArray *configs = [VDTConfigArray(source[sectionKey]) mutableCopy];
+-    NSUInteger matchedIndex = NSNotFound;
++    NSUInteger matchedIndex = NSNotFound, firstMatch = NSNotFound;
++    BOOL cpuField = [@[@"enabled", @"percentage", @"interval", @"violationPolicy"] containsObject:key];
+ 
+     for (NSUInteger index = 0; index < configs.count; index++) {
+         id rawConfig = configs[index];
+         if (![rawConfig isKindOfClass:[NSDictionary class]]) continue;
+         id configuredIdentifier = ((NSDictionary *)rawConfig)[identifierKey];
+         if ([configuredIdentifier isKindOfClass:[NSString class]] &&
+             [configuredIdentifier isEqualToString:identifier]) {
++            if (firstMatch == NSNotFound) firstMatch = index;
++            if (type == VDTConfigTypeExtension && cpuField && !VDTProcessConfigHasCPUFields(rawConfig)) continue;
+             matchedIndex = index;
+             break;
+         }
+     }
++    if (matchedIndex == NSNotFound) matchedIndex = firstMatch;
+ 
+     if (matchedIndex != NSNotFound) {
+         NSMutableDictionary *config = [configs[matchedIndex] mutableCopy];
+         if (value) {
+             config[key] = value;
+@@ -153,25 +165,37 @@ void setValueForProcessConfigKeyWithPrefs(NSString *identifier,
+ 
+ void setValueForProcessConfigKey(NSString *identifier, NSString *key, id value, VDTConfigType type){
+     setValueForProcessConfigKeyWithPrefs(identifier, key, value, type, nil);
+ }
+ 
++BOOL VDTProcessConfigHasCPUFields(NSDictionary *entry){
++    if (![entry isKindOfClass:[NSDictionary class]]) return NO;
++    for (NSString *key in @[@"enabled", @"percentage", @"interval", @"violationPolicy"])
++        if (entry[key]) return YES;
++    return NO;
++}
++
+ BOOL VDTHasProcessConfig(NSString *identifier, VDTConfigType type, NSDictionary *prefs){
+     if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0) return NO;
+     NSString *sectionKey = VDTConfigSection(type);
+     NSString *identifierKey = VDTConfigIdentifier(type);
+     if (!sectionKey || !identifierKey) return NO;
+     NSDictionary *source = prefs ? VDTValidatedPrefs(prefs) : VDTDictionaryFromFile(PREFS_PATH);
+     for (id raw in VDTConfigArray(source[sectionKey])) {
+         if (![raw isKindOfClass:[NSDictionary class]]) continue;
+         id value = ((NSDictionary *)raw)[identifierKey];
+-        if ([value isKindOfClass:[NSString class]] && [value isEqualToString:identifier]) return YES;
++        if ([value isKindOfClass:[NSString class]] && [value isEqualToString:identifier] &&
++            (type != VDTConfigTypeExtension || VDTProcessConfigHasCPUFields(raw))) return YES;
+     }
+     return NO;
+ }
+ 
+ void VDTRemoveProcessConfig(NSString *identifier, VDTConfigType type){
++    if (type == VDTConfigTypeExtension) {
++        (void)VDTRemoveExtensionCPUConfigReportingResult(identifier);
++        return;
++    }
+     if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0) return;
+     NSString *sectionKey = VDTConfigSection(type);
+     NSString *identifierKey = VDTConfigIdentifier(type);
+     if (!sectionKey || !identifierKey) return;
+     NSDictionary *source = VDTDictionaryFromFile(PREFS_PATH);
+@@ -203,10 +227,36 @@ static BOOL VDTSavePrefsReportingResult(NSDictionary *candidate){
+                                          NULL,
+                                          YES);
+     return YES;
+ }
+ 
++BOOL VDTRemoveExtensionCPUConfigReportingResult(NSString *identifier){
++    if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0) return NO;
++    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:PREFS_PATH error:nil];
++    if (!attributes) return ![[NSFileManager defaultManager] fileExistsAtPath:PREFS_PATH];
++    if (![attributes[NSFileType] isEqual:NSFileTypeRegular]) return NO;
++    id loaded = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
++    if (![loaded isKindOfClass:[NSDictionary class]]) return NO;
++    id rawSection = loaded[@"extensionConfigs"];
++    if (rawSection && ![rawSection isKindOfClass:[NSArray class]]) return NO;
++    NSMutableArray *remaining = [NSMutableArray new];
++    BOOL removed = NO;
++    for (id raw in rawSection) {
++        if ([raw isKindOfClass:[NSDictionary class]] && [raw[@"extensionIdentifier"] isEqual:identifier]) {
++            NSMutableDictionary *entry = [raw mutableCopy];
++            removed = removed || VDTProcessConfigHasCPUFields(entry);
++            for (NSString *key in @[@"enabled", @"percentage", @"interval", @"violationPolicy"])
++                [entry removeObjectForKey:key];
++            if (entry.count > 1) [remaining addObject:entry];
++        } else [remaining addObject:raw];
++    }
++    if (!removed) return YES;
++    NSMutableDictionary *prefs = [loaded mutableCopy];
++    prefs[@"extensionConfigs"] = remaining;
++    return VDTSavePrefsReportingResult(prefs);
++}
++
+ id valueForProcessResourceRuleKeyWithPrefs(NSString *identifier,
+                                            NSString *key,
+                                            id defaultValue,
+                                            VDTConfigType type,
+                                            NSString *sectionKey,
+diff --git a/Vedette.xm b/Vedette.xm
+index 7907eab..a6f57e5 100644
+--- a/Vedette.xm
++++ b/Vedette.xm
+@@ -72,10 +72,11 @@ static NSMutableDictionary<NSString *, NSDictionary *> *managed_process_targets(
+ // This snapshot is confined to vedette_serial_queue. It contains only the
+ // validated configuration, never a PID-lifetime proof; target identity is
+ // still rechecked immediately before each policy syscall.
+ static NSArray<NSDictionary *> *normalized_configs_snapshot;
+ static NSArray<NSDictionary *> *normalized_resource_rules_snapshot;
++static NSDictionary<NSString *, NSDictionary *> *normalized_nice_rules_snapshot;
+ 
+ static NSArray<NSDictionary *> *current_normalized_configs_sync(void){
+     if (!normalized_configs_snapshot){
+         normalized_configs_snapshot = [vdt_configs_from_prefs(VDTGetPrefs()) copy];
+     }
+@@ -87,10 +88,17 @@ static NSArray<NSDictionary *> *current_normalized_resource_rules_sync(void){
+         normalized_resource_rules_snapshot = [vdt_resource_rules_from_prefs(VDTGetPrefs()) copy];
+     }
+     return normalized_resource_rules_snapshot;
+ }
+ 
++static NSDictionary<NSString *, NSDictionary *> *current_normalized_nice_rules_sync(void){
++    if (!normalized_nice_rules_snapshot){
++        normalized_nice_rules_snapshot = [VDTNiceRulesFromPrefs(VDTGetPrefs()) copy];
++    }
++    return normalized_nice_rules_snapshot;
++}
++
+ static NSString *target_instance_key(NSDictionary *target){
+     NSNumber *pid = [target[VDTTargetPidKey] isKindOfClass:[NSNumber class]] ? target[VDTTargetPidKey] : nil;
+     NSNumber *seconds = [target[VDTTargetStartSecondsKey] isKindOfClass:[NSNumber class]] ? target[VDTTargetStartSecondsKey] : nil;
+     NSNumber *microseconds = [target[VDTTargetStartMicrosecondsKey] isKindOfClass:[NSNumber class]] ? target[VDTTargetStartMicrosecondsKey] : nil;
+     NSString *identity = [target[VDTTargetExecutablePathKey] isKindOfClass:[NSString class]] ? target[VDTTargetExecutablePathKey] : nil;
+@@ -114,12 +122,11 @@ static BOOL target_has_enabled_policy(NSDictionary *target){
+     return value == VDTViolationPolicyMonitorAndTerminate ||
+         value == VDTViolationPolicyThrottle;
+ }
+ 
+ static void apply_launch_target_if_needed(NSDictionary *target){
+-    // Nice has independent success/retry tracking; CPU dedup must not hide it.
+-    vdt_nice_apply(target);
++    // CPU/resource dedup stays independent of the nice target pipeline.
+     NSString *instanceKey = target_instance_key(target);
+     if (!instanceKey || [tracked_process_instances() containsObject:instanceKey]) return;
+ 
+     // A newly launched disabled target starts from system defaults. If this
+     // instance was previously managed, however, explicitly retire that policy.
+@@ -197,17 +204,24 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
+             [tracked_process_instances() removeObject:instanceKey];
+         }
+     }
+ }
+ 
++static void apply_nice_targets_sync(NSArray<NSDictionary *> *targets){
++    // Never send these identity-only targets through vdt_apply_target: a
++    // nice-only rule must neither clear CPU limits nor replace CPU inheritance.
++    for (NSDictionary *target in targets) vdt_nice_apply(target);
++}
++
+ static void reconcile_unreported_processes_sync(){
+     NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
+     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, current_normalized_resource_rules_sync());
+     NSMutableSet<NSString *> *liveInstances = [NSMutableSet set];
+ 
+     retire_targets_without_active_config(configs);
+     vdt_nice_reconcile();
++    apply_nice_targets_sync(vdt_nice_resolve_targets_from_rules(current_normalized_nice_rules_sync()));
+     for (NSDictionary *target in targets) {
+         NSString *instanceKey = target_instance_key(target);
+         if (instanceKey) [liveInstances addObject:instanceKey];
+         apply_launch_target_if_needed(target);
+     }
+@@ -233,17 +247,19 @@ static void schedule_launch_catch_up_sync(){
+ }
+ 
+ static void handle_reported_pid_sync(pid_t pid){
+     NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
+     NSArray<NSDictionary *> *targets = vdt_targets_for_pid(pid, configs, current_normalized_resource_rules_sync());
++    NSArray<NSDictionary *> *niceTargets = vdt_nice_targets_for_pid_from_rules(pid, current_normalized_nice_rules_sync());
++    apply_nice_targets_sync(niceTargets);
+ 
+-    if (targets.count == 0) {
++    if (targets.count == 0 && niceTargets.count == 0) {
+         VDTProbeRecord(@"runningboardd.receivedNewProcSkipped", @{
+             @"pid": @(pid),
+             @"reason": @"notConfigured"
+         });
+-    } else {
++    } else if (targets.count) {
+         apply_launch_target_if_needed(targets.firstObject);
+     }
+     schedule_launch_catch_up_sync();
+ }
+ 
+@@ -253,21 +269,22 @@ static void reloadPrefsSync(){
+     NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);
+     NSArray<NSDictionary *> *resourceRules = vdt_resource_rules_from_prefs(newPrefs);
+     VDTSetPrefs(newPrefs);
+     normalized_configs_snapshot = [configs copy];
+     normalized_resource_rules_snapshot = [resourceRules copy];
++    normalized_nice_rules_snapshot = [VDTNiceRulesFromPrefs(newPrefs) copy];
+     vdt_nice_reload(newPrefs);
+ 
+     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, resourceRules);
+     HBLogDebug(@"Vedette configs: %@", configs);
+     HBLogDebug(@"Vedette targets: %@", targets);
+ 
+     retire_targets_without_active_config(configs);
+     vdt_nice_reconcile();
++    apply_nice_targets_sync(vdt_nice_resolve_targets_from_rules(current_normalized_nice_rules_sync()));
+     [tracked_process_instances() removeAllObjects];
+     for (NSDictionary *target in targets) {
+-        vdt_nice_apply(target);
+         NSString *instanceKey = target_instance_key(target);
+         if (!instanceKey) continue;
+ 
+         BOOL enabled = target_has_enabled_policy(target);
+         BOOL success = YES;
+@@ -292,12 +309,14 @@ static void reloadPrefs(){
+ 
+ static void restoreAllMonitors(){
+     dispatch_async(vedette_serial_queue(), ^{
+         // Nice restore follows the CURRENT saved settings, never a public
+         // notification alone. Its durable records do not depend on the CPU temp file.
+-        vdt_nice_reload(getPrefs());
++        NSDictionary *prefs = getPrefs();
++        vdt_nice_reload(prefs);
+         vdt_nice_reconcile();
++        apply_nice_targets_sync(vdt_nice_resolve_targets(prefs));
+         vdt_nice_publish();
+         // Force every entry from the uninstall snapshot to disabled, so each
+         // resolved target takes the restore path and hands the process back to
+         // the system. The previous implementation inferred app-vs-daemon from an
+         // index comparison that mis-typed daemon entries whenever both sections
+@@ -355,12 +374,11 @@ static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
+         nice_refresh_scheduled = YES;
+         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), vedette_serial_queue(), ^{
+             NSDictionary *prefs = getPrefs();
+             vdt_nice_reload(prefs);
+             vdt_nice_reconcile();
+-            for (NSDictionary *target in vdt_resolve_targets(vdt_configs_from_prefs(prefs),
+-                                                            vdt_resource_rules_from_prefs(prefs)))
++            for (NSDictionary *target in vdt_nice_resolve_targets(prefs))
+                 vdt_nice_apply(target);
+             vdt_nice_publish();
+             nice_refresh_scheduled = NO;
+         });
+     });
+diff --git a/ci/stage_release.py b/ci/stage_release.py
+index 0d1f328..12ca362 100644
+--- a/ci/stage_release.py
++++ b/ci/stage_release.py
+@@ -14,11 +14,11 @@ def stage_release(stage,scheme):
+     if stage==Path('/') or not (stage/'usr/libexec/vedette-nicectl').is_file():
+         raise ValueError('unexpected staging directory or missing control tool')
+     control=stage/'DEBIAN/control'
+     if not control.is_file() or control.is_symlink(): raise ValueError('missing/unsafe staged control')
+     text=control.read_text();fields=dict(line.split(':',1) for line in text.splitlines() if ':' in line)
+-    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.13-1+rc1':
++    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.13-2':
+         raise ValueError('wrong staged package/version')
+     if fields.get('Architecture','').strip()!=ARCH[scheme]: raise ValueError('staged scheme/architecture mismatch')
+     old='Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist'
+     if text.count(old)!=1: raise ValueError('unexpected dependency declaration')
+     if scheme=='rootless':
+diff --git a/control b/control
+index ffb89a4..211dfe8 100644
+--- a/control
++++ b/control
+@@ -1,8 +1,8 @@
+ Package: com.doimty.vedette
+ Name: Vedette
+-Version: 1.1.13-1+rc1
++Version: 1.1.13-2
+ Architecture: iphoneos-arm
+ Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级
+ Conflicts: com.udevs.vedette
+ Replaces: com.udevs.vedette
+ Maintainer: doimty
+diff --git a/vedetteprefs/Resources/en.lproj/Localizable.strings b/vedetteprefs/Resources/en.lproj/Localizable.strings
+index 2ef0acf..54dba76 100644
+--- a/vedetteprefs/Resources/en.lproj/Localizable.strings
++++ b/vedetteprefs/Resources/en.lproj/Localizable.strings
+@@ -124,7 +124,19 @@
+ "Reclaim priority" = "Reclaim priority";
+ "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB." = "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.";
+ "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.";
+ "Invalid resource rule" = "Invalid resource rule";
+ "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value." = "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value.";
++"CPU rule save failed" = "CPU rule save failed";
+ "Resource rule save failed" = "Resource rule save failed";
+ "The rule could not be saved. The previous saved value has been restored." = "The rule could not be saved. The previous saved value has been restored.";
++"Independent configurations enabled" = "Independent configurations enabled";
++"CPU follows app; independent rules enabled" = "CPU follows app; independent rules enabled";
++"CPU follows app; independent rules off" = "CPU follows app; independent rules off";
++"Follow containing app CPU" = "Follow containing app CPU";
++"Without its own CPU fields, this extension follows its app's CPU rule. Saving CPU settings creates a CPU override; a disabled CPU override removes Vedette CPU limits. Nice and resource rules stay independent." = "Without its own CPU fields, this extension follows its app's CPU rule. Saving CPU settings creates a CPU override; a disabled CPU override removes Vedette CPU limits. Nice and resource rules stay independent.";
++"Remove only this extension's CPU settings and follow its app? Nice, memory and Jetsam rules will be kept." = "Remove only this extension's CPU settings and follow its app? Nice, memory and Jetsam rules will be kept.";
++"Independent nice rule" = "Independent nice rule";
++"Nice follows containing app" = "Nice follows containing app";
++"Follow containing app nice" = "Follow containing app nice";
++"Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged." = "Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged.";
++"Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept." = "Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept.";
+diff --git a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
+index ed4be14..5afcace 100644
+--- a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
++++ b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
+@@ -124,7 +124,19 @@
+ "Reclaim priority" = "回收优先级";
+ "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB." = "保存的内存规则与生效状态分开显示：当前版本仅保存。0 = 系统默认、-1 = 不限制、正数 = MiB。";
+ "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "保存的回收优先级规则与生效状态分开显示：当前版本仅保存。档位因系统版本而异；0 = idle、-1 会实际写入默认档。";
+ "Invalid resource rule" = "资源规则无效";
+ "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value." = "内存请输入 -1 至 2147483647 的整数，优先级档位请输入有符号 32 位 raw 整数。开关仅接受布尔值。";
++"CPU rule save failed" = "CPU 规则保存失败";
+ "Resource rule save failed" = "资源规则保存失败";
+ "The rule could not be saved. The previous saved value has been restored." = "无法保存此规则，已恢复显示之前保存的值。";
++"Independent configurations enabled" = "独立规则已开启";
++"CPU follows app; independent rules enabled" = "CPU 跟随 App；其他规则已开";
++"CPU follows app; independent rules off" = "CPU 跟随 App；其他规则已关";
++"Follow containing app CPU" = "CPU 跟随所属 App";
++"Without its own CPU fields, this extension follows its app's CPU rule. Saving CPU settings creates a CPU override; a disabled CPU override removes Vedette CPU limits. Nice and resource rules stay independent." = "没有自己的 CPU 字段时，跟随所属 App 的 CPU 规则。保存 CPU 设置后改用独立 CPU 规则；关闭独立 CPU 开关后不再限制此扩展的 CPU。nice 和资源规则不受影响。";
++"Remove only this extension's CPU settings and follow its app? Nice, memory and Jetsam rules will be kept." = "仅删除此扩展的 CPU 设置并恢复跟随所属 App？nice、内存和 Jetsam 规则将保留。";
++"Independent nice rule" = "独立 nice 规则";
++"Nice follows containing app" = "nice 跟随所属 App";
++"Follow containing app nice" = "nice 跟随所属 App";
++"Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged." = "没有自己的 nice 字段时，跟随所属 App 的 nice 规则。保存开关或数值后创建独立 nice 规则；CPU 和资源规则不受影响。";
++"Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept." = "仅删除此扩展的 nice 设置并恢复跟随所属 App？CPU、内存和 Jetsam 规则将保留。";
+diff --git a/vedetteprefs/VDTExtensionListController.m b/vedetteprefs/VDTExtensionListController.m
+index 6aca7c1..1679627 100644
+--- a/vedetteprefs/VDTExtensionListController.m
++++ b/vedetteprefs/VDTExtensionListController.m
+@@ -114,10 +114,11 @@ static NSArray<NSDictionary *> *extension_records(void) {
+                 target:self set:nil get:@selector(previewStringForSpecifier:)
+                 detail:VDTProcessConfiguration.class cell:PSLinkListCell edit:nil];
+             [row setProperty:record[@"extensionIdentifier"] forKey:@"extensionIdentifier"];
+             [row setProperty:record[@"containingAppName"] forKey:@"containingAppName"];
+             [row setProperty:record[@"containingAppIdentifier"] forKey:@"containingAppIdentifier"];
++            [row setProperty:record forKey:@"vdtExtensionMetadata"];
+             [row setProperty:@(VDTConfigTypeExtension) forKey:@"configurationType"];
+             [row setProperty:VDTSettingsSymbol(@"puzzlepiece.extension") forKey:@"iconImage"];
+             [rows addObject:row];
+         }
+         NSString *query = self.extensionQuery ?: @"";
+@@ -131,15 +132,12 @@ static NSArray<NSDictionary *> *extension_records(void) {
+     return _specifiers;
+ }
+ 
+ - (id)previewStringForSpecifier:(PSSpecifier *)specifier {
+     NSString *identifier = [specifier propertyForKey:@"extensionIdentifier"];
+-    NSDictionary *prefs = getPrefs();
+-    if (!VDTHasProcessConfig(identifier, VDTConfigTypeExtension, prefs))
+-        return VDTLoc(self.class, @"Follow containing app");
+-    return VDTLoc(self.class, VDTListConfigurationEnabled(identifier, VDTConfigTypeExtension, prefs)
+-        ? @"Configuration enabled" : @"Independent rule off");
++    NSDictionary *prefs = [specifier propertyForKey:@"vdtListPrefsSnapshot"] ?: getPrefs();
++    return VDTLoc(self.class, VDTListExtensionSubtitleKey(identifier, prefs));
+ }
+ 
+ - (void)reloadExtensionRule:(NSString *)identifier {
+     (void)identifier;
+     [self reloadSpecifiers];
+diff --git a/vedetteprefs/VDTListPresentation.h b/vedetteprefs/VDTListPresentation.h
+index 0fdd20b..f72b690 100644
+--- a/vedetteprefs/VDTListPresentation.h
++++ b/vedetteprefs/VDTListPresentation.h
+@@ -2,13 +2,16 @@
+ // SPDX-License-Identifier: MIT
+ 
+ #import <Preferences/PSSpecifier.h>
+ #import "../VDTShared.h"
+ 
+-// Invalid/missing values are off. Uses the same first matching configuration and
+-// original identity keys as the detail controller. Never consults the main switch.
++// Same snapshot for CPU || nice || memory || jetsam. Nice/resource switches
++// require CFBoolean; CPU retains legacy NSNumber/NSString boolValue semantics.
++// Never consults the global switch, inherited rules, or runtime receipts.
+ BOOL VDTListConfigurationEnabled(NSString *identifier, VDTConfigType type, NSDictionary *prefs);
++// Localization key only; distinguishes CPU inheritance from independent rules.
++NSString *VDTListExtensionSubtitleKey(NSString *identifier, NSDictionary *prefs);
+ 
+ // Does not modify the source array (in particular AltList's _allSpecifiers cache).
+ // A nil predicate means the source has already been filtered by AltList.
+ NSMutableArray<PSSpecifier *> *VDTGroupedListSpecifiers(
+     NSArray<PSSpecifier *> *source, NSString *identityKey, VDTConfigType type,
+diff --git a/vedetteprefs/VDTListPresentation.m b/vedetteprefs/VDTListPresentation.m
+index 774d525..f1cae50 100644
+--- a/vedetteprefs/VDTListPresentation.m
++++ b/vedetteprefs/VDTListPresentation.m
+@@ -5,21 +5,48 @@
+ #import "VDTListOrder.h"
+ #import "VDTLocalization.h"
+ #import "../VDTNiceShared.h"
+ #import <CoreFoundation/CoreFoundation.h>
+ 
++static BOOL VDTListStrictEnabled(id value) {
++    return [value isKindOfClass:[NSNumber class]]
++        && CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()
++        && CFBooleanGetValue((__bridge CFBooleanRef)value);
++}
++
+ BOOL VDTListConfigurationEnabled(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
+-    id value = valueForProcessConfigKeyWithPrefs(identifier, @"enabled", nil, type, prefs);
++    if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0 ||
++        (type != VDTConfigTypeApp && type != VDTConfigTypeDaemon && type != VDTConfigTypeExtension)) return NO;
++    // Even a caller without a snapshot must not mix four disk generations.
++    NSDictionary *snapshot = prefs ?: getPrefs();
++    id value = valueForProcessConfigKeyWithPrefs(identifier, @"enabled", nil, type, snapshot);
+     // Preserve the legacy CPU switch's NSNumber/NSString boolValue semantics.
+     BOOL cpuEnabled = ([value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[NSString class]])
+         ? [value boolValue] : NO;
+-    // Nice is intentionally stricter: only an actual CFBoolean true enables pinning.
+-    id niceValue = valueForProcessConfigKeyWithPrefs(identifier, VDT_NICE_ENABLED_KEY, @NO, type, prefs);
+-    BOOL niceEnabled = [niceValue isKindOfClass:[NSNumber class]]
+-        && CFGetTypeID((__bridge CFTypeRef)niceValue) == CFBooleanGetTypeID()
+-        && CFBooleanGetValue((__bridge CFBooleanRef)niceValue);
+-    return cpuEnabled || niceEnabled;
++    // These are independent saved switches, not inherited or applied state.
++    BOOL niceEnabled = VDTListStrictEnabled(valueForProcessConfigKeyWithPrefs(
++        identifier, VDT_NICE_ENABLED_KEY, @NO, type, snapshot));
++    BOOL memoryEnabled = VDTListStrictEnabled(valueForProcessResourceRuleKeyWithPrefs(
++        identifier, @"enabled", @NO, type, @"memoryRules", snapshot));
++    BOOL jetsamEnabled = VDTListStrictEnabled(valueForProcessResourceRuleKeyWithPrefs(
++        identifier, @"enabled", @NO, type, @"jetsamRules", snapshot));
++    return cpuEnabled || niceEnabled || memoryEnabled || jetsamEnabled;
++}
++
++NSString *VDTListExtensionSubtitleKey(NSString *identifier, NSDictionary *prefs) {
++    NSDictionary *snapshot = prefs ?: getPrefs();
++    BOOL cpuOwn = VDTHasProcessConfig(identifier, VDTConfigTypeExtension, snapshot);
++    BOOL enabled = VDTListConfigurationEnabled(identifier, VDTConfigTypeExtension, snapshot);
++    if (enabled) return cpuOwn ? @"Independent configurations enabled"
++        : @"CPU follows app; independent rules enabled";
++    BOOL otherOwn = VDTHasProcessResourceRule(identifier, VDTConfigTypeExtension, @"memoryRules", snapshot)
++        || VDTHasProcessResourceRule(identifier, VDTConfigTypeExtension, @"jetsamRules", snapshot);
++    for (NSString *key in @[VDT_NICE_ENABLED_KEY, VDT_NICE_VALUE_KEY, VDT_NICE_REVISION_KEY]) {
++        if (valueForProcessConfigKeyWithPrefs(identifier, key, nil, VDTConfigTypeExtension, snapshot)) otherOwn = YES;
++    }
++    if (!cpuOwn && otherOwn) return @"CPU follows app; independent rules off";
++    return cpuOwn ? @"Independent rule off" : @"Follow containing app";
+ }
+ 
+ static int VDTCompareListNames(size_t left, size_t right, void *context) {
+     NSArray<PSSpecifier *> *rows = (__bridge NSArray *)context;
+     NSString *leftName = rows[left].name ?: @"";
+@@ -45,10 +72,11 @@ NSMutableArray<PSSpecifier *> *VDTGroupedListSpecifiers(
+     VDTListOrderItem *items = itemsData.mutableBytes;
+     size_t *order = orderData.mutableBytes;
+     for (NSUInteger index = 0; index < rows.count; ++index) {
+         PSSpecifier *specifier = rows[index];
+         NSString *identifier = [specifier propertyForKey:identityKey];
++        [specifier setProperty:prefs forKey:@"vdtListPrefsSnapshot"];
+         items[index] = (VDTListOrderItem){identifier.UTF8String,
+             VDTListConfigurationEnabled(identifier, type, prefs),
+             matchesSearch ? matchesSearch(specifier) : YES};
+     }
+     size_t enabledCount = 0;
+diff --git a/vedetteprefs/VDTNicePreferences.h b/vedetteprefs/VDTNicePreferences.h
+index b0678e1..ce0e89d 100644
+--- a/vedetteprefs/VDTNicePreferences.h
++++ b/vedetteprefs/VDTNicePreferences.h
+@@ -3,10 +3,14 @@
+ #import "../VDTShared.h"
+ 
+ @class VDTProcessConfiguration;
+ @class VDTNiceValueListController;
+ 
++// Reads only this snapshot and cached verified list metadata; never scans bundles.
++id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSString *key,
++    id fallback, NSDictionary *prefs, NSDictionary *extensionMetadata);
++
+ @interface VDTNicePreferences : NSObject
+ - (instancetype)initWithOwner:(VDTProcessConfiguration *)owner;
+ - (NSArray<PSSpecifier *> *)specifiers;
+ - (id)readPreferenceValue:(PSSpecifier *)specifier;
+ - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
+diff --git a/vedetteprefs/VDTNicePreferences.m b/vedetteprefs/VDTNicePreferences.m
+index 82a212b..bc5f38e 100644
+--- a/vedetteprefs/VDTNicePreferences.m
++++ b/vedetteprefs/VDTNicePreferences.m
+@@ -5,15 +5,39 @@
+ #import "VDTLocalization.h"
+ #import "../Common.h"
+ #import <notify.h>
+ #import <CoreFoundation/CoreFoundation.h>
+ 
++// Metadata is populated only by the list's verified background enumeration.
++static NSString *VDTNiceContainingAppIdentifier(NSString *identifier, NSDictionary *metadata) {
++    if (![metadata isKindOfClass:[NSDictionary class]] ||
++        ![identifier isKindOfClass:[NSString class]] || identifier.length == 0 ||
++        ![metadata[@"extensionIdentifier"] isEqual:identifier]) return nil;
++    id host = metadata[@"containingAppIdentifier"];
++    return [host isKindOfClass:[NSString class]] && [host length] > 0 ? host : nil;
++}
++
++id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSString *key,
++    id fallback, NSDictionary *prefs, NSDictionary *extensionMetadata) {
++    if (![key isEqualToString:VDT_NICE_ENABLED_KEY] && ![key isEqualToString:VDT_NICE_VALUE_KEY]) return fallback;
++    NSDictionary *snapshot = prefs ?: getPrefs();
++    NSString *host = VDTNiceContainingAppIdentifier(identifier, extensionMetadata);
++    // Use the same field-presence, duplicate and source rules as execution;
++    // requestedEnabled is saved state and deliberately excludes the global switch.
++    NSDictionary *rule = VDTNiceEffectiveRule(identifier, type, host, snapshot);
++    NSString *field = [key isEqualToString:VDT_NICE_ENABLED_KEY] ? @"requestedEnabled" : @"value";
++    return rule[field] ?: fallback;
++}
++
+ @interface VDTNicePreferences () {
+     __weak VDTProcessConfiguration *_owner;
+     NSMutableArray<PSSpecifier *> *_specifiers;
+     PSSpecifier *_statusSpecifier;
+     PSSpecifier *_enabledSpecifier;
++    PSSpecifier *_valueSpecifier;
++    PSSpecifier *_inheritanceSpecifier;
++    PSSpecifier *_followSpecifier;
+     NSString *_statusText;
+     int _notifyToken;
+     BOOL _observerRegistered;
+     BOOL _buildingSpecifiers;
+ }
+@@ -73,11 +97,12 @@
+         && CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()
+         && CFBooleanGetValue((__bridge CFBooleanRef)value);
+ }
+ 
+ - (BOOL)storedNiceEnabled {
+-    id value = valueForProcessConfigKey(self.identifier, VDT_NICE_ENABLED_KEY, @NO, self.configurationType);
++    id value = VDTNicePreferenceValueWithPrefs(self.identifier, self.configurationType,
++        VDT_NICE_ENABLED_KEY, @NO, getPrefs(), [_owner.specifier propertyForKey:@"vdtExtensionMetadata"]);
+     return [self isEnabledValue:value];
+ }
+ 
+ - (void)updateProtectedSwitchAvailability {
+     if (!_enabledSpecifier) return;
+@@ -118,12 +143,25 @@
+         }
+         [value setValues:values titles:titles];
+         [value setProperty:@0 forKey:@"default"];
+         [value setProperty:VDT_NICE_VALUE_KEY forKey:@"key"];
+         [value setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
++        _valueSpecifier = value;
+         [_specifiers addObject:value];
+ 
++        if (self.configurationType == VDTConfigTypeExtension) {
++            _inheritanceSpecifier = [PSSpecifier emptyGroupSpecifier];
++            [_inheritanceSpecifier setProperty:VDTLoc(self.class,
++                @"Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged.") forKey:@"footerText"];
++            [_specifiers addObject:_inheritanceSpecifier];
++            _followSpecifier = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app nice")
++                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
++            [_followSpecifier setButtonAction:@selector(confirmFollowContainingAppNice)];
++            [_specifiers addObject:_followSpecifier];
++            [self updateInheritancePresentation];
++        }
++
+         PSSpecifier *statusGroup = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Nice execution status")
+             target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+         [statusGroup setProperty:_statusText forKey:@"footerText"];
+         _statusSpecifier = statusGroup;
+         [_specifiers addObject:statusGroup];
+@@ -137,16 +175,58 @@
+         _buildingSpecifiers = NO;
+     }
+     return _specifiers;
+ }
+ 
++- (void)updateInheritancePresentation {
++    if (!_inheritanceSpecifier) return;
++    BOOL own = VDTNiceHasIndependentRule(self.identifier, self.configurationType, getPrefs());
++    _inheritanceSpecifier.name = VDTLoc(self.class, own ? @"Independent nice rule" : @"Nice follows containing app");
++    [_followSpecifier setProperty:@(own) forKey:@"enabled"];
++    if (!_buildingSpecifiers) {
++        [_owner reloadSpecifier:_inheritanceSpecifier animated:NO];
++        [_owner reloadSpecifier:_followSpecifier animated:NO];
++    }
++}
++
++- (void)confirmFollowContainingAppNice {
++    if (self.configurationType != VDTConfigTypeExtension) return;
++    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app nice")
++        message:VDTLoc(self.class, @"Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept.")
++        preferredStyle:UIAlertControllerStyleAlert];
++    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel")
++        style:UIAlertActionStyleCancel handler:nil]];
++    __weak VDTNicePreferences *weakSelf = self;
++    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app nice")
++        style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
++            [weakSelf removeIndependentNiceRule];
++        }]];
++    [_owner presentViewController:alert animated:YES completion:nil];
++}
++
++- (void)removeIndependentNiceRule {
++    if (self.configurationType != VDTConfigTypeExtension) return;
++    NSError *error = nil;
++    BOOL saved = VDTNiceRemoveIndependentRule(self.identifier, self.configurationType, &error);
++    if (!saved) [self presentSaveError:error];
++    [self updateInheritancePresentation];
++    [self updateProtectedSwitchAvailability];
++    [_owner reloadSpecifier:_enabledSpecifier animated:NO];
++    [_owner reloadSpecifier:_valueSpecifier animated:NO];
++    if (saved) {
++        [self setPendingStatusAndReload];
++        [_owner vdtReloadIndependentRules];
++    }
++}
++
+ - (id)readPreferenceValue:(PSSpecifier *)specifier {
+     NSString *key = [specifier propertyForKey:@"key"];
+     id fallback = [specifier propertyForKey:@"default"];
+     if (![key isEqualToString:VDT_NICE_ENABLED_KEY] && ![key isEqualToString:VDT_NICE_VALUE_KEY])
+         return fallback;
+-    id value = valueForProcessConfigKey(self.identifier, key, fallback, self.configurationType);
++    id value = VDTNicePreferenceValueWithPrefs(self.identifier, self.configurationType,
++        key, fallback, getPrefs(), [_owner.specifier propertyForKey:@"vdtExtensionMetadata"]);
+     if ([key isEqualToString:VDT_NICE_ENABLED_KEY]) return @([self isEnabledValue:value]);
+     int parsed = 0;
+     return VDTNiceParseValue(value, &parsed) ? @(parsed) : @0;
+ }
+ 
+@@ -199,11 +279,14 @@
+         [_owner reloadSpecifier:specifier animated:YES];
+         return;
+     }
+     // A save is only a request. Do not turn this into an applied-success claim.
+     [self setPendingStatusAndReload];
++    [self updateInheritancePresentation];
++    [self updateProtectedSwitchAvailability];
+     [_owner reloadSpecifier:specifier animated:NO];
++    [_owner vdtReloadIndependentRules];
+ }
+ 
+ - (void)presentSaveError:(NSError *)error {
+     NSString *reason = error.localizedDescription.length ? error.localizedDescription
+         : VDTLoc(self.class, @"The preference could not be saved.");
+@@ -247,11 +330,15 @@
+     return key ? VDTLoc(self.class, key) : VDTLoc(self.class, @"Nice state unavailable");
+ }
+ 
+ - (void)refreshMatchingStatus {
+     if (!_owner) return;
+-    NSDictionary *receipt = VDTNiceMatchingStatus(self.identifier, self.configurationType, getPrefs());
++    NSDictionary *prefs = getPrefs();
++    NSString *host = VDTNiceContainingAppIdentifier(self.identifier, [_owner.specifier propertyForKey:@"vdtExtensionMetadata"]);
++    NSDictionary *receipt = VDTNiceMatchingStatusWithHost(self.identifier, self.configurationType, host, prefs);
++    [self updateInheritancePresentation];
++    [self updateProtectedSwitchAvailability];
+     if (![receipt isKindOfClass:[NSDictionary class]]) {
+         _statusText = VDTLoc(self.class, @"Waiting for execution result");
+     } else {
+         NSMutableArray<NSString *> *details = [NSMutableArray array];
+         id original = receipt[@"original"];
+diff --git a/vedetteprefs/VDTProcessConfiguration.h b/vedetteprefs/VDTProcessConfiguration.h
+index a3e969f..38408a1 100644
+--- a/vedetteprefs/VDTProcessConfiguration.h
++++ b/vedetteprefs/VDTProcessConfiguration.h
+@@ -19,6 +19,7 @@
+ - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier *)specifier;
+ - (id)readProcessConfigValue:(PSSpecifier *)specifier;
+ - (NSString *)vdtNiceIdentifier;
+ - (VDTConfigType)vdtNiceConfigurationType;
+ - (VDTNicePreferences *)vdtNicePreferences;
++- (void)vdtReloadIndependentRules;
+ @end
+diff --git a/vedetteprefs/VDTProcessConfiguration.m b/vedetteprefs/VDTProcessConfiguration.m
+index aa04ade..30414aa 100644
+--- a/vedetteprefs/VDTProcessConfiguration.m
++++ b/vedetteprefs/VDTProcessConfiguration.m
+@@ -222,19 +222,20 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+         [intervalSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
+         _intervalSpecifier = intervalSpec;
+         [rootSpecifiers addObject:intervalSpec];
+ 
+         // Keep the nice controls independent from the legacy CPU rule editor.
+-        if ([self configurationType] == VDTConfigTypeApp || [self configurationType] == VDTConfigTypeDaemon) {
++        if ([self configurationType] == VDTConfigTypeApp || [self configurationType] == VDTConfigTypeDaemon ||
++            [self configurationType] == VDTConfigTypeExtension) {
+             [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];
+         }
+         if ([self configurationType] == VDTConfigTypeExtension) {
+             PSSpecifier *inheritanceGroup = [PSSpecifier emptyGroupSpecifier];
+             [inheritanceGroup setProperty:VDTLoc(self.class,
+-                @"Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension.") forKey:@"footerText"];
++                @"Without its own CPU fields, this extension follows its app's CPU rule. Saving CPU settings creates a CPU override; a disabled CPU override removes Vedette CPU limits. Nice and resource rules stay independent.") forKey:@"footerText"];
+             [rootSpecifiers addObject:inheritanceGroup];
+-            PSSpecifier *inheritance = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app")
++            PSSpecifier *inheritance = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app CPU")
+                 target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+             [inheritance setButtonAction:@selector(confirmFollowContainingApp)];
+             [rootSpecifiers addObject:inheritance];
+         }
+ 
+@@ -295,21 +296,27 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+     return _specifiers;
+ }
+ 
+ - (void)confirmFollowContainingApp {
+     if ([self configurationType] != VDTConfigTypeExtension) return;
+-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app")
+-        message:VDTLoc(self.class, @"Remove this extension's independent rule and use its containing app's rule?")
++    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app CPU")
++        message:VDTLoc(self.class, @"Remove only this extension's CPU settings and follow its app? Nice, memory and Jetsam rules will be kept.")
+         preferredStyle:UIAlertControllerStyleAlert];
+     [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel")
+         style:UIAlertActionStyleCancel handler:nil]];
+     __weak typeof(self) weakSelf = self;
+-    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app")
++    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app CPU")
+         style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+             VDTProcessConfiguration *owner = weakSelf;
+             if (!owner) return;
+-            VDTRemoveProcessConfig([owner validIdentifier], VDTConfigTypeExtension);
++            BOOL saved = VDTRemoveExtensionCPUConfigReportingResult([owner validIdentifier]);
++            if (!saved) {
++                [owner reloadSpecifiers];
++                [owner presentResourceRuleError:VDTLoc(owner.class, @"CPU rule save failed")
++                    message:VDTLoc(owner.class, @"The rule could not be saved. The previous saved value has been restored.")];
++                return;
++            }
+             UIViewController *parent = (UIViewController *)[owner valueForKey:@"_parentController"];
+             if ([parent isKindOfClass:VDTExtensionListController.class])
+                 [(VDTExtensionListController *)parent reloadExtensionRule:[owner validIdentifier]];
+             [owner reloadSpecifiers];
+         }]];
+@@ -322,10 +329,18 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+     [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"OK")
+         style:UIAlertActionStyleDefault handler:nil]];
+     [self presentViewController:alert animated:YES completion:nil];
+ }
+ 
++- (void)vdtReloadIndependentRules {
++    // Every list rebuilds from a fresh saved snapshot; do not reuse a selected
++    // index path after a switch moves the row between enabled/other groups.
++    id parent = [self valueForKey:@"_parentController"];
++    if ([parent respondsToSelector:@selector(reloadSpecifiers)])
++        [(PSListController *)parent reloadSpecifiers];
++}
++
+ - (void)setResourceRuleValue:(id)value specifier:(PSSpecifier*)specifier{
+     NSString *key = [specifier propertyForKey:@"key"];
+     NSString *section = [specifier propertyForKey:@"vdtRuleSection"];
+     NSNumber *parsed = VDTResourceRuleInput(value, key, section);
+     if (!parsed) {
+@@ -339,10 +354,12 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+     // displayed, post our own notification, or claim the saved rule was applied.
+     [self reloadSpecifier:specifier animated:NO];
+     if (!saved) {
+         [self presentResourceRuleError:VDTLoc(self.class, @"Resource rule save failed")
+             message:VDTLoc(self.class, @"The rule could not be saved. The previous saved value has been restored.")];
++    } else {
++        [self vdtReloadIndependentRules];
+     }
+ }
+ 
+ - (id)readResourceRuleValue:(PSSpecifier*)specifier{
+     NSString *key = [specifier propertyForKey:@"key"];

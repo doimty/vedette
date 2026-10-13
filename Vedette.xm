@@ -74,6 +74,7 @@ static NSMutableDictionary<NSString *, NSDictionary *> *managed_process_targets(
 // still rechecked immediately before each policy syscall.
 static NSArray<NSDictionary *> *normalized_configs_snapshot;
 static NSArray<NSDictionary *> *normalized_resource_rules_snapshot;
+static NSDictionary<NSString *, NSDictionary *> *normalized_nice_rules_snapshot;
 
 static NSArray<NSDictionary *> *current_normalized_configs_sync(void){
     if (!normalized_configs_snapshot){
@@ -87,6 +88,13 @@ static NSArray<NSDictionary *> *current_normalized_resource_rules_sync(void){
         normalized_resource_rules_snapshot = [vdt_resource_rules_from_prefs(VDTGetPrefs()) copy];
     }
     return normalized_resource_rules_snapshot;
+}
+
+static NSDictionary<NSString *, NSDictionary *> *current_normalized_nice_rules_sync(void){
+    if (!normalized_nice_rules_snapshot){
+        normalized_nice_rules_snapshot = [VDTNiceRulesFromPrefs(VDTGetPrefs()) copy];
+    }
+    return normalized_nice_rules_snapshot;
 }
 
 static NSString *target_instance_key(NSDictionary *target){
@@ -116,8 +124,7 @@ static BOOL target_has_enabled_policy(NSDictionary *target){
 }
 
 static void apply_launch_target_if_needed(NSDictionary *target){
-    // Nice has independent success/retry tracking; CPU dedup must not hide it.
-    vdt_nice_apply(target);
+    // CPU/resource dedup stays independent of the nice target pipeline.
     NSString *instanceKey = target_instance_key(target);
     if (!instanceKey || [tracked_process_instances() containsObject:instanceKey]) return;
 
@@ -199,6 +206,12 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
     }
 }
 
+static void apply_nice_targets_sync(NSArray<NSDictionary *> *targets){
+    // Never send these identity-only targets through vdt_apply_target: a
+    // nice-only rule must neither clear CPU limits nor replace CPU inheritance.
+    for (NSDictionary *target in targets) vdt_nice_apply(target);
+}
+
 static void reconcile_unreported_processes_sync(){
     NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, current_normalized_resource_rules_sync());
@@ -206,6 +219,7 @@ static void reconcile_unreported_processes_sync(){
 
     retire_targets_without_active_config(configs);
     vdt_nice_reconcile();
+    apply_nice_targets_sync(vdt_nice_resolve_targets_from_rules(current_normalized_nice_rules_sync()));
     for (NSDictionary *target in targets) {
         NSString *instanceKey = target_instance_key(target);
         if (instanceKey) [liveInstances addObject:instanceKey];
@@ -235,13 +249,15 @@ static void schedule_launch_catch_up_sync(){
 static void handle_reported_pid_sync(pid_t pid){
     NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
     NSArray<NSDictionary *> *targets = vdt_targets_for_pid(pid, configs, current_normalized_resource_rules_sync());
+    NSArray<NSDictionary *> *niceTargets = vdt_nice_targets_for_pid_from_rules(pid, current_normalized_nice_rules_sync());
+    apply_nice_targets_sync(niceTargets);
 
-    if (targets.count == 0) {
+    if (targets.count == 0 && niceTargets.count == 0) {
         VDTProbeRecord(@"runningboardd.receivedNewProcSkipped", @{
             @"pid": @(pid),
             @"reason": @"notConfigured"
         });
-    } else {
+    } else if (targets.count) {
         apply_launch_target_if_needed(targets.firstObject);
     }
     schedule_launch_catch_up_sync();
@@ -255,6 +271,7 @@ static void reloadPrefsSync(){
     VDTSetPrefs(newPrefs);
     normalized_configs_snapshot = [configs copy];
     normalized_resource_rules_snapshot = [resourceRules copy];
+    normalized_nice_rules_snapshot = [VDTNiceRulesFromPrefs(newPrefs) copy];
     vdt_nice_reload(newPrefs);
 
     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, resourceRules);
@@ -263,9 +280,9 @@ static void reloadPrefsSync(){
 
     retire_targets_without_active_config(configs);
     vdt_nice_reconcile();
+    apply_nice_targets_sync(vdt_nice_resolve_targets_from_rules(current_normalized_nice_rules_sync()));
     [tracked_process_instances() removeAllObjects];
     for (NSDictionary *target in targets) {
-        vdt_nice_apply(target);
         NSString *instanceKey = target_instance_key(target);
         if (!instanceKey) continue;
 
@@ -294,8 +311,10 @@ static void restoreAllMonitors(){
     dispatch_async(vedette_serial_queue(), ^{
         // Nice restore follows the CURRENT saved settings, never a public
         // notification alone. Its durable records do not depend on the CPU temp file.
-        vdt_nice_reload(getPrefs());
+        NSDictionary *prefs = getPrefs();
+        vdt_nice_reload(prefs);
         vdt_nice_reconcile();
+        apply_nice_targets_sync(vdt_nice_resolve_targets(prefs));
         vdt_nice_publish();
         // Force every entry from the uninstall snapshot to disabled, so each
         // resolved target takes the restore path and hands the process back to
@@ -357,8 +376,7 @@ static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
             NSDictionary *prefs = getPrefs();
             vdt_nice_reload(prefs);
             vdt_nice_reconcile();
-            for (NSDictionary *target in vdt_resolve_targets(vdt_configs_from_prefs(prefs),
-                                                            vdt_resource_rules_from_prefs(prefs)))
+            for (NSDictionary *target in vdt_nice_resolve_targets(prefs))
                 vdt_nice_apply(target);
             vdt_nice_publish();
             nice_refresh_scheduled = NO;

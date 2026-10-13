@@ -111,8 +111,10 @@ def runtime_contract(runtime):
         'vdt_resolve_targets(restoreConfigs, vdt_resource_rules_from_prefs(getTempPrefs()))',
         '[restoreTarget removeObjectForKey:VDTTargetMemoryRuleKey];',
         '[restoreTarget removeObjectForKey:VDTTargetJetsamRuleKey];',
-        'vdt_resolve_targets(vdt_configs_from_prefs(prefs),\n',
-        'vdt_resource_rules_from_prefs(prefs)))')
+        'for (NSDictionary *target in vdt_nice_resolve_targets(prefs))',
+        'vdt_nice_apply(target);')
+    retry = function_source(runtime, 'static void niceRefreshCallback')
+    assert 'vdt_resolve_targets' not in retry and 'vdt_resource_rules_from_prefs' not in retry, 'nice retry cannot own CPU/resource resolution'
     for stale in ('vdt_resolve_targets(configs);', 'vdt_targets_for_pid(pid, configs);'):
         assert stale not in runtime, 'stale pre-resource call remains: ' + stale
 
@@ -158,9 +160,10 @@ class ResourceManagerIntegration(unittest.TestCase):
         self.assertNotEqual(mutated, self.manager)
         with self.assertRaises(AssertionError): manager_contract(mutated)
 
-    def test_old_arity_nice_retry_is_rejected(self):
-        mutated = self.runtime.replace('vdt_resolve_targets(vdt_configs_from_prefs(prefs),\n                                                            vdt_resource_rules_from_prefs(prefs)))',
-                                       'vdt_resolve_targets(vdt_configs_from_prefs(prefs)))', 1)
+    def test_cpu_resource_coupled_nice_retry_is_rejected(self):
+        mutated = self.runtime.replace(
+            'for (NSDictionary *target in vdt_nice_resolve_targets(prefs))',
+            'for (NSDictionary *target in vdt_resolve_targets(vdt_configs_from_prefs(prefs), vdt_resource_rules_from_prefs(prefs)))', 1)
         self.assertNotEqual(mutated, self.runtime)
         with self.assertRaises(AssertionError): runtime_contract(mutated)
 

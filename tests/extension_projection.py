@@ -121,6 +121,8 @@ def inverse_extension_source(path, source):
 def released_bytes(path, source=None):
     """Candidate -> full 788; only reviewed regions/fields are reversed."""
     if source is None: source = (ROOT / path).read_bytes()
+    from formal_delta import without_formal_rules
+    source = without_formal_rules(path, source)
     if path not in REVIEWED_PATHS and path not in (CI_PATH, 'control', 'ci/stage_release.py', '.gitattributes'):
         # Unchanged binary assets are frozen as bytes, never UTF-8 decoded.
         return source if isinstance(source, bytes) else source.encode()

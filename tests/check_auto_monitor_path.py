@@ -74,7 +74,7 @@ def check_launch_gate_and_catch_up() -> None:
     resolve = require(handler, r"vdt_targets_for_pid\s*\(", "single-PID config resolution")
     no_match = require(
         handler,
-        r"if\s*\(targets\.count\s*==\s*0\).*?@\"notConfigured\"",
+        r"if\s*\(targets\.count\s*==\s*0\s*&&\s*niceTargets\.count\s*==\s*0\).*?@\"notConfigured\"",
         "unconfigured-process branch",
     )
     gated_apply = require(
@@ -82,6 +82,8 @@ def check_launch_gate_and_catch_up() -> None:
         r"apply_launch_target_if_needed\s*\(targets\.firstObject\)",
         "config-gated launch application",
     )
+    require(handler, r"vdt_nice_targets_for_pid_from_rules\s*\(pid,\s*current_normalized_nice_rules_sync\(\)\)", "independent cached nice fast path")
+    require(handler, r"else\s+if\s*\(targets\.count\)", "CPU application remains CPU-target gated")
     catch_up = require(handler, r"schedule_launch_catch_up_sync\s*\(\)", "coalescing catch-up")
     if not (resolve < no_match < gated_apply < catch_up):
         fail("launch resolution, config gate, application, or catch-up is misordered")

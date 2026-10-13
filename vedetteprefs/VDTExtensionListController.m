@@ -116,6 +116,7 @@ static NSArray<NSDictionary *> *extension_records(void) {
             [row setProperty:record[@"extensionIdentifier"] forKey:@"extensionIdentifier"];
             [row setProperty:record[@"containingAppName"] forKey:@"containingAppName"];
             [row setProperty:record[@"containingAppIdentifier"] forKey:@"containingAppIdentifier"];
+            [row setProperty:record forKey:@"vdtExtensionMetadata"];
             [row setProperty:@(VDTConfigTypeExtension) forKey:@"configurationType"];
             [row setProperty:VDTSettingsSymbol(@"puzzlepiece.extension") forKey:@"iconImage"];
             [rows addObject:row];
@@ -133,11 +134,8 @@ static NSArray<NSDictionary *> *extension_records(void) {
 
 - (id)previewStringForSpecifier:(PSSpecifier *)specifier {
     NSString *identifier = [specifier propertyForKey:@"extensionIdentifier"];
-    NSDictionary *prefs = getPrefs();
-    if (!VDTHasProcessConfig(identifier, VDTConfigTypeExtension, prefs))
-        return VDTLoc(self.class, @"Follow containing app");
-    return VDTLoc(self.class, VDTListConfigurationEnabled(identifier, VDTConfigTypeExtension, prefs)
-        ? @"Configuration enabled" : @"Independent rule off");
+    NSDictionary *prefs = [specifier propertyForKey:@"vdtListPrefsSnapshot"] ?: getPrefs();
+    return VDTLoc(self.class, VDTListExtensionSubtitleKey(identifier, prefs));
 }
 
 - (void)reloadExtensionRule:(NSString *)identifier {

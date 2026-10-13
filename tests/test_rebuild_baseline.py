@@ -3,8 +3,9 @@
 import subprocess
 import unittest
 from pathlib import Path
-from extension_projection import (ROOT, RELEASE_BASE, CANDIDATE_VERSION, CI_PATH,
-                                  baseline_bytes, assert_release_freeze)
+from extension_projection import (ROOT, RELEASE_BASE, CI_PATH,
+                                  baseline_bytes, assert_release_freeze, released_bytes)
+from formal_delta import FORMAL_VERSION as CANDIDATE_VERSION
 from test_resource_preferences_native import detail_contract, NICE_GUARD
 
 OLD_CANDIDATE = 'bb211c0dbbf21819d487c88f6030d9f071022025'
@@ -17,7 +18,7 @@ def preserved_paths():
 
 
 def nice_file_contract(path, data):
-    assert data == baseline_bytes(path, RELEASE_BASE), 'released nice/lifecycle changed: ' + path
+    assert released_bytes(path, data) == baseline_bytes(path, RELEASE_BASE), 'released nice/lifecycle changed: ' + path
 
 
 def build_contract(flow, control, stage, main, prefs):

@@ -7,17 +7,44 @@
 #import "../VDTNiceShared.h"
 #import <CoreFoundation/CoreFoundation.h>
 
+static BOOL VDTListStrictEnabled(id value) {
+    return [value isKindOfClass:[NSNumber class]]
+        && CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()
+        && CFBooleanGetValue((__bridge CFBooleanRef)value);
+}
+
 BOOL VDTListConfigurationEnabled(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
-    id value = valueForProcessConfigKeyWithPrefs(identifier, @"enabled", nil, type, prefs);
+    if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0 ||
+        (type != VDTConfigTypeApp && type != VDTConfigTypeDaemon && type != VDTConfigTypeExtension)) return NO;
+    // Even a caller without a snapshot must not mix four disk generations.
+    NSDictionary *snapshot = prefs ?: getPrefs();
+    id value = valueForProcessConfigKeyWithPrefs(identifier, @"enabled", nil, type, snapshot);
     // Preserve the legacy CPU switch's NSNumber/NSString boolValue semantics.
     BOOL cpuEnabled = ([value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[NSString class]])
         ? [value boolValue] : NO;
-    // Nice is intentionally stricter: only an actual CFBoolean true enables pinning.
-    id niceValue = valueForProcessConfigKeyWithPrefs(identifier, VDT_NICE_ENABLED_KEY, @NO, type, prefs);
-    BOOL niceEnabled = [niceValue isKindOfClass:[NSNumber class]]
-        && CFGetTypeID((__bridge CFTypeRef)niceValue) == CFBooleanGetTypeID()
-        && CFBooleanGetValue((__bridge CFBooleanRef)niceValue);
-    return cpuEnabled || niceEnabled;
+    // These are independent saved switches, not inherited or applied state.
+    BOOL niceEnabled = VDTListStrictEnabled(valueForProcessConfigKeyWithPrefs(
+        identifier, VDT_NICE_ENABLED_KEY, @NO, type, snapshot));
+    BOOL memoryEnabled = VDTListStrictEnabled(valueForProcessResourceRuleKeyWithPrefs(
+        identifier, @"enabled", @NO, type, @"memoryRules", snapshot));
+    BOOL jetsamEnabled = VDTListStrictEnabled(valueForProcessResourceRuleKeyWithPrefs(
+        identifier, @"enabled", @NO, type, @"jetsamRules", snapshot));
+    return cpuEnabled || niceEnabled || memoryEnabled || jetsamEnabled;
+}
+
+NSString *VDTListExtensionSubtitleKey(NSString *identifier, NSDictionary *prefs) {
+    NSDictionary *snapshot = prefs ?: getPrefs();
+    BOOL cpuOwn = VDTHasProcessConfig(identifier, VDTConfigTypeExtension, snapshot);
+    BOOL enabled = VDTListConfigurationEnabled(identifier, VDTConfigTypeExtension, snapshot);
+    if (enabled) return cpuOwn ? @"Independent configurations enabled"
+        : @"CPU follows app; independent rules enabled";
+    BOOL otherOwn = VDTHasProcessResourceRule(identifier, VDTConfigTypeExtension, @"memoryRules", snapshot)
+        || VDTHasProcessResourceRule(identifier, VDTConfigTypeExtension, @"jetsamRules", snapshot);
+    for (NSString *key in @[VDT_NICE_ENABLED_KEY, VDT_NICE_VALUE_KEY, VDT_NICE_REVISION_KEY]) {
+        if (valueForProcessConfigKeyWithPrefs(identifier, key, nil, VDTConfigTypeExtension, snapshot)) otherOwn = YES;
+    }
+    if (!cpuOwn && otherOwn) return @"CPU follows app; independent rules off";
+    return cpuOwn ? @"Independent rule off" : @"Follow containing app";
 }
 
 static int VDTCompareListNames(size_t left, size_t right, void *context) {
@@ -47,6 +74,7 @@ NSMutableArray<PSSpecifier *> *VDTGroupedListSpecifiers(
     for (NSUInteger index = 0; index < rows.count; ++index) {
         PSSpecifier *specifier = rows[index];
         NSString *identifier = [specifier propertyForKey:identityKey];
+        [specifier setProperty:prefs forKey:@"vdtListPrefsSnapshot"];
         items[index] = (VDTListOrderItem){identifier.UTF8String,
             VDTListConfigurationEnabled(identifier, type, prefs),
             matchesSearch ? matchesSearch(specifier) : YES};

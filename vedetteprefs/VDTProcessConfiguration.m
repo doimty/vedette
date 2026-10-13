@@ -224,15 +224,16 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
         [rootSpecifiers addObject:intervalSpec];
 
         // Keep the nice controls independent from the legacy CPU rule editor.
-        if ([self configurationType] == VDTConfigTypeApp || [self configurationType] == VDTConfigTypeDaemon) {
+        if ([self configurationType] == VDTConfigTypeApp || [self configurationType] == VDTConfigTypeDaemon ||
+            [self configurationType] == VDTConfigTypeExtension) {
             [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];
         }
         if ([self configurationType] == VDTConfigTypeExtension) {
             PSSpecifier *inheritanceGroup = [PSSpecifier emptyGroupSpecifier];
             [inheritanceGroup setProperty:VDTLoc(self.class,
-                @"Without an independent rule, this extension follows its containing app. Saving any setting creates an override; a disabled override removes Vedette CPU limits for this extension.") forKey:@"footerText"];
+                @"Without its own CPU fields, this extension follows its app's CPU rule. Saving CPU settings creates a CPU override; a disabled CPU override removes Vedette CPU limits. Nice and resource rules stay independent.") forKey:@"footerText"];
             [rootSpecifiers addObject:inheritanceGroup];
-            PSSpecifier *inheritance = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app")
+            PSSpecifier *inheritance = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app CPU")
                 target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
             [inheritance setButtonAction:@selector(confirmFollowContainingApp)];
             [rootSpecifiers addObject:inheritance];
@@ -297,17 +298,23 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
 
 - (void)confirmFollowContainingApp {
     if ([self configurationType] != VDTConfigTypeExtension) return;
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app")
-        message:VDTLoc(self.class, @"Remove this extension's independent rule and use its containing app's rule?")
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app CPU")
+        message:VDTLoc(self.class, @"Remove only this extension's CPU settings and follow its app? Nice, memory and Jetsam rules will be kept.")
         preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel")
         style:UIAlertActionStyleCancel handler:nil]];
     __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app")
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Follow containing app CPU")
         style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
             VDTProcessConfiguration *owner = weakSelf;
             if (!owner) return;
-            VDTRemoveProcessConfig([owner validIdentifier], VDTConfigTypeExtension);
+            BOOL saved = VDTRemoveExtensionCPUConfigReportingResult([owner validIdentifier]);
+            if (!saved) {
+                [owner reloadSpecifiers];
+                [owner presentResourceRuleError:VDTLoc(owner.class, @"CPU rule save failed")
+                    message:VDTLoc(owner.class, @"The rule could not be saved. The previous saved value has been restored.")];
+                return;
+            }
             UIViewController *parent = (UIViewController *)[owner valueForKey:@"_parentController"];
             if ([parent isKindOfClass:VDTExtensionListController.class])
                 [(VDTExtensionListController *)parent reloadExtensionRule:[owner validIdentifier]];
@@ -322,6 +329,14 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
     [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"OK")
         style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)vdtReloadIndependentRules {
+    // Every list rebuilds from a fresh saved snapshot; do not reuse a selected
+    // index path after a switch moves the row between enabled/other groups.
+    id parent = [self valueForKey:@"_parentController"];
+    if ([parent respondsToSelector:@selector(reloadSpecifiers)])
+        [(PSListController *)parent reloadSpecifiers];
 }
 
 - (void)setResourceRuleValue:(id)value specifier:(PSSpecifier*)specifier{
@@ -341,6 +356,8 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
     if (!saved) {
         [self presentResourceRuleError:VDTLoc(self.class, @"Resource rule save failed")
             message:VDTLoc(self.class, @"The rule could not be saved. The previous saved value has been restored.")];
+    } else {
+        [self vdtReloadIndependentRules];
     }
 }
 

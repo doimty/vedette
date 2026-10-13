@@ -13,6 +13,7 @@
 #import "VDTBundleIdentity.h"
 #import "VDTBundleRules.h"
 #import "VDTResourceApply.h"
+#import "VDTNiceShared.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -191,6 +192,10 @@ NSString * const VDTTargetStartSecondsKey = @"startSeconds";
 NSString * const VDTTargetStartMicrosecondsKey = @"startMicroseconds";
 NSString * const VDTTargetMemoryRuleKey = @"memoryRule";
 NSString * const VDTTargetJetsamRuleKey = @"jetsamRule";
+NSString * const VDTTargetContainingAppIdentifierKey = @"containingAppIdentifier";
+NSString * const VDTTargetNiceSourceTypeKey = @"niceSourceType";
+NSString * const VDTTargetNiceSourceIdentifierKey = @"niceSourceIdentifier";
+NSString * const VDTTargetNiceSourceRevisionKey = @"niceSourceRevision";
 
 static NSArray<NSDictionary *> *configs_from_section(NSDictionary *prefs,
                                                      NSString *sectionKey,
@@ -203,6 +208,8 @@ static NSArray<NSDictionary *> *configs_from_section(NSDictionary *prefs,
     for (id rawEntry in section) {
         NSDictionary *entry = vdt_dictionary(rawEntry);
         if (!entry) continue;
+        // Nice-only/unknown-only rows must not suppress the containing App CPU rule.
+        if (type == VDTConfigTypeExtension && !VDTProcessConfigHasCPUFields(entry)) continue;
 
         NSString *identifier = vdt_nonEmptyString(entry[identifierKey]);
         if (!identifier) continue;
@@ -786,6 +793,103 @@ NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *> 
 
     NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs, resourceMaps);
     return target ? @[target] : @[];
+}
+
+#pragma mark - Independent nice target resolution
+
+static NSDictionary *nice_target_for_pid(pid_t pid, NSDictionary<NSString *, NSDictionary *> *rules){
+    if (pid <= 1 || !rules.count) return nil;
+    char pathBuffer[PROC_PIDPATHINFO_MAXSIZE];
+    NSString *path = executable_path_for_pid(pid, pathBuffer, sizeof(pathBuffer)) ?
+        [NSString stringWithUTF8String:pathBuffer] : nil;
+    VDTProcessInstanceToken token = {};
+    if (!process_instance_token_for_pid(pid, &token)) return nil;
+    NSString *extensionPath = VDTNearestBundlePath(path, @"appex");
+    if (!extensionPath && path) {
+        // A noncanonical/rejected appex ancestry is a blocker, not an App/daemon.
+        NSString *candidate = path.stringByDeletingLastPathComponent;
+        while (candidate.length > 1) {
+            if ([candidate.pathExtension caseInsensitiveCompare:@"appex"] == NSOrderedSame) return nil;
+            NSString *parent = candidate.stringByDeletingLastPathComponent;
+            if ([candidate isEqual:parent]) break;
+            candidate = parent;
+        }
+    }
+    NSDictionary *info = extensionPath ? VDTReadExtensionBundleInfo(extensionPath, path) : nil;
+    if (extensionPath && !info) return nil;
+    NSString *appPath = application_bundle_path_for_executable(extensionPath ?: path);
+    NSString *host = appPath ? vdt_nonEmptyString(appproxy_from_bundle_path(appPath).bundleIdentifier) : nil;
+    NSString *name = nil, *comm = nil;
+    VDTConfigType type = VDTConfigTypeDaemon;
+    NSDictionary *rule = nil;
+    if (extensionPath) {
+        type = VDTConfigTypeExtension; name = info[@"extensionIdentifier"];
+        if (!rules[VDTNiceRuleKey(type, name)] && !(host && rules[VDTNiceRuleKey(VDTConfigTypeApp, host)])) return nil;
+        rule = VDTNiceEffectiveRuleFromRules(name, type, host, rules);
+    } else if (VDTSpringBoardPathMatches(path.UTF8String) && rules[@"1:SpringBoard"]) {
+        name = @VDT_SPRINGBOARD_RULE_NAME;
+        rule = VDTNiceEffectiveRuleFromRules(name, type, nil, rules);
+    } else if (appPath) {
+        // Even an unconfigured App must not fall through to a same-name daemon.
+        type = VDTConfigTypeApp; name = host;
+        if (!name || !rules[VDTNiceRuleKey(type, name)]) return nil;
+        rule = VDTNiceEffectiveRuleFromRules(name, type, nil, rules);
+    } else {
+        char executableName[PROC_PIDPATHINFO_MAXSIZE], commBuffer[256];
+        BOOL hasName = path && VDTCopyLastPathComponent(path.UTF8String, executableName, sizeof(executableName));
+        if (!hasName && proc_comm_for_pid(pid, commBuffer, sizeof(commBuffer)))
+            comm = [NSString stringWithUTF8String:commBuffer];
+        if (!hasName && !comm.length) return nil;
+        for (NSDictionary *candidate in rules.allValues) {
+            if ([candidate[@"type"] unsignedIntegerValue] != VDTConfigTypeDaemon) continue;
+            const char *configured = [candidate[@"identifier"] UTF8String];
+            if (VDTSpringBoardRuleName(configured)) {
+                if (!VDTSpringBoardRuleMatches(configured, path.UTF8String)) continue;
+            } else if (!VDTProcessNameMatches(configured, hasName ? executableName : NULL, comm.UTF8String)) continue;
+            name = candidate[@"identifier"]; break;
+        }
+        if (!name) return nil;
+        rule = VDTNiceEffectiveRuleFromRules(name, type, nil, rules);
+    }
+    if (!rule || !VDTNiceRuleKey(type, name)) return nil;
+    NSMutableDictionary *target = [@{
+        VDTTargetPidKey: @(pid), VDTConfigTypeKey: @(type), VDTTargetNameKey: name,
+        VDTTargetStartSecondsKey: @(token.seconds), VDTTargetStartMicrosecondsKey: @(token.microseconds),
+        VDTTargetNiceSourceTypeKey: rule[@"sourceType"],
+        VDTTargetNiceSourceIdentifierKey: rule[@"sourceIdentifier"],
+        VDTTargetNiceSourceRevisionKey: rule[@"sourceRevision"]} mutableCopy];
+    if (path.length) target[VDTTargetExecutablePathKey] = path;
+    else if (comm.length && type == VDTConfigTypeDaemon) target[VDTTargetProcCommKey] = comm;
+    else return nil;
+    if (type == VDTConfigTypeExtension && host) target[VDTTargetContainingAppIdentifierKey] = host;
+    return target;
+}
+
+NSArray<NSDictionary *> *vdt_nice_targets_for_pid(pid_t pid, NSDictionary *prefs){
+    return vdt_nice_targets_for_pid_from_rules(pid, VDTNiceRulesFromPrefs(prefs));
+}
+NSArray<NSDictionary *> *vdt_nice_resolve_targets(NSDictionary *prefs){
+    return vdt_nice_resolve_targets_from_rules(VDTNiceRulesFromPrefs(prefs));
+}
+NSArray<NSDictionary *> *vdt_nice_targets_for_pid_from_rules(pid_t pid, NSDictionary *rules){
+    NSDictionary *target = nice_target_for_pid(pid, rules);
+    return target ? @[target] : @[];
+}
+NSArray<NSDictionary *> *vdt_nice_resolve_targets_from_rules(NSDictionary *rules){
+    if (!rules.count) return @[];
+    int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+    if (bytes <= 0) return @[];
+    pid_t *pids = (pid_t *)malloc((size_t)bytes);
+    if (!pids) return @[];
+    int written = proc_listpids(PROC_ALL_PIDS, 0, pids, bytes);
+    NSMutableArray *targets = [NSMutableArray array];
+    if (written > bytes) written = bytes;
+    for (int i = 0; i < written / (int)sizeof(pid_t); ++i) {
+        NSDictionary *target = nice_target_for_pid(pids[i], rules);
+        if (target) [targets addObject:target];
+    }
+    free(pids);
+    return targets;
 }
 
 #pragma mark - Monitor / throttle

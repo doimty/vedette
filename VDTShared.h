@@ -32,10 +32,15 @@ id valueForProcessConfigKey(NSString *identifier, NSString *key, id defaultValue
 id valueForProcessConfigKeyWithPrefs(NSString *identifier, NSString *key, id defaultValue, VDTConfigType type, NSDictionary *prefs);
 void setValueForProcessConfigKey(NSString *identifier, NSString *key, id value, VDTConfigType type);
 void setValueForProcessConfigKeyWithPrefs(NSString *identifier, NSString *key, id value, VDTConfigType type, NSDictionary *prefs);
-// Presence, not enabled state, determines whether an extension overrides its app.
+// CPU field presence is independent of nice fields (including invalid values).
+BOOL VDTProcessConfigHasCPUFields(NSDictionary *entry);
+// Extension presence means CPU fields, not merely an extensionConfigs record.
 BOOL VDTHasProcessConfig(NSString *identifier, VDTConfigType type, NSDictionary *prefs);
-// Removes all matching records. For an extension this restores host inheritance.
+// App/Daemon: removes records. Extension: clears only CPU fields on every
+// matching record, preserving nice/unknown fields and all resource sections.
 void VDTRemoveProcessConfig(NSString *identifier, VDTConfigType type);
+// Extension CPU Follow reports atomic save failure; no notification on failure.
+BOOL VDTRemoveExtensionCPUConfigReportingResult(NSString *identifier);
 
 // Independent per-resource rule storage. memoryRules / jetsamRules sections
 // mirror appConfigs/daemonConfigs/extensionConfigs but never share a record

@@ -23,6 +23,16 @@ NSString *VDTNiceBootToken(void);
 // First-entry-wins. Each rule contains type/identifier/value/valid/revision,
 // requestedEnabled (per-rule), enabled (folds global switch). CPU keys are not read.
 NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *prefs);
+BOOL VDTNiceHasIndependentRule(NSString *identifier, VDTConfigType type, NSDictionary *prefs);
+// Effective rule keeps the real target type/identifier. Source fields name the
+// independent rule or containing App. Disabled/invalid own records block inheritance.
+NSDictionary *VDTNiceEffectiveRuleFromRules(NSString *identifier, VDTConfigType type,
+    NSString *containingAppIdentifier, NSDictionary<NSString *, NSDictionary *> *rules);
+NSDictionary *VDTNiceEffectiveRule(NSString *identifier, VDTConfigType type,
+    NSString *containingAppIdentifier, NSDictionary *prefs);
+// Clears ONLY the three nice fields on ALL duplicate IDs. Preserves CPU,
+// unknown fields and every other section; checked atomic write + notification.
+BOOL VDTNiceRemoveIndependentRule(NSString *identifier, VDTConfigType type, NSError **error);
 // Separate checked atomic writer; preserves all legacy CPU keys. Only niceEnabled
 // or niceValue may be changed. Enabling an untouched rule atomically stores value 0.
 BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type,
@@ -33,6 +43,10 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type,
 // appliedCount, pendingCount; observed/original may be present for a single target.
 NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type,
                                     NSDictionary *prefs);
+// Extension UI should pass its verified containingAppIdentifier. The legacy
+// entry point uses the receipt's host but still rejects stale own/inherit source.
+NSDictionary *VDTNiceMatchingStatusWithHost(NSString *identifier, VDTConfigType type,
+    NSString *containingAppIdentifier, NSDictionary *prefs);
 #ifdef __cplusplus
 }
 #endif

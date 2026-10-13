@@ -126,5 +126,17 @@
 "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "保存的回收优先级规则与生效状态分开显示：当前版本仅保存。档位因系统版本而异；0 = idle、-1 会实际写入默认档。";
 "Invalid resource rule" = "资源规则无效";
 "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value." = "内存请输入 -1 至 2147483647 的整数，优先级档位请输入有符号 32 位 raw 整数。开关仅接受布尔值。";
+"CPU rule save failed" = "CPU 规则保存失败";
 "Resource rule save failed" = "资源规则保存失败";
 "The rule could not be saved. The previous saved value has been restored." = "无法保存此规则，已恢复显示之前保存的值。";
+"Independent configurations enabled" = "独立规则已开启";
+"CPU follows app; independent rules enabled" = "CPU 跟随 App；其他规则已开";
+"CPU follows app; independent rules off" = "CPU 跟随 App；其他规则已关";
+"Follow containing app CPU" = "CPU 跟随所属 App";
+"Without its own CPU fields, this extension follows its app's CPU rule. Saving CPU settings creates a CPU override; a disabled CPU override removes Vedette CPU limits. Nice and resource rules stay independent." = "没有自己的 CPU 字段时，跟随所属 App 的 CPU 规则。保存 CPU 设置后改用独立 CPU 规则；关闭独立 CPU 开关后不再限制此扩展的 CPU。nice 和资源规则不受影响。";
+"Remove only this extension's CPU settings and follow its app? Nice, memory and Jetsam rules will be kept." = "仅删除此扩展的 CPU 设置并恢复跟随所属 App？nice、内存和 Jetsam 规则将保留。";
+"Independent nice rule" = "独立 nice 规则";
+"Nice follows containing app" = "nice 跟随所属 App";
+"Follow containing app nice" = "nice 跟随所属 App";
+"Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged." = "没有自己的 nice 字段时，跟随所属 App 的 nice 规则。保存开关或数值后创建独立 nice 规则；CPU 和资源规则不受影响。";
+"Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept." = "仅删除此扩展的 nice 设置并恢复跟随所属 App？CPU、内存和 Jetsam 规则将保留。";

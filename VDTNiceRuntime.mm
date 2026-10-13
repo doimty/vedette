@@ -4,6 +4,7 @@
 #import "VDTNiceStore.h"
 #import "VDTNicePolicy.h"
 #import "VDTProcessIdentity.h"
+#import "VDTBundleIdentity.h"
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -35,7 +36,7 @@ static NSDictionary *boundTarget(id raw) {
     if (![raw isKindOfClass:NSDictionary.class]) return nil;
     NSDictionary *target = raw; long long pid, type, seconds, microseconds;
     if (!integer(target[VDTTargetPidKey], 2, INT_MAX, &pid) ||
-        !integer(target[VDTConfigTypeKey], VDTConfigTypeApp, VDTConfigTypeDaemon, &type) ||
+        !integer(target[VDTConfigTypeKey], VDTConfigTypeApp, VDTConfigTypeExtension, &type) ||
         !integer(target[VDTTargetStartSecondsKey], 1, LLONG_MAX, &seconds) ||
         !integer(target[VDTTargetStartMicrosecondsKey], 0, 999999, &microseconds) ||
         !text(target[VDTTargetNameKey], 1024)) return nil;
@@ -46,8 +47,30 @@ static NSDictionary *boundTarget(id raw) {
     if (path) {
         if (!text(path, 4096) || ![path hasPrefix:@"/"]) return nil;
         result[VDTTargetExecutablePathKey] = path;
-    } else if (text(comm, 255)) result[VDTTargetProcCommKey] = comm;
+    } else if (type != VDTConfigTypeExtension && text(comm, 255)) result[VDTTargetProcCommKey] = comm;
     else return nil;
+    if (type == VDTConfigTypeExtension && !VDTNearestBundlePath(path, @"appex")) return nil;
+    if (type != VDTConfigTypeExtension && path && VDTNearestBundlePath(path, @"appex")) return nil;
+    id host = target[@"containingAppIdentifier"];
+    if (host) {
+        if (type != VDTConfigTypeExtension || !text(host, 1024)) return nil;
+        result[@"containingAppIdentifier"] = host;
+    }
+    // Optional for legacy App/Daemon journals; new records retain source apart
+    // from the actual Extension identity. Partial/malformed source is rejected.
+    id sourceType = target[@"niceSourceType"], sourceName = target[@"niceSourceIdentifier"],
+       sourceRevision = target[@"niceSourceRevision"];
+    if (sourceType || sourceName || sourceRevision) {
+        long long source;
+        if (!integer(sourceType, VDTConfigTypeApp, VDTConfigTypeExtension, &source) ||
+            !text(sourceName, 1024) || ![sourceRevision isKindOfClass:NSString.class] ||
+            [sourceRevision length] > 80) return nil;
+        BOOL inherited = type == VDTConfigTypeExtension && source == VDTConfigTypeApp;
+        if (inherited ? ![sourceName isEqual:host] :
+            (source != type || ![sourceName isEqual:target[VDTTargetNameKey]])) return nil;
+        result[@"niceSourceType"] = sourceType; result[@"niceSourceIdentifier"] = sourceName;
+        result[@"niceSourceRevision"] = sourceRevision;
+    }
     return result;
 }
 static NSString *instanceKey(NSDictionary *target) {
@@ -59,10 +82,24 @@ static NSString *instanceKey(NSDictionary *target) {
 static NSString *ruleKey(NSDictionary *target) {
     return VDTNiceRuleKey((VDTConfigType)[target[VDTConfigTypeKey] unsignedIntegerValue], target[VDTTargetNameKey]);
 }
+static NSDictionary *ruleForTarget(NSDictionary *target, NSDictionary *rules) {
+    return VDTNiceEffectiveRuleFromRules(target[VDTTargetNameKey],
+        (VDTConfigType)[target[VDTConfigTypeKey] unsignedIntegerValue],
+        target[@"containingAppIdentifier"], rules);
+}
+static NSDictionary *targetWithSource(NSDictionary *target, NSDictionary *rule) {
+    NSMutableDictionary *updated = [target mutableCopy];
+    updated[@"niceSourceType"] = rule[@"sourceType"];
+    updated[@"niceSourceIdentifier"] = rule[@"sourceIdentifier"];
+    updated[@"niceSourceRevision"] = rule[@"sourceRevision"];
+    return updated;
+}
 static BOOL protectedRule(NSDictionary *rule) {
-    NSString *name = rule[@"identifier"];
-    if ([rule[@"type"] unsignedIntegerValue] == VDTConfigTypeApp) return [name isEqual:@"com.apple.Preferences"];
-    return [name isEqual:@"launchd"] || [name isEqual:@"runningboardd"];
+    NSString *name = rule[@"sourceIdentifier"] ?: rule[@"identifier"];
+    NSUInteger type = [rule[@"sourceType"] ?: rule[@"type"] unsignedIntegerValue];
+    if (type == VDTConfigTypeApp) return [name isEqual:@"com.apple.Preferences"];
+    if (type == VDTConfigTypeDaemon) return [name isEqual:@"launchd"] || [name isEqual:@"runningboardd"];
+    return NO;
 }
 static NSDictionary *encodeRecord(const VDTNiceRecord *r) {
     return @{@"captured": @(r->captured), @"original": @(r->originalValue),
@@ -89,7 +126,24 @@ static VDTNiceIdentity nativeIdentity(pid_t pid, NSDictionary *target) {
     if (info.pbi_pid != (uint32_t)pid) return VDTNiceIdentityUnavailableValue;
     if (info.pbi_start_tvsec != [target[VDTTargetStartSecondsKey] unsignedLongLongValue] ||
         info.pbi_start_tvusec != [target[VDTTargetStartMicrosecondsKey] unsignedLongLongValue]) return VDTNiceIdentityGone;
-    return vdt_target_is_current(target) ? VDTNiceIdentityCurrent : VDTNiceIdentityUnavailableValue;
+    if (!vdt_target_is_current(target)) return VDTNiceIdentityUnavailableValue;
+    if ([target[VDTConfigTypeKey] unsignedIntegerValue] == VDTConfigTypeExtension) {
+        NSString *path = target[VDTTargetExecutablePathKey];
+        NSDictionary *info = VDTReadExtensionBundleInfo(VDTNearestBundlePath(path, @"appex"), path);
+        if (![info[@"extensionIdentifier"] isEqual:target[VDTTargetNameKey]])
+            return VDTNiceIdentityUnavailableValue;
+        NSString *host = target[@"containingAppIdentifier"];
+        if (host) {
+            NSString *appPath = info[@"containingAppPath"];
+            NSDictionary *appInfo = appPath ? [NSDictionary dictionaryWithContentsOfFile:
+                [appPath stringByAppendingPathComponent:@"Info.plist"]] : nil;
+            if (![appInfo[@"CFBundleIdentifier"] isEqual:host])
+                return VDTNiceIdentityUnavailableValue;
+        }
+        // Recheck lifetime/path after metadata I/O as well as before it.
+        if (!vdt_target_is_current(target)) return VDTNiceIdentityUnavailableValue;
+    }
+    return VDTNiceIdentityCurrent;
 }
 static NSString *outcomeCode(VDTNiceOutcome outcome) {
     switch (outcome) {
@@ -263,6 +317,13 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     VDTNiceOperations ops = {.identity = identityCallback, .readValue = readCallback,
         .writeValue = writeCallback, .saveRecord = saveCallback, .context = &context};
     VDTNiceResult result = VDTNiceTransition([target[VDTTargetPidKey] intValue], enabled, desired, &r, &ops);
+    // Same-value source changes still need a durable, real identity/source
+    // update; the frozen C policy correctly avoids a redundant value save.
+    if (result.outcome == VDTNiceApplied && r.captured &&
+        ![records[key][@"target"] isEqual:target]) {
+        int error = [self save:&r target:target];
+        if (error) { result.outcome = VDTNiceStoreFailed; result.error = error; }
+    }
     NSMutableDictionary *outcome = [@{@"target": target, @"state": outcomeCode(result.outcome),
         @"error": @(result.error), @"checkedAt": @(NSDate.date.timeIntervalSince1970)} mutableCopy];
     if (result.observedValid) outcome[@"observed"] = @(result.observedValue);
@@ -286,7 +347,7 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     if (loadError || store.directoryFD < 0) return;
     for (NSString *key in [records.allKeys copy]) {
         NSDictionary *target = records[key][@"target"];
-        NSDictionary *rule = rules[ruleKey(target)];
+        NSDictionary *rule = ruleForTarget(target, rules);
         VDTNiceIdentity identity = nativeIdentity([target[VDTTargetPidKey] intValue], target);
         if (identity == VDTNiceIdentityGone) {
             // Forgetting an old instance must not be suppressed by a previous
@@ -302,10 +363,12 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     if (loadError || store.directoryFD < 0) return;
     NSDictionary *target = boundTarget(rawTarget);
     if (!target) return;
-    NSDictionary *rule = rules[ruleKey(target)];
+    NSDictionary *rule = ruleForTarget(target, rules);
     if (protectedRule(rule) || [target[VDTTargetPidKey] intValue] == getpid()) return;
+    target = targetWithSource(target, rule);
     BOOL enabled = !paused && [rule[@"enabled"] boolValue];
-    if (!enabled && !records[instanceKey(target)]) return;
+    // An unmanaged disabled/invalid target is a policy no-op, but retaining
+    // its verified host identity is necessary for a source-matching receipt.
     [self runTarget:target enabled:enabled desired:[rule[@"value"] intValue]];
 }
 - (BOOL)restoreAll {
@@ -318,14 +381,17 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
 }
 - (void)publish {
     if (!receiptDirty || store.directoryFD < 0 || !boot) return;
-    NSMutableDictionary *allRules = [rules mutableCopy];
-    // Deleted rules with a pending restoration remain visible when reopening
-    // that target's details, even though the saved CPU/nice entry is gone.
+    NSMutableDictionary *allRules = [NSMutableDictionary dictionary];
+    for (NSString *key in rules) {
+        NSDictionary *rule = rules[key];
+        allRules[key] = VDTNiceEffectiveRuleFromRules(rule[@"identifier"],
+            (VDTConfigType)[rule[@"type"] unsignedIntegerValue], nil, rules);
+    }
+    // Derive receipts from the REAL target and its current effective source,
+    // including inherited extensions and pending restorations after deletion.
     for (NSDictionary *entry in [records.allValues arrayByAddingObjectsFromArray:outcomes.allValues]) {
         NSDictionary *target = entry[@"target"]; NSString *key = ruleKey(target);
-        if (!allRules[key]) allRules[key] = @{@"identifier": target[VDTTargetNameKey],
-            @"type": target[VDTConfigTypeKey], @"value": @0, @"valid": @YES,
-            @"enabled": @NO, @"requestedEnabled": @NO, @"revision": @""};
+        if (key) allRules[key] = ruleForTarget(target, rules);
     }
     NSMutableDictionary *groups = [NSMutableDictionary dictionary];
     for (NSString *key in outcomes) {

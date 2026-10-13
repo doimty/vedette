@@ -37,8 +37,9 @@ BOOL VDTNiceParseValue(id value, int *result) {
     *result = (int)n; return YES;
 }
 NSString *VDTNiceRuleKey(VDTConfigType type, NSString *identifier) {
-    if ((type != VDTConfigTypeApp && type != VDTConfigTypeDaemon) ||
-        ![identifier isKindOfClass:NSString.class] || !identifier.length || identifier.length > 1024) return nil;
+    if ((type != VDTConfigTypeApp && type != VDTConfigTypeDaemon && type != VDTConfigTypeExtension) ||
+        ![identifier isKindOfClass:NSString.class] || !identifier.length || identifier.length > 1024 ||
+        [identifier rangeOfString:[NSString stringWithFormat:@"%C", (unichar)0]].location != NSNotFound) return nil;
     return [NSString stringWithFormat:@"%lu:%@", (unsigned long)type, identifier];
 }
 NSString *VDTNiceStateDirectory(void) { return jbroot(@"/var/tmp/com.doimty.vedette.nice"); }
@@ -48,18 +49,48 @@ NSString *VDTNiceBootToken(void) {
         boot.tv_sec <= 0 || boot.tv_usec < 0 || boot.tv_usec >= 1000000) return nil;
     return [NSString stringWithFormat:@"%lld:%ld", (long long)boot.tv_sec, (long)boot.tv_usec];
 }
+static NSString *niceSection(VDTConfigType type) {
+    switch (type) {
+        case VDTConfigTypeApp: return @"appConfigs";
+        case VDTConfigTypeDaemon: return @"daemonConfigs";
+        case VDTConfigTypeExtension: return @"extensionConfigs";
+    }
+    return nil;
+}
+static NSString *niceIdentifierKey(VDTConfigType type) {
+    switch (type) {
+        case VDTConfigTypeApp: return @"bundleIdentifier";
+        case VDTConfigTypeDaemon: return @"daemonName";
+        case VDTConfigTypeExtension: return @"extensionIdentifier";
+    }
+    return nil;
+}
+static BOOL niceFieldsPresent(NSDictionary *entry) {
+    return entry[VDT_NICE_ENABLED_KEY] || entry[VDT_NICE_VALUE_KEY] || entry[VDT_NICE_REVISION_KEY];
+}
+BOOL VDTNiceHasIndependentRule(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
+    if (!VDTNiceRuleKey(type, identifier) || ![prefs isKindOfClass:NSDictionary.class]) return NO;
+    id raw = prefs[niceSection(type)];
+    if (![raw isKindOfClass:NSArray.class]) return NO;
+    for (id entry in raw)
+        if ([entry isKindOfClass:NSDictionary.class] && [entry[niceIdentifierKey(type)] isEqual:identifier] &&
+            niceFieldsPresent(entry)) return YES;
+    return NO;
+}
 NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *prefs) {
     if (![prefs isKindOfClass:NSDictionary.class]) return @{};
     BOOL global = niceBoolean(prefs[@"enabled"], YES);
     NSMutableDictionary *rules = [NSMutableDictionary dictionary];
-    for (NSUInteger type = VDTConfigTypeApp; type <= VDTConfigTypeDaemon; ++type) {
-        NSString *section = type == VDTConfigTypeApp ? @"appConfigs" : @"daemonConfigs";
-        NSString *identifierKey = type == VDTConfigTypeApp ? @"bundleIdentifier" : @"daemonName";
+    for (NSUInteger type = VDTConfigTypeApp; type <= VDTConfigTypeExtension; ++type) {
+        NSString *section = niceSection((VDTConfigType)type);
+        NSString *identifierKey = niceIdentifierKey((VDTConfigType)type);
         id raw = prefs[section];
         if (![raw isKindOfClass:NSArray.class]) continue;
         for (id item in (NSArray *)raw) {
             if (![item isKindOfClass:NSDictionary.class]) continue;
             NSDictionary *entry = item; NSString *identifier = entry[identifierKey];
+            // A CPU-only extension row is NOT an independent nice override.
+            if (type == VDTConfigTypeExtension && !niceFieldsPresent(entry)) continue;
             NSString *key = VDTNiceRuleKey((VDTConfigType)type, identifier);
             if (!key || rules[key]) continue; // Includes disabled first entries.
             id flag = entry[VDT_NICE_ENABLED_KEY];
@@ -75,10 +106,37 @@ NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *pr
             }
             rules[key] = @{@"identifier": identifier, @"type": @(type), @"value": @(value),
                 @"requestedEnabled": @(requested), @"enabled": @(global && requested && valid),
-                @"valid": @(valid), @"revision": revision ?: @""};
+                @"valid": @(valid), @"revision": revision ?: @"", @"present": @(niceFieldsPresent(entry))};
         }
     }
     return [rules copy];
+}
+
+NSDictionary *VDTNiceEffectiveRuleFromRules(NSString *identifier, VDTConfigType type,
+    NSString *host, NSDictionary<NSString *, NSDictionary *> *rules) {
+    NSString *key = VDTNiceRuleKey(type, identifier);
+    if (!key) return nil;
+    if (!VDTNiceRuleKey(VDTConfigTypeApp, host)) host = nil;
+    NSDictionary *source = rules[key];
+    BOOL inherited = NO;
+    if (type == VDTConfigTypeExtension && !source && host) {
+        NSDictionary *hostRule = rules[VDTNiceRuleKey(VDTConfigTypeApp, host)];
+        // A CPU-only host row is not a source nice rule.
+        if ([hostRule[@"present"] boolValue]) { source = hostRule; inherited = YES; }
+    }
+    NSMutableDictionary *rule = source ? [source mutableCopy] : [@{
+        @"value": @0, @"valid": @YES, @"enabled": @NO, @"requestedEnabled": @NO,
+        @"revision": @"", @"present": @NO} mutableCopy];
+    rule[@"identifier"] = identifier; rule[@"type"] = @(type);
+    rule[@"inherited"] = @(inherited);
+    rule[@"sourceType"] = @(inherited ? VDTConfigTypeApp : type);
+    rule[@"sourceIdentifier"] = inherited ? host : identifier;
+    rule[@"sourceRevision"] = rule[@"revision"];
+    if (type == VDTConfigTypeExtension) rule[@"containingAppIdentifier"] = host ?: @"";
+    return rule;
+}
+NSDictionary *VDTNiceEffectiveRule(NSString *identifier, VDTConfigType type, NSString *host, NSDictionary *prefs) {
+    return VDTNiceEffectiveRuleFromRules(identifier, type, host, VDTNiceRulesFromPrefs(prefs));
 }
 
 static BOOL preferenceError(NSError **error, int code, NSString *text) {
@@ -126,18 +184,23 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type, NSString *k
     NSDictionary *old = readWritablePrefs(error);
     if (!old) return NO;
     NSMutableDictionary *prefs = [old mutableCopy];
-    NSString *sectionKey = type == VDTConfigTypeApp ? @"appConfigs" : @"daemonConfigs";
-    NSString *idKey = type == VDTConfigTypeApp ? @"bundleIdentifier" : @"daemonName";
+    NSString *sectionKey = niceSection(type);
+    NSString *idKey = niceIdentifierKey(type);
     id rawSection = prefs[sectionKey];
     if (rawSection && ![rawSection isKindOfClass:NSArray.class])
         return preferenceError(error, EINVAL, @"Invalid existing rule list; it was not replaced.");
     NSMutableArray *section = rawSection ? [rawSection mutableCopy] : [NSMutableArray array];
-    NSUInteger index = NSNotFound;
+    NSUInteger index = NSNotFound, firstMatch = NSNotFound;
     for (NSUInteger i = 0; i < section.count; ++i) {
         id entry = section[i];
         if ([entry isKindOfClass:NSDictionary.class] && [entry[idKey] isKindOfClass:NSString.class] &&
-            [entry[idKey] isEqualToString:identifier]) { index = i; break; }
+            [entry[idKey] isEqualToString:identifier]) {
+            if (firstMatch == NSNotFound) firstMatch = i;
+            if (type == VDTConfigTypeExtension && !niceFieldsPresent(entry)) continue;
+            index = i; break;
+        }
     }
+    if (index == NSNotFound) index = firstMatch;
     NSMutableDictionary *entry = index == NSNotFound ? [@{idKey: identifier} mutableCopy] : [section[index] mutableCopy];
     entry[key] = isSwitch ? value : @(numeric);
     if (isSwitch && [value boolValue] && !entry[VDT_NICE_VALUE_KEY]) entry[VDT_NICE_VALUE_KEY] = @0;
@@ -150,13 +213,39 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type, NSString *k
     notify_post([PREFS_CHANGED_NN UTF8String]);
     return YES;
 }
+BOOL VDTNiceRemoveIndependentRule(NSString *identifier, VDTConfigType type, NSError **error) {
+    if (!VDTNiceRuleKey(type, identifier)) return preferenceError(error, EINVAL, @"Invalid target.");
+    NSDictionary *old = readWritablePrefs(error);
+    if (!old) return NO;
+    NSString *sectionKey = niceSection(type), *idKey = niceIdentifierKey(type);
+    id raw = old[sectionKey];
+    if (raw && ![raw isKindOfClass:NSArray.class])
+        return preferenceError(error, EINVAL, @"Invalid existing rule list; it was not replaced.");
+    NSMutableArray *remaining = [NSMutableArray array]; BOOL changed = NO;
+    for (id item in raw) {
+        if ([item isKindOfClass:NSDictionary.class] && [item[idKey] isEqual:identifier]) {
+            NSMutableDictionary *entry = [item mutableCopy];
+            changed = changed || niceFieldsPresent(entry);
+            for (NSString *field in @[VDT_NICE_ENABLED_KEY, VDT_NICE_VALUE_KEY, VDT_NICE_REVISION_KEY])
+                [entry removeObjectForKey:field];
+            if (entry.count > 1) [remaining addObject:entry];
+        } else [remaining addObject:item];
+    }
+    if (!changed) return YES;
+    NSMutableDictionary *prefs = [old mutableCopy]; prefs[sectionKey] = remaining;
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:prefs format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
+    if (!data || data.length > VDT_NICE_STORE_LIMIT) return preferenceError(error, EFBIG, @"Preferences exceed the safe size limit.");
+    if (![data writeToFile:PREFS_PATH options:NSDataWritingAtomic error:error]) return NO;
+    notify_post([PREFS_CHANGED_NN UTF8String]);
+    return YES;
+}
 NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
+    return VDTNiceMatchingStatusWithHost(identifier, type, nil, prefs);
+}
+NSDictionary *VDTNiceMatchingStatusWithHost(NSString *identifier, VDTConfigType type, NSString *host, NSDictionary *prefs) {
     NSString *key = VDTNiceRuleKey(type, identifier);
-    NSDictionary *rule = key ? VDTNiceRulesFromPrefs(prefs)[key] : nil;
-    if (key && !rule) rule = @{@"identifier": identifier, @"type": @(type), @"value": @0,
-        @"valid": @YES, @"enabled": @NO, @"requestedEnabled": @NO, @"revision": @""};
     NSString *boot = VDTNiceBootToken();
-    if (!rule || !boot) return nil;
+    if (!key || !boot) return nil;
     VDTNiceStore store;
     if (VDTNiceStoreOpen(VDTNiceStateDirectory().fileSystemRepresentation, 0, &store)) return nil;
     void *bytes = NULL; size_t length = 0;
@@ -171,7 +260,12 @@ NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type, NS
         ![receipt[@"rules"] isKindOfClass:NSDictionary.class]) return nil;
     id row = receipt[@"rules"][key];
     if (![row isKindOfClass:NSDictionary.class] || ![row[@"state"] isKindOfClass:NSString.class]) return nil;
-    for (NSString *field in @[@"value", @"valid", @"revision", @"enabled", @"requestedEnabled"])
+    if (type == VDTConfigTypeExtension && !host) host = row[@"containingAppIdentifier"];
+    NSDictionary *rule = VDTNiceEffectiveRule(identifier, type, host, prefs);
+    for (NSString *field in @[@"identifier", @"type", @"value", @"valid", @"revision", @"enabled", @"requestedEnabled"])
         if (![row[field] isEqual:rule[field]]) return nil;
+    if (type == VDTConfigTypeExtension)
+        for (NSString *field in @[@"present", @"inherited", @"sourceType", @"sourceIdentifier", @"sourceRevision", @"containingAppIdentifier"])
+            if (![row[field] isEqual:rule[field]]) return nil;
     return row;
 }

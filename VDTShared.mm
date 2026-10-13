@@ -92,9 +92,17 @@ id valueForProcessConfigKeyWithPrefs(NSString *identifier,
     NSString *identifierKey = VDTConfigIdentifier(type);
     NSString *sectionKey = VDTConfigSection(type);
     if (!identifierKey || !sectionKey) return defaultValue;
+    BOOL cpuField = [@[@"enabled", @"percentage", @"interval", @"violationPolicy"] containsObject:key];
+    BOOL niceField = [@[@"niceEnabled", @"niceValue", @"niceRevision"] containsObject:key];
     for (id rawConfig in VDTConfigArray(source[sectionKey])) {
         if (![rawConfig isKindOfClass:[NSDictionary class]]) continue;
         NSDictionary *config = rawConfig;
+        // First record with this family's intent wins, including disabled or
+        // malformed intent. A row containing only the other family must not
+        // hide a later independent rule for the same extension identifier.
+        if (type == VDTConfigTypeExtension &&
+            ((cpuField && !VDTProcessConfigHasCPUFields(config)) ||
+             (niceField && !config[@"niceEnabled"] && !config[@"niceValue"] && !config[@"niceRevision"]))) continue;
         id configuredIdentifier = config[identifierKey];
         if ([configuredIdentifier isKindOfClass:[NSString class]] &&
             [configuredIdentifier isEqualToString:identifier]) {
@@ -123,7 +131,8 @@ void setValueForProcessConfigKeyWithPrefs(NSString *identifier,
     NSString *identifierKey = VDTConfigIdentifier(type);
     if (!identifierKey || !sectionKey) return;
     NSMutableArray *configs = [VDTConfigArray(source[sectionKey]) mutableCopy];
-    NSUInteger matchedIndex = NSNotFound;
+    NSUInteger matchedIndex = NSNotFound, firstMatch = NSNotFound;
+    BOOL cpuField = [@[@"enabled", @"percentage", @"interval", @"violationPolicy"] containsObject:key];
 
     for (NSUInteger index = 0; index < configs.count; index++) {
         id rawConfig = configs[index];
@@ -131,10 +140,13 @@ void setValueForProcessConfigKeyWithPrefs(NSString *identifier,
         id configuredIdentifier = ((NSDictionary *)rawConfig)[identifierKey];
         if ([configuredIdentifier isKindOfClass:[NSString class]] &&
             [configuredIdentifier isEqualToString:identifier]) {
+            if (firstMatch == NSNotFound) firstMatch = index;
+            if (type == VDTConfigTypeExtension && cpuField && !VDTProcessConfigHasCPUFields(rawConfig)) continue;
             matchedIndex = index;
             break;
         }
     }
+    if (matchedIndex == NSNotFound) matchedIndex = firstMatch;
 
     if (matchedIndex != NSNotFound) {
         NSMutableDictionary *config = [configs[matchedIndex] mutableCopy];
@@ -155,6 +167,13 @@ void setValueForProcessConfigKey(NSString *identifier, NSString *key, id value, 
     setValueForProcessConfigKeyWithPrefs(identifier, key, value, type, nil);
 }
 
+BOOL VDTProcessConfigHasCPUFields(NSDictionary *entry){
+    if (![entry isKindOfClass:[NSDictionary class]]) return NO;
+    for (NSString *key in @[@"enabled", @"percentage", @"interval", @"violationPolicy"])
+        if (entry[key]) return YES;
+    return NO;
+}
+
 BOOL VDTHasProcessConfig(NSString *identifier, VDTConfigType type, NSDictionary *prefs){
     if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0) return NO;
     NSString *sectionKey = VDTConfigSection(type);
@@ -164,12 +183,17 @@ BOOL VDTHasProcessConfig(NSString *identifier, VDTConfigType type, NSDictionary 
     for (id raw in VDTConfigArray(source[sectionKey])) {
         if (![raw isKindOfClass:[NSDictionary class]]) continue;
         id value = ((NSDictionary *)raw)[identifierKey];
-        if ([value isKindOfClass:[NSString class]] && [value isEqualToString:identifier]) return YES;
+        if ([value isKindOfClass:[NSString class]] && [value isEqualToString:identifier] &&
+            (type != VDTConfigTypeExtension || VDTProcessConfigHasCPUFields(raw))) return YES;
     }
     return NO;
 }
 
 void VDTRemoveProcessConfig(NSString *identifier, VDTConfigType type){
+    if (type == VDTConfigTypeExtension) {
+        (void)VDTRemoveExtensionCPUConfigReportingResult(identifier);
+        return;
+    }
     if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0) return;
     NSString *sectionKey = VDTConfigSection(type);
     NSString *identifierKey = VDTConfigIdentifier(type);
@@ -203,6 +227,32 @@ static BOOL VDTSavePrefsReportingResult(NSDictionary *candidate){
                                          NULL,
                                          YES);
     return YES;
+}
+
+BOOL VDTRemoveExtensionCPUConfigReportingResult(NSString *identifier){
+    if (![identifier isKindOfClass:[NSString class]] || identifier.length == 0) return NO;
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:PREFS_PATH error:nil];
+    if (!attributes) return ![[NSFileManager defaultManager] fileExistsAtPath:PREFS_PATH];
+    if (![attributes[NSFileType] isEqual:NSFileTypeRegular]) return NO;
+    id loaded = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    if (![loaded isKindOfClass:[NSDictionary class]]) return NO;
+    id rawSection = loaded[@"extensionConfigs"];
+    if (rawSection && ![rawSection isKindOfClass:[NSArray class]]) return NO;
+    NSMutableArray *remaining = [NSMutableArray new];
+    BOOL removed = NO;
+    for (id raw in rawSection) {
+        if ([raw isKindOfClass:[NSDictionary class]] && [raw[@"extensionIdentifier"] isEqual:identifier]) {
+            NSMutableDictionary *entry = [raw mutableCopy];
+            removed = removed || VDTProcessConfigHasCPUFields(entry);
+            for (NSString *key in @[@"enabled", @"percentage", @"interval", @"violationPolicy"])
+                [entry removeObjectForKey:key];
+            if (entry.count > 1) [remaining addObject:entry];
+        } else [remaining addObject:raw];
+    }
+    if (!removed) return YES;
+    NSMutableDictionary *prefs = [loaded mutableCopy];
+    prefs[@"extensionConfigs"] = remaining;
+    return VDTSavePrefsReportingResult(prefs);
 }
 
 id valueForProcessResourceRuleKeyWithPrefs(NSString *identifier,

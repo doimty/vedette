@@ -109,6 +109,7 @@ static void invoke_setter(VDTProcessConfiguration *owner, PSSpecifier *specifier
 }
 
 @implementation PSListController
+- (void)reloadSpecifiers { ++self.reloadCount; }
 - (void)reloadSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated {
     (void)animated;
     ++self.reloadCount;
@@ -146,6 +147,7 @@ static VDTProcessConfiguration *owner_for_type(VDTConfigType type, NSString *ide
     [owner.specifier setProperty:identifier forKey:@"applicationIdentifier"];
     [owner.specifier setProperty:identifier forKey:@"daemonName"];
     [owner.specifier setProperty:identifier forKey:@"extensionIdentifier"];
+    owner.parentController = [PSListController new];
     return owner;
 }
 
@@ -174,8 +176,10 @@ static void assert_bool(id value, BOOL expected) {
 static void success(VDTProcessConfiguration *owner, PSSpecifier *specifier, id input, int64_t expected) {
     unsigned beforePosts = posts;
     NSUInteger beforeAlerts = owner.alertCount, beforeReloads = owner.reloadCount;
+    NSUInteger beforeParentReloads = owner.parentController.reloadCount;
     invoke_setter(owner, specifier, input);
     assert(posts == beforePosts + 1);
+    assert(owner.parentController.reloadCount == beforeParentReloads + 1);
     assert(owner.alertCount == beforeAlerts && owner.reloadCount == beforeReloads + 1);
     id observed = invoke_getter(owner, specifier);
     if ([[specifier propertyForKey:@"key"] isEqual:@"enabled"]) assert_bool(observed, expected != 0);
@@ -318,10 +322,11 @@ int main(void) {
             @"extensionConfigs": @[@{@"extensionIdentifier": @"same.id", @"enabled": @NO, @"percentage": @20}]
         };
         assert([base writeToFile:PREFS_PATH atomically:YES]);
+        check_rows_and_nice(owner_for_type((VDTConfigType)999, @"same.id"), NO);
         for (NSNumber *kind in @[@(VDTConfigTypeApp), @(VDTConfigTypeDaemon), @(VDTConfigTypeExtension)]) {
             VDTConfigType type = (VDTConfigType)kind.unsignedLongValue;
             VDTProcessConfiguration *owner = owner_for_type(type, @"same.id");
-            check_rows_and_nice(owner, type == VDTConfigTypeApp || type == VDTConfigTypeDaemon);
+            check_rows_and_nice(owner, YES);
             PSSpecifier *active = row(owner, @"memoryRules", @"active");
             assert(invoke_getter(owner, active) == nil); // Same id in other type cannot leak.
             assert_bool(invoke_getter(owner, row(owner, @"memoryRules", @"enabled")), NO);

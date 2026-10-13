@@ -40,6 +40,8 @@ test-extensions:
 	@python3 -B tests/test_bundle_rules.py
 	@python3 -B tests/check_auto_monitor_path.py
 	@python3 -B tests/test_extensions_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
+	@python3 -B tests/test_extension_nice_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
+	@python3 -B tests/test_independent_rules_native.py --static-only
 
 
 test-rebuild:
@@ -47,6 +49,7 @@ test-rebuild:
 	@python3 -B tests/test_resource_ui21.py
 	@python3 -B tests/test_resource_preferences_native.py --static-only
 	@python3 -B tests/test_rebuild_baseline.py
+	@python3 -B tests/test_formal_projection.py
 
 
 test: test-cpu test-ui test-nice test-extensions test-rebuild

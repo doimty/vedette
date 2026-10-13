@@ -21,4 +21,5 @@
 - (NSString *)vdtNiceIdentifier;
 - (VDTConfigType)vdtNiceConfigurationType;
 - (VDTNicePreferences *)vdtNicePreferences;
+- (void)vdtReloadIndependentRules;
 @end

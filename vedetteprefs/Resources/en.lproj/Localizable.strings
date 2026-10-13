@@ -126,5 +126,17 @@
 "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.";
 "Invalid resource rule" = "Invalid resource rule";
 "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value." = "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value.";
+"CPU rule save failed" = "CPU rule save failed";
 "Resource rule save failed" = "Resource rule save failed";
 "The rule could not be saved. The previous saved value has been restored." = "The rule could not be saved. The previous saved value has been restored.";
+"Independent configurations enabled" = "Independent configurations enabled";
+"CPU follows app; independent rules enabled" = "CPU follows app; independent rules enabled";
+"CPU follows app; independent rules off" = "CPU follows app; independent rules off";
+"Follow containing app CPU" = "Follow containing app CPU";
+"Without its own CPU fields, this extension follows its app's CPU rule. Saving CPU settings creates a CPU override; a disabled CPU override removes Vedette CPU limits. Nice and resource rules stay independent." = "Without its own CPU fields, this extension follows its app's CPU rule. Saving CPU settings creates a CPU override; a disabled CPU override removes Vedette CPU limits. Nice and resource rules stay independent.";
+"Remove only this extension's CPU settings and follow its app? Nice, memory and Jetsam rules will be kept." = "Remove only this extension's CPU settings and follow its app? Nice, memory and Jetsam rules will be kept.";
+"Independent nice rule" = "Independent nice rule";
+"Nice follows containing app" = "Nice follows containing app";
+"Follow containing app nice" = "Follow containing app nice";
+"Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged." = "Without its own nice fields, this extension follows its app's nice rule. Saving a switch or value creates an independent nice rule; CPU and resource rules are unchanged.";
+"Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept." = "Remove only this extension's nice settings and follow its app? CPU, memory and Jetsam rules will be kept.";

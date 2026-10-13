@@ -159,3 +159,15 @@ M3不通过时不得宣称三模式完成。M2可单独形成有限候选，但�
 - 符号审计仅在 Darwin 去掉一个 Mach-O ABI 下划线；原白名单不变。正负例与 3 个故障变体已验证，本地最终引擎 5 项/15 行为变异、快速门禁与既有宿主回归全过；本地 Foundation 明确 SKIP，不当作原生证据。
 - 新 roothide deb sha256 `71ea7931f4b7497bf442a7d17b9acebaf76fff6919463f8c1a27dcded058c666`：fat arm64+arm64e / minos15.0 / sdk17.5 / 签名结构存在与边界有效 / 87 键资源校验通过。归档 `vedette-memory-build/run-38331391387/`；本地验证 `vedette-memory-plan/m6-cloud/ci-validation/`。
 - 本批不改资源生产代码：能力门禁全 false、backend NULL，不安装、不发布；版本仍 `1.1.10-1+ui21`，同版本不同字节仅作 CI 候选。下一步仍是正式 backend、恢复记录持久化及受控能力启用，host/mock 不代表真实 App 生效。
+
+### M6 正确基线重建（2026-10-13，替代旧 ui21 分叉候选）
+
+用户指出资源保存/回显失败以及 nice 丢失后明确要求从正确基线构建。采用完整已发布 `1.1.12-3` / `788f43b` 新分支 `feat/release-resource-rules`，第一父保留发布基线，三方整合旧bb211c0；候选改为 `1.1.13-1+rc1`，不能再用旧ui21候选。
+
+- 构建提交 `1dfce93`，run **38340606214** 双环境全绿；完整 nice 和卸载/工具权限保持发布字节，资源getter/严格整数/保存失败反馈修复。真实生产方法+VDTShared Foundation往返95次、失败回读/不通知、旧错getter负对照全过；nice63/SpringBoard52断言、各15行为变异实际运行，无native SKIP。
+- 独立成品核验：每包3个双架构Mach-O/minOS15/sdk17.5、代码页与entitlement哈希、129键资源一致。RootHide sha `b126d9d5…`、rootless `92d34855…`。详 [REBUILD_PLAN.md](REBUILD_PLAN.md)，归档 `vedette-rebuild-1113/run-38340606214/`。
+- 保存正确和原有nice完整不等于内存/Jetsam已生效：生产backend仍NULL/能力全false；未来resource-only生命周期与恢复持久化尚未完成。未设备/安装/发布，真机Preferences点击/渲染与RunningBoard漂移待后续。
+
+### 正式 1.1.13-2 修复（进行中）
+
+扩展 nice 的独立/继承/identity/journal/source receipt 与四侧独立 enabled 置顶已接线，CPU Follow 与 nice Follow 按族删除、重复记录读取/保存一致、写失败回读不通知。全量本地门禁与双架构 SDK syntax 通过；新增真实 Foundation fixtures 待私有 CI 原生执行，非本机 PASS。资源 backend 仍 NULL/能力全 false，不把列表置顶当内存/Jetsam实际应用。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。开发走私有新分支；对应源码公开归档授权、原生/真机UI验收、APT发布尚待，不自动装机。

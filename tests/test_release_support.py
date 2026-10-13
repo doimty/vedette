@@ -58,17 +58,17 @@ class ReleaseSupport(unittest.TestCase):
                 # before changing metadata or hooks; no dual-version wildcard.
                 with self.assertRaises(ValueError):candidate_stage_module.stage_release(stage,scheme)
                 self.assertEqual(control.read_bytes(),released)
-                candidate=released.replace(b'Version: 1.1.12-3\n',b'Version: 1.1.13-1+rc1\n',1)
+                candidate=released.replace(b'Version: 1.1.12-3\n',b'Version: 1.1.13-2\n',1)
                 self.assertNotEqual(candidate,released)
                 control.write_bytes(candidate)
                 candidate_stage_module.stage_release(stage,scheme)
-                self.assertIn(b'Version: 1.1.13-1+rc1\n',control.read_bytes())
+                self.assertIn(b'Version: 1.1.13-2\n',control.read_bytes())
                 self.assertEqual(b'roothide,' in control.read_bytes(),scheme=='roothide')
                 for hook in ('postinst','prerm'):
                     folder='layout-rootless' if scheme=='rootless' else 'layout'
                     self.assertEqual((stage/'DEBIAN'/hook).read_bytes(),(ROOT/folder/'DEBIAN'/hook).read_bytes())
-        for version in ('1.1.12-3','1.1.10-1+ui21'):
-            subprocess.run(['dpkg','--compare-versions','1.1.13-1+rc1','gt',version],check=True)
+        for version in ('1.1.13-1+rc1','1.1.12-3','1.1.10-1+ui21'):
+            subprocess.run(['dpkg','--compare-versions','1.1.13-2','gt',version],check=True)
 
     def test_mismatched_scheme_or_version_fails_before_replacing_control(self):
         with tempfile.TemporaryDirectory() as td:

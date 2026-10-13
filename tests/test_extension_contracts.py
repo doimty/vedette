@@ -21,7 +21,7 @@ DETAIL = 'vedetteprefs/VDTProcessConfiguration.m'
 LIST = 'vedetteprefs/VDTExtensionListController.m'
 METADATA = 'VDTBundleIdentity.mm'
 SOURCES = [SHARED, 'VDTShared.h', MANAGER, DETAIL, LIST, METADATA,
-           'Vedette.xm', 'vedetteprefs/VDTRootListController.m']
+           'Vedette.xm', 'vedetteprefs/VDTRootListController.m', 'vedetteprefs/VDTListPresentation.m']
 
 
 def has(text, *tokens):
@@ -45,12 +45,19 @@ def storage_contract(sources):
     has(getter, 'if (!identifierKey || !sectionKey) return defaultValue;', 'VDTConfigArray(source[sectionKey])')
     has(setter, 'if (!identifierKey || !sectionKey) return;', 'setValueForKeyWithPrefs(sectionKey, configs, source);')
     presence = function_source(shared, 'BOOL VDTHasProcessConfig')
-    has(presence, 'if (!sectionKey || !identifierKey) return NO;', 'isEqualToString:identifier]) return YES;')
+    has(presence, 'if (!sectionKey || !identifierKey) return NO;',
+        '[value isEqualToString:identifier]',
+        '(type != VDTConfigTypeExtension || VDTProcessConfigHasCPUFields(raw))) return YES;')
     assert '@"enabled"' not in presence, 'disabled override must still be present'
     remove = function_source(shared, 'void VDTRemoveProcessConfig')
     has(remove, 'if (!sectionKey || !identifierKey) return;', 'for (id raw in VDTConfigArray(source[sectionKey]))',
         'removed = YES;', '[remaining addObject:raw];', 'if (removed) setValueForKeyWithPrefs(sectionKey, remaining, source);')
     assert 'break;' not in remove, 'inheritance must remove ALL duplicate overrides'
+    has(remove, '(void)VDTRemoveExtensionCPUConfigReportingResult(identifier);')
+    cpu_remove = function_source(shared, 'BOOL VDTRemoveExtensionCPUConfigReportingResult')
+    has(cpu_remove, 'for (id raw in rawSection)', 'entry.count > 1',
+        '[entry removeObjectForKey:key];', 'return VDTSavePrefsReportingResult(prefs);')
+    assert 'break;' not in cpu_remove, 'CPU Follow must clear every duplicate CPU override'
     save = function_source(shared, 'void setValueForKeyWithPrefs')
     has(save, '[newPrefs writeToFile:PREFS_PATH atomically:YES];',
         'CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),', '(CFStringRef)PREFS_CHANGED_NN,')
@@ -121,12 +128,17 @@ def ui_contract(sources):
         '[[row propertyForKey:@"extensionIdentifier"] localizedStandardContainsString:query]',
         '[[row propertyForKey:@"containingAppName"] localizedStandardContainsString:query]')
     preview = function_source(source, '- (id)previewStringForSpecifier')
-    has(preview, 'if (!VDTHasProcessConfig(identifier, VDTConfigTypeExtension, prefs))',
-        '@"Follow containing app"', '@"Independent rule off"')
+    has(preview, 'VDTListExtensionSubtitleKey(identifier, prefs)')
+    subtitle = function_source(sources['vedetteprefs/VDTListPresentation.m'], 'NSString *VDTListExtensionSubtitleKey')
+    has(subtitle, 'VDTHasProcessConfig(identifier, VDTConfigTypeExtension, snapshot)',
+        'VDTListConfigurationEnabled(identifier, VDTConfigTypeExtension, snapshot)',
+        '@"Follow containing app"', '@"Independent rule off"',
+        '@"CPU follows app; independent rules enabled"')
     detail = sources[DETAIL]
     button = function_source(detail, '- (void)confirmFollowContainingApp')
     has(button, 'if ([self configurationType] != VDTConfigTypeExtension) return;', 'UIAlertActionStyleDestructive',
-        'VDTRemoveProcessConfig([owner validIdentifier], VDTConfigTypeExtension);',
+        'BOOL saved = VDTRemoveExtensionCPUConfigReportingResult([owner validIdentifier]);',
+        'if (!saved)', '@"CPU rule save failed"',
         'reloadExtensionRule:[owner validIdentifier]', '[owner reloadSpecifiers];')
     has(detail, '[inheritance setButtonAction:@selector(confirmFollowContainingApp)];', 'case VDTConfigTypeExtension:',
         'propertyForKey:@"extensionIdentifier"')
@@ -215,7 +227,7 @@ class ExtensionContracts(unittest.TestCase):
             (METADATA, '![expectedPath isEqualToString:executablePath]', '![expectedPath hasPrefix:executablePath]'),
             (LIST, 'dispatch_async(dispatch_get_main_queue(),', 'dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),'),
             (LIST, 'if (!identifier || byIdentifier[identifier]) continue;', 'if (!identifier) continue;'),
-            (DETAIL, 'VDTRemoveProcessConfig([owner validIdentifier], VDTConfigTypeExtension);', 'VDTRemoveProcessConfig([owner validIdentifier], VDTConfigTypeApp);'),
+            (DETAIL, 'BOOL saved = VDTRemoveExtensionCPUConfigReportingResult([owner validIdentifier]);', 'BOOL saved = YES;'),
         ]
         for name, old, new in mutations:
             with self.subTest(file=name, mutant=old):

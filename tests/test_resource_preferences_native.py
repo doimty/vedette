@@ -28,7 +28,8 @@ ROW_FIELDS = {
     'jetsamEnabledSpec': ('jetsamRules', 'enabled', 'PSSwitchCell'),
     'jetsamBandSpec': ('jetsamRules', 'priority', 'PSEditTextCell'),
 }
-NICE_GUARD = '''        if ([self configurationType] == VDTConfigTypeApp || [self configurationType] == VDTConfigTypeDaemon) {
+NICE_GUARD = '''        if ([self configurationType] == VDTConfigTypeApp || [self configurationType] == VDTConfigTypeDaemon ||
+            [self configurationType] == VDTConfigTypeExtension) {
             [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];
         }'''
 ERROR_KEYS = (
@@ -41,7 +42,8 @@ METHOD_PREFIXES = (
     '- (NSString*)validIdentifier', '-(VDTConfigType)configurationType',
     '- (NSString *)vdtNiceIdentifier', '- (VDTConfigType)vdtNiceConfigurationType',
     '- (VDTNicePreferences *)vdtNicePreferences', '- (NSArray *)specifiers',
-    '- (void)presentResourceRuleError:', '- (void)setResourceRuleValue:',
+    '- (void)presentResourceRuleError:', '- (void)vdtReloadIndependentRules',
+    '- (void)setResourceRuleValue:',
     '- (id)readResourceRuleValue:',
 )
 
@@ -126,7 +128,7 @@ def detail_contract(source):
         assert text in helper, 'missing strict parser contract: ' + text
     boolean = function_source(helper, 'if ([key isEqualToString:@"enabled"])')
     assert '!= CFBooleanGetTypeID()' in boolean, 'numeric 0/1 must not become switches'
-    assert source.count(NICE_GUARD) == 1, 'only App/Daemon may instantiate nice editor'
+    assert source.count(NICE_GUARD) == 1, 'only App/Daemon/Extension may instantiate nice editor'
     assert source.count('set:@selector(setProcessConfigValue:specifier:)') == 4
     assert source.count('get:@selector(readProcessConfigValue:)') == 4
 
@@ -197,7 +199,9 @@ class SourceContracts(unittest.TestCase):
                                     '    if (!saved)', reason='missing saved-value readback after storage result')
 
     def test_failed_save_without_feedback_rejected(self):
-        self.reject_detail_mutation('if (!saved)', 'if (saved)', reason='missing save-failure feedback branch')
+        self.reject_detail_mutation(
+            'if (!saved) {\n        [self presentResourceRuleError:VDTLoc(self.class, @"Resource rule save failed")',
+            'if (saved) {', reason='missing save-failure feedback branch')
 
     def test_numeric_switch_coercion_rejected(self):
         self.reject_detail_mutation('!= CFBooleanGetTypeID()', '== CFBooleanGetTypeID()')
@@ -205,7 +209,7 @@ class SourceContracts(unittest.TestCase):
     def test_overflow_guard_removed_rejected(self):
         self.reject_detail_mutation('        if (digit > limit || magnitude > (limit - digit) / 10) return nil;\n', '')
 
-    def test_extension_nice_editor_rejected(self):
+    def test_unknown_type_nice_editor_rejected(self):
         self.reject_detail_mutation(NICE_GUARD,
                                     '        [rootSpecifiers addObjectsFromArray:[[self vdtNicePreferences] specifiers]];')
 

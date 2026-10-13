@@ -33,6 +33,19 @@ extern NSString * const VDTTargetStartSecondsKey;
 extern NSString * const VDTTargetStartMicrosecondsKey;
 extern NSString * const VDTTargetMemoryRuleKey;
 extern NSString * const VDTTargetJetsamRuleKey;
+extern NSString * const VDTTargetContainingAppIdentifierKey;
+extern NSString * const VDTTargetNiceSourceTypeKey;
+extern NSString * const VDTTargetNiceSourceIdentifierKey;
+extern NSString * const VDTTargetNiceSourceRevisionKey;
+
+// Strict independent nice resolution; never uses CPU presence/enabled state.
+// Extension targets retain their real identity; the containing App source is
+// carried separately. These targets are for vdt_nice_apply, NOT vdt_apply_target.
+NSArray<NSDictionary *> *vdt_nice_resolve_targets(NSDictionary *prefs);
+NSArray<NSDictionary *> *vdt_nice_targets_for_pid(pid_t pid, NSDictionary *prefs);
+// Hot paths consume a trusted VDTNiceRulesFromPrefs snapshot published on reload.
+NSArray<NSDictionary *> *vdt_nice_resolve_targets_from_rules(NSDictionary *rules);
+NSArray<NSDictionary *> *vdt_nice_targets_for_pid_from_rules(pid_t pid, NSDictionary *rules);
 
 // Type-checked normalisation of the user-writable prefs plist. Entries without a
 // valid identifier are dropped; entries with malformed parameters are retained

@@ -57,6 +57,8 @@ typedef NS_ENUM(NSInteger, UIAlertActionStyle) { UIAlertActionStyleDefault };
     NSArray *_specifiers;
 }
 @property(nonatomic, strong) PSSpecifier *specifier;
+@property(nonatomic, strong) PSListController *parentController;
+- (void)reloadSpecifiers;
 @property(nonatomic, strong) id displayedValue;
 @property(nonatomic, strong) UIAlertController *lastAlert;
 @property(nonatomic) NSUInteger reloadCount;
@@ -79,6 +81,7 @@ typedef NS_ENUM(NSInteger, UIAlertActionStyle) { UIAlertActionStyleDefault };
 - (VDTNicePreferences *)vdtNicePreferences;
 - (NSArray *)specifiers;
 - (void)presentResourceRuleError:(NSString *)title message:(NSString *)message;
+- (void)vdtReloadIndependentRules;
 - (void)setResourceRuleValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readResourceRuleValue:(PSSpecifier *)specifier;
 @end
@@ -96,8 +99,8 @@ typedef NS_ENUM(NSInteger, UIAlertActionStyle) { UIAlertActionStyleDefault };
 @interface VDTActionListController : NSObject
 @end
 
-// Sentinel nice provider: assert App/Daemon retain the insertion and Extension
-// never instantiates it; does not simulate/execute nice storage or runtime.
+// Sentinel nice provider: assert all three supported types retain insertion;
+// unknown types never instantiate it. Nice storage/runtime are tested separately.
 @interface VDTNicePreferences : NSObject
 - (instancetype)initWithOwner:(VDTProcessConfiguration *)owner;
 - (NSArray *)specifiers;
