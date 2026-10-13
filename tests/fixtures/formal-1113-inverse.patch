@@ -10,7 +10,7 @@ index 9c030ba..6c6529f 100644
  tests/fixtures/appex-ui21-inverse.patch whitespace=-blank-at-eol
 +tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index 4c5466c..740fb80 100644
+index 4c5466c..b833b56 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
 @@ -8,10 +8,11 @@ on:
@@ -72,7 +72,7 @@ index 4c5466c..740fb80 100644
        PACKAGE_ARCH: ${{ matrix.package_arch }}
        PACKAGE_PREFIX: ${{ matrix.prefix }}
 -      PACKAGE_VERSION: 1.1.13-1+rc1
-+      PACKAGE_VERSION: 1.1.13-2
++      PACKAGE_VERSION: 1.1.13-3
        FINALPACKAGE: 1
        PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
  
@@ -1274,7 +1274,7 @@ index 7907eab..c64f6f0 100644
  }
  
 diff --git a/ci/stage_release.py b/ci/stage_release.py
-index 0d1f328..12ca362 100644
+index 0d1f328..d391c8e 100644
 --- a/ci/stage_release.py
 +++ b/ci/stage_release.py
 @@ -14,11 +14,11 @@ def stage_release(stage,scheme):
@@ -1284,21 +1284,21 @@ index 0d1f328..12ca362 100644
      if not control.is_file() or control.is_symlink(): raise ValueError('missing/unsafe staged control')
      text=control.read_text();fields=dict(line.split(':',1) for line in text.splitlines() if ':' in line)
 -    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.13-1+rc1':
-+    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.13-2':
++    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.13-3':
          raise ValueError('wrong staged package/version')
      if fields.get('Architecture','').strip()!=ARCH[scheme]: raise ValueError('staged scheme/architecture mismatch')
      old='Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist'
      if text.count(old)!=1: raise ValueError('unexpected dependency declaration')
      if scheme=='rootless':
 diff --git a/control b/control
-index ffb89a4..211dfe8 100644
+index ffb89a4..a99d483 100644
 --- a/control
 +++ b/control
 @@ -1,8 +1,8 @@
  Package: com.doimty.vedette
  Name: Vedette
 -Version: 1.1.13-1+rc1
-+Version: 1.1.13-2
++Version: 1.1.13-3
  Architecture: iphoneos-arm
  Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级
  Conflicts: com.udevs.vedette
