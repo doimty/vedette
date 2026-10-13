@@ -287,6 +287,11 @@ int main(void) {
     dispatch_block_t retryBlock=[deferredTasks[0] copy]; [deferredTasks removeObjectAtIndex:0]; retryBlock();
     REQUIRE(extensionNice()==5 && writes==1 && cpuCalls==0 && cpuDispatches==0 && deferredTasks.count==0);
     REQUIRE(!nice_retry_scheduled && vdt_nice_next_retry_delay()<0);
+    // Retire the REAL singleton's journal before reset removes its files.
+    // Losing a live original-value record is correctly a fail-closed event;
+    // a fixture reset must not masquerade as that production failure.
+    savePrefs(@{}); reloadPrefsSync();
+    REQUIRE(coordinator()->records.count==0 && extensionNice()==-1 && writes==2);
     // Old-generation delayed work cannot apply a rule after it was removed.
     reset(); savePrefs(p); deferAfter=YES; retryTestNow=20; readError=EIO; reloadPrefsSync();
     REQUIRE(deferredTasks.count==1); retryBlock=[deferredTasks[0] copy]; [deferredTasks removeObjectAtIndex:0];
