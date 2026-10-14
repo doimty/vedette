@@ -151,7 +151,7 @@ def main():
             if result.returncode == 0 or 'ASSERTION FAILED:' not in result.stderr:
                 raise RuntimeError(f'{name}: did not fail a real runtime assertion: {result.returncode}\n{result.stderr}')
             print('KILLED (runtime assertion):', name, result.stderr.strip(), flush=True)
-        print('PASS: production Foundation fake-kernel baseline + 6 runtime mutants (not device)', flush=True)
+        print('PASS: production Foundation fake-kernel baseline +', len(MUTANTS), 'runtime mutants (not device)', flush=True)
         return 0
 
 if __name__ == '__main__':

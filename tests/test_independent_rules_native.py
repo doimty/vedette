@@ -46,6 +46,9 @@ OWNER_FUNCS = (
     '- (VDTNicePreferences *)vdtNicePreferences',
     '- (NSArray *)specifiers',
     '- (void)vdtReloadIndependentRules',
+    '- (NSString *)vdtResourceReceiptText',
+    '- (void)vdtFollowMemoryApp', '- (void)vdtFollowJetsamApp',
+    '- (void)vdtFollowResourceSection:', '- (void)presentResourceRuleError:',
 )
 NICE_MARKERS = (
     '// Metadata is populated only by the list\'s verified background enumeration.',
@@ -224,6 +227,7 @@ def native_source(list_text, nice_text, owner_text):
     return ('#import "PreferencesHost.h"\n'
             '#import "vedetteprefs/VDTListOrder.h"\n'
             '#import "VDTNiceShared.h"\n'
+            '#import "VDTResourceShared.h"\n'
             '#import "vedetteprefs/VDTNicePreferences.h"\n'
             + '\n\n'.join(pieces) + '\n'
             + nice_text[nice_text.index(NICE_MARKERS[0]):nice_text.index(NICE_MARKERS[1])]
@@ -358,6 +362,9 @@ def build_and_run(directory, label, list_text, nice_text, owner_text, shared_tex
         (['xcrun', 'clang++', '-std=c++17', *strict, '-Dnotify_post=VDTTestNotifyPost', '-c',
           str(nice_shared_path), '-o', str(directory / (label + '-niceshared.o'))],
          directory / (label + '-niceshared.o')),
+        (['xcrun', 'clang++', '-std=c++17', *strict, '-Dnotify_post=VDTTestNotifyPost',
+          '-DCFNotificationCenterPostNotification=VDTTestPostNotification', '-c', str(ROOT / 'VDTResourceShared.mm'),
+          '-o', str(directory / (label + '-resourceshared.o'))], directory / (label + '-resourceshared.o')),
         (['xcrun', 'clang++', '-std=c++17', '-fobjc-arc', '-fblocks', '-Wall', '-Wextra',
           '-Dnotify_post=VDTTestNotifyPost', '-DCFNotificationCenterPostNotification=VDTTestPostNotification', '-I' + str(ROOT), '-I' + str(STUBS), '-c',
           str(FIXTURE), '-o', str(directory / (label + '-fixture.o'))],
