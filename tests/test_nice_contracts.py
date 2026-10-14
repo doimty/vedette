@@ -54,6 +54,15 @@ class NiceContracts(unittest.TestCase):
         self.assertIn('![raw[@"boot"] isEqual:boot]',r)
         self.assertIn('@"value", @"valid", @"revision", @"enabled", @"requestedEnabled"',s)
         self.assertLess(s.index('if (![data writeToFile:PREFS_PATH options:NSDataWritingAtomic error:error]) return NO;'),s.index('notify_post([PREFS_CHANGED_NN UTF8String]);'))
+    def test_stale_or_unreadable_journal_entries_never_dead_lock(self):
+        r=source('VDTNiceRuntime.mm')
+        boot=r.index('![raw[@"boot"] isEqual:boot]')
+        entries=r.index('boundTarget(entry[@"target"])')
+        self.assertLess(boot,entries)
+        guarded=r.index('if (records.count) { loadError = EINVAL; return; }')
+        self.assertLess(guarded,r.index('dropped = YES;'))
+        self.assertIn('if (dropped)',r)
+        self.assertIn('@{@"version": @1, @"boot": boot, @"records": validated}',r)
     def test_ui_selection_and_build_reentrancy(self):
         ui=source('vedetteprefs/VDTNicePreferences.m')
         build=ui[ui.index('- (NSArray<PSSpecifier *> *)specifiers'):ui.index('- (id)readPreferenceValue:')]

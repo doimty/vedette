@@ -149,6 +149,36 @@ int main(void) {
         clearFixture(); c = [VDTNiceCoordinator new]; cycle(c,prefs(YES,5,@"a"));
         REQUIRE(writePlist(&c->store,VDT_NICE_JOURNAL,@{@"version":@1,@"boot":@"previous-boot",@"records":c->records}) == 0);
         c = [VDTNiceCoordinator new]; cycle(c,@{}); REQUIRE(writeCount == 1 && c->records.count == 0);
+        // Stale-boot junk is discarded before entry validation: a record an
+        // older version wrote must never dead-lock the store it cannot join.
+        clearFixture(); c = [VDTNiceCoordinator new]; cycle(c,prefs(YES,5,@"a"));
+        NSDictionary *legacyAppex = @{VDTTargetPidKey: @424243, VDTConfigTypeKey: @(VDTConfigTypeApp),
+            VDTTargetNameKey: @"com.example.host", VDTTargetStartSecondsKey: @100, VDTTargetStartMicrosecondsKey: @1,
+            VDTTargetExecutablePathKey: @"/private/var/containers/Bundle/Application/UUID/Host.app/PlugIns/HostService.appex/HostService"};
+        NSString *legacyKey = instanceKey(legacyAppex);
+        NSDictionary *legacyRecord = @{@"captured": @YES, @"original": @0, @"owns": @NO,
+            @"owned": @0, @"hasIntent": @NO, @"intent": @0};
+        NSMutableDictionary *junk = [c->records mutableCopy];
+        junk[legacyKey] = @{@"target": legacyAppex, @"record": legacyRecord};
+        REQUIRE(writePlist(&c->store,VDT_NICE_JOURNAL,@{@"version":@1,@"boot":@"previous-boot",@"records":junk}) == 0);
+        c = [VDTNiceCoordinator new]; cycle(c,@{}); REQUIRE(c->loadError == 0 && c->records.count == 0 && writeCount == 1);
+        int junkError = 0; NSDictionary *junkFile = readPlist(&c->store,VDT_NICE_JOURNAL,&junkError);
+        REQUIRE(!junkError && [junkFile[@"boot"] isEqual:VDTNiceBootToken()] && [junkFile[@"records"] count] == 0);
+        // Format drift on a current-boot journal: unreadable entries are
+        // dropped, readable records kept, and the store stays usable.
+        clearFixture(); c = [VDTNiceCoordinator new]; cycle(c,prefs(YES,5,@"a"));
+        NSMutableDictionary *mixed = [c->records mutableCopy];
+        mixed[legacyKey] = @{@"target": legacyAppex, @"record": legacyRecord};
+        REQUIRE(writePlist(&c->store,VDT_NICE_JOURNAL,@{@"version":@1,@"boot":VDTNiceBootToken(),@"records":mixed}) == 0);
+        c = [VDTNiceCoordinator new]; cycle(c,prefs(YES,5,@"a"));
+        REQUIRE(c->loadError == 0 && c->records.count == 1 && c->records[legacyKey] == nil && niceNow == 5);
+        int mixedError = 0; NSDictionary *mixedFile = readPlist(&c->store,VDT_NICE_JOURNAL,&mixedError);
+        REQUIRE(!mixedError && [mixedFile[@"records"] count] == 1);
+        // While this coordinator still owns in-memory records, an alien file
+        // keeps the strict guarded form instead of being merged or dropped.
+        mixed[legacyKey] = @{@"target": @{}, @"record": @{}};
+        REQUIRE(writePlist(&c->store,VDT_NICE_JOURNAL,@{@"version":@1,@"boot":VDTNiceBootToken(),@"records":mixed}) == 0);
+        cycle(c,prefs(YES,5,@"a")); REQUIRE(c->loadError != 0);
         clearFixture(); c = [VDTNiceCoordinator new]; cycle(c,prefs(YES,5,@"a"));
         REQUIRE(writePlist(&c->store,VDT_NICE_REQUEST,@{@"version":@1,@"boot":VDTNiceBootToken(),@"nonce":@"test-removal"}) == 0);
         cycle(c,prefs(YES,5,@"a"));

@@ -252,27 +252,42 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         return;
     }
     if (error) { loadError = error; return; }
-    if (![raw isKindOfClass:NSDictionary.class] || ![raw[@"version"] isEqual:@1] ||
-        !text(raw[@"boot"], 100) || ![raw[@"records"] isKindOfClass:NSDictionary.class] ||
-        [raw[@"records"] count] > VDTNiceMaximumRecords) { loadError = EINVAL; return; }
-    NSMutableDictionary *validated = [NSMutableDictionary dictionary];
-    NSDictionary *entries = raw[@"records"];
-    for (id key in entries) {
-        id entry = entries[key];
-        if (![entry isKindOfClass:NSDictionary.class]) { loadError = EINVAL; return; }
-        NSDictionary *target = boundTarget(entry[@"target"]); VDTNiceRecord r = {};
-        if (!target || !decodeRecord(entry[@"record"], &r) || ![key isEqual:instanceKey(target)]) {
-            loadError = EINVAL; return;
-        }
-        validated[key] = @{@"target": target, @"record": encodeRecord(&r)};
-    }
+    if (![raw isKindOfClass:NSDictionary.class] || !text(raw[@"boot"], 100)) { loadError = EINVAL; return; }
     if (![raw[@"boot"] isEqual:boot]) {
         // A PID+start token is only meaningful within its boot. Never restore
         // an old boot's baseline into a new boot, even if all numbers collide.
+        // Discard the stale journal before any entry validation: a record an
+        // older version wrote must not keep the store from being replaced.
         int saved = writePlist(&store, VDT_NICE_JOURNAL, @{@"version": @1, @"boot": boot, @"records": @{}});
         if (saved) { loadError = saved; return; }
         [records removeAllObjects];
-    } else records = validated;
+        return;
+    }
+    if (![raw[@"version"] isEqual:@1] || ![raw[@"records"] isKindOfClass:NSDictionary.class] ||
+        [raw[@"records"] count] > VDTNiceMaximumRecords) { loadError = EINVAL; return; }
+    NSMutableDictionary *validated = [NSMutableDictionary dictionary];
+    NSDictionary *entries = raw[@"records"];
+    BOOL dropped = NO;
+    for (id key in entries) {
+        id entry = entries[key];
+        NSDictionary *target = [entry isKindOfClass:NSDictionary.class] ? boundTarget(entry[@"target"]) : nil;
+        VDTNiceRecord r = {};
+        if (!target || !decodeRecord(entry[@"record"], &r) || ![key isEqual:instanceKey(target)]) {
+            // Format drift must not dead-lock the whole store: a fresh load
+            // drops records this version cannot read (an unreadable record
+            // could never be restored from), while a live coordinator that
+            // still owns in-memory records keeps the strict guarded form.
+            if (records.count) { loadError = EINVAL; return; }
+            dropped = YES;
+            continue;
+        }
+        validated[key] = @{@"target": target, @"record": encodeRecord(&r)};
+    }
+    if (dropped) {
+        int saved = writePlist(&store, VDT_NICE_JOURNAL, @{@"version": @1, @"boot": boot, @"records": validated});
+        if (saved) { loadError = saved; return; }
+    }
+    records = validated;
 }
 - (void)checkRestoreRequest {
     BOOL wasPaused = paused;

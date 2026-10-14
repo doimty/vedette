@@ -131,7 +131,7 @@ index ccc20f0..e92c40c 100644
  }
  #endif
 diff --git a/VDTNiceRuntime.mm b/VDTNiceRuntime.mm
-index 4e5b626..7546600 100644
+index 4e5b626..64cfee4 100644
 --- a/VDTNiceRuntime.mm
 +++ b/VDTNiceRuntime.mm
 @@ -1,12 +1,15 @@
@@ -300,7 +300,65 @@ index 4e5b626..7546600 100644
  }
  - (void)dealloc { VDTNiceStoreClose(&store); }
  - (void)load {
-@@ -233,11 +294,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -189,31 +250,46 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+         // not a new installation. Keep the only remaining baseline in memory.
+         if (records.count) loadError = ENOENT;
+         return;
+     }
+     if (error) { loadError = error; return; }
+-    if (![raw isKindOfClass:NSDictionary.class] || ![raw[@"version"] isEqual:@1] ||
+-        !text(raw[@"boot"], 100) || ![raw[@"records"] isKindOfClass:NSDictionary.class] ||
++    if (![raw isKindOfClass:NSDictionary.class] || !text(raw[@"boot"], 100)) { loadError = EINVAL; return; }
++    if (![raw[@"boot"] isEqual:boot]) {
++        // A PID+start token is only meaningful within its boot. Never restore
++        // an old boot's baseline into a new boot, even if all numbers collide.
++        // Discard the stale journal before any entry validation: a record an
++        // older version wrote must not keep the store from being replaced.
++        int saved = writePlist(&store, VDT_NICE_JOURNAL, @{@"version": @1, @"boot": boot, @"records": @{}});
++        if (saved) { loadError = saved; return; }
++        [records removeAllObjects];
++        return;
++    }
++    if (![raw[@"version"] isEqual:@1] || ![raw[@"records"] isKindOfClass:NSDictionary.class] ||
+         [raw[@"records"] count] > VDTNiceMaximumRecords) { loadError = EINVAL; return; }
+     NSMutableDictionary *validated = [NSMutableDictionary dictionary];
+     NSDictionary *entries = raw[@"records"];
++    BOOL dropped = NO;
+     for (id key in entries) {
+         id entry = entries[key];
+-        if (![entry isKindOfClass:NSDictionary.class]) { loadError = EINVAL; return; }
+-        NSDictionary *target = boundTarget(entry[@"target"]); VDTNiceRecord r = {};
++        NSDictionary *target = [entry isKindOfClass:NSDictionary.class] ? boundTarget(entry[@"target"]) : nil;
++        VDTNiceRecord r = {};
+         if (!target || !decodeRecord(entry[@"record"], &r) || ![key isEqual:instanceKey(target)]) {
+-            loadError = EINVAL; return;
++            // Format drift must not dead-lock the whole store: a fresh load
++            // drops records this version cannot read (an unreadable record
++            // could never be restored from), while a live coordinator that
++            // still owns in-memory records keeps the strict guarded form.
++            if (records.count) { loadError = EINVAL; return; }
++            dropped = YES;
++            continue;
+         }
+         validated[key] = @{@"target": target, @"record": encodeRecord(&r)};
+     }
+-    if (![raw[@"boot"] isEqual:boot]) {
+-        // A PID+start token is only meaningful within its boot. Never restore
+-        // an old boot's baseline into a new boot, even if all numbers collide.
+-        int saved = writePlist(&store, VDT_NICE_JOURNAL, @{@"version": @1, @"boot": boot, @"records": @{}});
++    if (dropped) {
++        int saved = writePlist(&store, VDT_NICE_JOURNAL, @{@"version": @1, @"boot": boot, @"records": validated});
+         if (saved) { loadError = saved; return; }
+-        [records removeAllObjects];
+-    } else records = validated;
++    }
++    records = validated;
+ }
+ - (void)checkRestoreRequest {
+     BOOL wasPaused = paused;
+     NSString *oldNonce = restoreNonce;
+     paused = NO; restoreNonce = nil;
+@@ -233,11 +309,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
      if (wasPaused != paused || ![oldNonce ?: @"" isEqual:restoreNonce ?: @""]) receiptDirty = YES;
  }
  - (void)reload:(NSDictionary *)prefs {
@@ -313,7 +371,7 @@ index 4e5b626..7546600 100644
      if (rules.count > VDTNiceMaximumRecords) loadError = E2BIG;
      [self checkRestoreRequest];
  }
-@@ -250,84 +311,137 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -250,84 +326,137 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
      if (next.count > VDTNiceMaximumRecords) return E2BIG;
      int error = writePlist(&store, VDT_NICE_JOURNAL, @{@"version": @1, @"boot": boot, @"records": next});
      if (!error) records = next;
@@ -464,7 +522,7 @@ index 4e5b626..7546600 100644
      for (NSString *key in outcomes) {
          NSDictionary *outcome = outcomes[key]; NSString *configKey = ruleKey(outcome[@"target"]);
          if (!configKey) continue;
-@@ -341,13 +455,18 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -341,13 +470,18 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
          NSDictionary *rule = allRules[key]; NSMutableDictionary *row = [rule mutableCopy];
          BOOL enabled = [rule[@"enabled"] boolValue];
          NSString *state = enabled ? @"target-not-running" : @"disabled";
@@ -483,7 +541,7 @@ index 4e5b626..7546600 100644
              BOOL failure = ![@[@"applied", @"restored", @"disabled", @"target-not-running"] containsObject:current];
              if (failure) { ++pendingCount; state = current; error = [outcome[@"error"] intValue]; sawFailure = YES; }
              else if (!sawFailure && ![current isEqual:@"target-not-running"]) state = current;
-@@ -366,11 +485,12 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -366,11 +500,12 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
          if (protectedRule(rule) && [rule[@"requestedEnabled"] boolValue]) state = @"protected";
          if (paused && !restoring && !sawFailure) state = @"paused";
          if (loadError) { state = boot ? @"state-unavailable" : @"boot-unavailable"; error = loadError; }
@@ -497,7 +555,7 @@ index 4e5b626..7546600 100644
      NSDictionary *receipt = @{@"version": @1, @"boot": boot, @"rules": rows,
          @"recordCount": @(records.count), @"pendingRestoreCount": @(totalPendingRestore),
          @"paused": @(paused), @"restoreNonce": restoreNonce ?: @"", @"storeError": @(loadError),
-@@ -390,6 +510,7 @@ static VDTNiceCoordinator *coordinator(void) {
+@@ -390,6 +525,7 @@ static VDTNiceCoordinator *coordinator(void) {
  }
  void vdt_nice_reload(NSDictionary *prefs) { [coordinator() reload:prefs]; }
  void vdt_nice_reconcile(void) { [coordinator() reconcile]; }
