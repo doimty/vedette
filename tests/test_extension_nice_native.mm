@@ -1,6 +1,7 @@
 // Production Foundation files + existing fake-kernel technique; no policy model.
 #import "VDTNiceRuntime.h"
 #import "VDTNiceShared.h"
+#import "VDTResourceShared.h"
 #import "VDTNiceStore.h"
 #import "PrivateHeaders.h"
 #include <stdlib.h>
@@ -13,7 +14,7 @@ extern "C" NSString *VDTTestJbroot(NSString *path) { return [testRoot stringByAp
 static NSString *hostID = @"example.host", *extID = @"example.host.widget";
 static NSString *hostPath, *extPath, *appExe, *extExe;
 static NSMutableDictionary<NSNumber *, NSMutableDictionary *> *kernel;
-static int writes, reads, cpuCalls, cpuDispatches, posts, writeError, readError;
+static int writes, reads, cpuCalls, cpuDispatches, posts, resourcePosts, writeError, readError;
 static BOOL ignoreWrite;
 static BOOL deferAfter;
 static NSMutableArray *deferredTasks;
@@ -63,10 +64,21 @@ extern "C" int VDTTestCPUOne(int pid) { (void)pid; ++cpuCalls; return 0; }
 extern "C" int VDTTestCPUThree(int pid, int a, int b) { (void)a; (void)b; return VDTTestCPUOne(pid); }
 extern "C" int VDTTestSysctl(const char *name, void *buf, size_t *size, void *input, size_t inputSize) {
     (void)input; (void)inputSize;
+    if (!strcmp(name,"kern.osrelease")) {
+        const char release[]="21.1.0";
+        if (!buf || !size || *size < sizeof(release)) { errno=EINVAL; return -1; }
+        memcpy(buf,release,sizeof(release)); *size=sizeof(release); return 0;
+    }
     if (strcmp(name,"kern.boottime") || *size != sizeof(struct timeval)) { errno = EINVAL; return -1; }
     struct timeval boot = {}; boot.tv_sec = bootSeconds; memcpy(buf,&boot,sizeof(boot)); return 0;
 }
-extern "C" uint32_t VDTTestNotifyPost(const char *name) { (void)name; ++posts; return 0; }
+extern "C" uint32_t VDTTestNotifyPost(const char *name) {
+    // A resource status publication is not a nice write/retry side effect.
+    // Keep every pre-existing nice/other notification assertion unchanged.
+    if (name && !strcmp(name, VDT_RESOURCE_STATUS_NN)) ++resourcePosts;
+    else ++posts;
+    return 0;
+}
 extern "C" uint32_t VDTTestNotifyRegister(const char *name, int *token) { (void)name; *token = 1; return 0; }
 extern "C" uint32_t VDTTestNotifySet(int token, uint64_t pid) { (void)token; (void)pid; return 0; }
 extern "C" uint32_t VDTTestNotifyGet(int token, uint64_t *pid) { (void)token; *pid=0; return 0; }
@@ -131,7 +143,7 @@ static NSDictionary *preferences(NSDictionary *own, NSDictionary *host) {
 static void reset(void) {
     [[NSFileManager defaultManager] removeItemAtPath:VDTNiceStateDirectory() error:nil];
     kernel = [NSMutableDictionary dictionary]; addProcess(424242,extExe);
-    writes=reads=cpuCalls=cpuDispatches=posts=writeError=readError=0; ignoreWrite=NO; bootSeconds=1000;
+    writes=reads=cpuCalls=cpuDispatches=posts=resourcePosts=writeError=readError=0; ignoreWrite=NO; bootSeconds=1000;
     normalized_configs_snapshot=nil; normalized_resource_rules_snapshot=nil; normalized_nice_rules_snapshot=nil;
     [tracked_process_instances() removeAllObjects]; [managed_process_targets() removeAllObjects];
     launch_catch_up_scheduled=nice_refresh_scheduled=NO;
@@ -303,9 +315,12 @@ int main(void) {
     // pref/global-off and public soft-remove are all separate from CPU success.
     reset(); p=preferences(own,nil); savePrefs(p); reloadPrefsSync();
     REQUIRE(extensionNice()==5 && writes==1 && cpuCalls==0 && cpuDispatches==0);
-    int published=posts; reconcile_unreported_processes_sync(); handle_reported_pid_sync(424242);
+    int published=posts, resourcePublished=resourcePosts;
+    reconcile_unreported_processes_sync(); handle_reported_pid_sync(424242);
     REQUIRE(writes==1 && cpuCalls==0 && posts==published);
+    REQUIRE(resourcePosts==resourcePublished+2); // two independent lifecycle receipts
     niceRefreshCallback(NULL,NULL,NULL,NULL,NULL); REQUIRE(writes==1 && cpuCalls==0);
+    REQUIRE(resourcePosts==resourcePublished+2); // nice retry cannot republish resources
     REQUIRE(VDTNiceRemoveIndependentRule(extID,VDTConfigTypeExtension,&error)); reloadPrefsSync();
     REQUIRE(extensionNice()==-1 && cpuCalls==0);
     savePrefs(p); reloadPrefsSync(); REQUIRE(extensionNice()==5);

@@ -19,6 +19,9 @@ MM_SOURCES = ['VDTNiceShared.mm', 'VDTShared.mm', 'VDTProcessManager.mm',
               'VDTResourceShared.mm', 'VDTResourceRuntime.mm', 'VDTResourceSystemBackend.mm',
               'VDTBundleIdentity.mm', 'tests/test_extension_nice_native.mm']
 MUTANTS = {
+    'resourceNotificationMix': ('tests/test_extension_nice_native.mm',
+        'if (name && !strcmp(name, VDT_RESOURCE_STATUS_NN)) ++resourcePosts;',
+        'if (name && !strcmp(name, VDT_RESOURCE_STATUS_NN)) ++posts;'),
     'noExtensionResolve': ('VDTProcessManager.mm',
         'type = VDTConfigTypeExtension; name = info[@"extensionIdentifier"];',
         'return nil; type = VDTConfigTypeExtension; name = info[@"extensionIdentifier"];'),
