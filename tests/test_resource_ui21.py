@@ -23,11 +23,11 @@ NEW_LOC_KEYS = (
     'Enable memory rule',
     'Active limit (MiB)',
     'Inactive limit (MiB)',
-    'Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.',
+    'Saved memory rules are applied only with resource writes enabled. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported.',
     'Reclaim priority',
     'Enable reclaim priority rule',
     'Priority band',
-    'Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.',
+    'Saved reclaim-priority rules require resource writes. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination.',
 )
 
 RESOURCE_SELECTORS = 'set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:)'
@@ -70,7 +70,10 @@ def detail_contract(source):
     assert 'setValueForProcessConfigKey(' not in setter, 'resource setter must not write CPU records'
     reader = function_source(source, '- (id)readResourceRuleValue:')
     assert 'valueForProcessResourceRuleKey([self validIdentifier], key, [specifier propertyForKey:@"default"], [self configurationType], section);' in reader
-    assert 'stay separate' in source and 'this build only saves' in source
+    assert 'only with resource writes enabled' in source
+    assert 'Historical readback, not live monitoring.' in source
+    assert 'VDTResourceMatchingStatus(' in source
+    assert 'this build only saves' not in source
 
 
 def storage_contract(shared, header):

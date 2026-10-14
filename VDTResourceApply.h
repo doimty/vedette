@@ -48,7 +48,8 @@ typedef enum {
     VDTApplySkipRestorePending, // no recorded prior value (or restore capability missing)
     VDTApplySkipIdentity,       // identity missing/mismatched: fail closed
     VDTApplySkipReadbackFailed, // pre-write read failed: fail closed
-    VDTApplySkipBackendMissing  // backend lacks a required function
+    VDTApplySkipBackendMissing, // backend lacks a required function
+    VDTApplySkipConflict        // current value drifted from the last owned observation
 } VDTApplySkip;
 
 typedef enum {
@@ -84,6 +85,13 @@ typedef struct {
     VDTMemlimitPair priorPair;
     bool hasPriorPriority;  // recorded pre-management effective priority
     int32_t priorPriority;
+    // Optional ownership observations, not the requested policy values. Restore
+    // requires both prior and last; an already-managed SET with last must also
+    // compare its fresh GET to last. Zero-initialize for a first unmanaged SET.
+    bool hasLastPair;
+    VDTMemlimitPair lastPair;
+    bool hasLastPriority;
+    int32_t lastPriority;
 } VDTApplyTarget;
 
 typedef enum {
@@ -107,12 +115,12 @@ typedef struct {
 
 typedef struct {
     pid_t pid;
-    bool identityPreChecked;
-    bool identityPreMatched;
-    bool identityPostChecked;
-    bool identityPostMatched;
-    VDTMemlimitSnapshot priorMemlimit; // captured before the memory write
-    VDTPrioritySnapshot priorPriority; // captured before the priority write
+    bool identityPreChecked; // aggregates all pre-GET/pre-SET token checks
+    bool identityPreMatched; // true only if every such check matched
+    bool identityPostChecked; // aggregates post-SET/post-GET token checks
+    bool identityPostMatched; // false after any identity invalidation
+    VDTMemlimitSnapshot priorMemlimit; // original: target prior, else verified pre-write GET
+    VDTPrioritySnapshot priorPriority; // original: never replaced by an owned current value
     VDTApplyOutcome memoryOutcome;
     VDTApplyOutcome jetsamOutcome;
     bool memoryVerified;
@@ -122,6 +130,10 @@ typedef struct {
     bool partial; // one side applied while the other failed/skipped-with-intent
     VDTApplySkip memorySkip;
     VDTApplySkip jetsamSkip;
+    // Fresh, instance-checked GET before this operation (also on conflict or
+    // SET failure). Distinct from the first original used for write-back.
+    VDTMemlimitSnapshot beforeMemlimit;
+    VDTPrioritySnapshot beforePriority;
 } VDTApplyReport;
 
 // Builds the canonical program. `memoryRule`/`jetsamRule` are the rules the
@@ -137,9 +149,11 @@ VDTApplyProgram VDTApplyBuildProgram(pid_t pid,
 bool VDTApplyProgramHasMemory(const VDTApplyProgram *program);
 bool VDTApplyProgramHasPriority(const VDTApplyProgram *program);
 
-// Executes the program. Writes only when the instance token matches; records
-// before/after observations for the manager's restore path (non-CAS: a
-// read-back mismatch is reported, never silently corrected).
+// Executes the program. Every GET/SET is bracketed by instance-token checks;
+// identity failure latches off all subsequent writes. Successful writes that
+// cannot be verified remain AppliedUnverified/RestoreUnconfirmed. Restore and
+// managed SET compare the current value to last before writing (non-CAS).
+// Original snapshots survive skips/failures; false backend outputs are ignored.
 VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
     const VDTApplyTarget *target,
     const VDTResourceBackend *backend,

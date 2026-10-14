@@ -31,13 +31,27 @@ typedef struct {
     bool failSetPriority;
     bool failToken;
     bool changeTokenAfterWrite;
+    unsigned getPairCalls;
+    unsigned getPriorityCalls;
+    unsigned failGetPairOnCall;     // 1-based, zero disables
+    unsigned failGetPriorityOnCall;
 } FakeProcess;
+
+typedef enum {
+    FakeCallbackFaultNone = 0,
+    FakeCallbackReplaceInstance,
+    FakeCallbackTokenUnavailable
+} FakeCallbackFault;
 
 typedef struct {
     FakeProcess processes[FAKE_PROC_CAPACITY];
     char log[FAKE_LOG_CAPACITY][FAKE_LOG_WIDTH];
     unsigned logCount;
     bool modelAgingPolicyBands;
+    unsigned callbackCount;
+    unsigned faultAfterCallback; // mutate identity after this callback returned its value
+    FakeCallbackFault callbackFault;
+    bool poisonFailedReads; // deliberately violate out-on-failure to test distrust
 } FakeBackend;
 
 const VDTResourceBackend *FakeBackendVtable(void);
@@ -45,5 +59,6 @@ void FakeBackendReset(FakeBackend *state);
 FakeProcess *FakeBackendFind(FakeBackend *state, pid_t pid);
 FakeProcess *FakeBackendAdd(FakeBackend *state, pid_t pid);
 unsigned FakeBackendLogIndex(const FakeBackend *state, const char *needle);
+unsigned FakeBackendLogCount(const FakeBackend *state, const char *needle);
 
 #endif

@@ -22,4 +22,9 @@
 - (VDTConfigType)vdtNiceConfigurationType;
 - (VDTNicePreferences *)vdtNicePreferences;
 - (void)vdtReloadIndependentRules;
+- (NSString *)vdtResourceReceiptText;
+- (void)vdtFollowMemoryApp;
+- (void)vdtFollowJetsamApp;
+- (void)vdtFollowResourceSection:(NSString *)section;
+- (void)presentResourceRuleError:(NSString *)title message:(NSString *)message;
 @end

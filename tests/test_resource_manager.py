@@ -67,26 +67,16 @@ def manager_contract(manager):
         'NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules){',
         'NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules){',
         'VDTResourceRuleMaps resourceMaps = resource_rule_maps(resourceRules);')
-    # Apply stage: capability gates stay closed and the backend stays NULL.
+    # Actual policy writes live in the durable coordinator, not in CPU dedup.
     has(manager,
-        'static VDTApplyCapabilities vdt_resource_capabilities(void){',
-        'capabilities.writeMemoryCustom = false;',
-        'capabilities.writeMemoryUnlimited = false;',
-        'capabilities.writeJetsamBand = false;',
-        'capabilities.restoreWriteback = false;',
-        'static const VDTResourceBackend *vdt_resource_backend(void){\n    return NULL;',
-        'VDTApplyBuildProgram(pid,',
-        'vdt_resource_capabilities());',
-        'VDTApplyExecute(&program, &applyTarget,',
-        '"runningboardd.resourceStage"',
-        'BOOL cpuApplied = result.success;',
-        'BOOL resourceSettled = vdt_apply_resource_target(target);',
-        'return cpuApplied && resourceSettled;',
-        'report.memoryOutcome != VDTApplyOutcomeFailed &&')
+        '#import "VDTResourceRuntime.h"',
+        'BOOL vdt_apply_resource_target(NSDictionary *rawTarget){',
+        'return vdt_resource_apply(target, memoryRule ? &memoryCore : NULL, jetsamRule ? &jetsamCore : NULL);',
+        '.rawSourceDarwinMajor = resource_policy_integer(rule[@"sourceDarwinMajor"])')
+    assert 'memorystatus_control(' not in manager
     apply_body = function_source(manager, 'BOOL vdt_apply_target(NSDictionary *rawTarget)')
-    assert apply_body.index('VDTApplyPolicyTransition(') < apply_body.index('BOOL resourceSettled = vdt_apply_resource_target(target);'), \
-        'CPU transition must run before the resource stage'
-    assert 'result.success ? vdt_apply_resource_target' not in apply_body, 'resource stage must not be gated on CPU success'
+    assert 'return result.success;' in apply_body
+    assert 'vdt_apply_resource_target(' not in apply_body, 'CPU dedup must not own resource dispatch'
 
 
 def header_contract(header):
@@ -113,6 +103,11 @@ def runtime_contract(runtime):
         '[restoreTarget removeObjectForKey:VDTTargetJetsamRuleKey];',
         'for (NSDictionary *target in vdt_nice_resolve_targets(prefs))',
         'vdt_nice_apply(target);')
+    independent = function_source(runtime, 'static void apply_resource_targets_sync')
+    has(independent, '\n    for (NSDictionary *target in targets) vdt_apply_resource_target(target);\n',
+        'vdt_resource_reconcile(targets);', 'vdt_resource_publish();', 'schedule_resource_retry_sync();')
+    has(runtime, 'vdt_resource_reload(newPrefs);', 'invalidate_resource_retry_sync();',
+        'apply_resource_targets_sync(targets, YES);', 'apply_resource_targets_sync(targets, NO);')
     retry = function_source(runtime, 'static void niceRefreshCallback')
     assert 'vdt_resolve_targets' not in retry and 'vdt_resource_rules_from_prefs' not in retry, 'nice retry cannot own CPU/resource resolution'
     for stale in ('vdt_resolve_targets(configs);', 'vdt_targets_for_pid(pid, configs);'):
@@ -168,18 +163,21 @@ class ResourceManagerIntegration(unittest.TestCase):
         with self.assertRaises(AssertionError): runtime_contract(mutated)
 
     def test_open_capability_is_rejected(self):
-        mutated = self.manager.replace('capabilities.writeMemoryCustom = false;', 'capabilities.writeMemoryCustom = true;', 1)
-        self.assertNotEqual(mutated, self.manager)
-        with self.assertRaises(AssertionError):
-            manager_contract(mutated)
+        backend = (ROOT / 'VDTResourceSystemBackend.mm').read_text()
+        self.assertIn('bool enabled = supported(NULL);', backend)
+        mutated = backend.replace('bool enabled = supported(NULL);', 'bool enabled = true;', 1)
+        self.assertNotEqual(mutated, backend)
+        self.assertNotIn('bool enabled = supported(NULL);', mutated)
+        # Runtime transport tests additionally prove the unknown-system branch
+        # issues zero SET; this source negative pins the production adapter.
 
     def test_cpu_gated_resource_stage_is_rejected(self):
-        mutated = self.manager.replace(
-            'BOOL resourceSettled = vdt_apply_resource_target(target);',
-            'BOOL resourceSettled = result.success ? vdt_apply_resource_target(target) : YES;', 1)
-        self.assertNotEqual(mutated, self.manager)
+        mutated = self.runtime.replace(
+            '\n    for (NSDictionary *target in targets) vdt_apply_resource_target(target);\n',
+            '\n    if (NO) for (NSDictionary *target in targets) vdt_apply_resource_target(target);\n', 1)
+        self.assertNotEqual(mutated, self.runtime)
         with self.assertRaises(AssertionError):
-            manager_contract(mutated)
+            runtime_contract(mutated)
 
     def test_last_entry_wins_index_is_rejected(self):
         mutated = self.manager.replace('if (!map[identifier]) map[identifier] = rule;', 'map[identifier] = rule;')

@@ -56,4 +56,12 @@ test-rebuild:
 	@python3 -B tests/test_formal_projection.py
 
 
-test: test-cpu test-ui test-nice test-extensions test-rebuild
+test-resource-write:
+	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
+	  $(CC) $(CFLAGS) -I. VDTResourceSystemIO.c VDTProcessIdentity.c VDTMemoryPolicy.c VDTJetsamPolicy.c tests/test_resource_system_io.c -o "$$bin"; "$$bin"
+	@python3 -B tests/test_memory_policy.py
+	@python3 -B tests/test_resource_apply.py
+	@python3 -B tests/test_resource_writeback_contracts.py
+
+
+test: test-cpu test-ui test-nice test-extensions test-rebuild test-resource-write

@@ -11,7 +11,7 @@ class FormalProjection(unittest.TestCase):
     def test_two_fixed_ancestors_and_formal_upgrade(self):
         for revision in (FORMAL_BASE, '788f43bcb17a2c3890ed8bdeea3f1a97660e13c7'):
             subprocess.run(['git', 'merge-base', '--is-ancestor', revision, 'HEAD'], cwd=ROOT, check=True)
-        for previous in ('1.1.13-3', '1.1.13-2', '1.1.13-1+rc1', '1.1.12-3', '1.1.10-1+ui21'):
+        for previous in ('1.1.13-4', '1.1.13-3', '1.1.13-2', '1.1.13-1+rc1', '1.1.12-3', '1.1.10-1+ui21'):
             subprocess.run(['dpkg', '--compare-versions', FORMAL_VERSION, 'gt', previous], check=True)
 
     def test_literal_projection_all_layers(self):
@@ -47,7 +47,12 @@ class FormalProjection(unittest.TestCase):
                      'nicectl/Entitlements.plist', 'layout/DEBIAN/prerm',
                      'layout-rootless/DEBIAN/prerm', 'Makefile'):
             if (ROOT / path).exists():
-                self.assertEqual((ROOT / path).read_bytes(),
+                actual = (ROOT / path).read_bytes()
+                if path in ('nicectl/main.mm', 'layout/DEBIAN/prerm', 'layout-rootless/DEBIAN/prerm'):
+                    # Only the literal resource command/handshake additions may
+                    # project away; all original nice behavior stays exact.
+                    actual = without_formal_rules(path, actual)
+                self.assertEqual(actual,
                     subprocess.check_output(['git', 'show', FORMAL_BASE + ':' + path], cwd=ROOT), path)
 
     def test_whitespace_exception_cannot_expand(self):

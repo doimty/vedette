@@ -5,8 +5,8 @@ import hashlib,io,json,plistlib,subprocess,sys,tarfile,tempfile
 from inspect_release_macho import inspect
 from verify_nice_tool import verify_tool
 ROOT=Path(__file__).resolve().parents[1]
-VERSION='1.1.13-4'
-DESCRIPTION='按应用与守护进程独立管理 CPU 限制和 nice 调度优先级'
+VERSION='1.1.14-1'
+DESCRIPTION='按应用与守护进程独立管理 CPU 限制和 nice 调度优先级，支持内存上限及回收优先级规则'
 
 def read_archive(deb,area):
     data=subprocess.check_output(['dpkg-deb','--'+area+'-tarfile',str(deb)])

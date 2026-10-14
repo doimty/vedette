@@ -9,6 +9,8 @@
 
 _Static_assert(VDT_RESOURCE_APPLY_ABI_VERSION == 1, "apply ABI version");
 _Static_assert(VDT_APPLY_MAX_OPS == 2, "op capacity");
+_Static_assert(VDTApplySkipBackendMissing == 8, "old skip values stay stable");
+_Static_assert(VDTApplySkipConflict == 9, "conflict appended");
 
 static VDTPolicyInteger integer(int64_t value) {
     return (VDTPolicyInteger){VDTPolicyInputInteger, value};
@@ -185,6 +187,8 @@ static void test_restore_memory_writeback(void) {
     VDTApplyTarget target = targetFor(p);
     target.hasPriorPair = true;
     target.priorPair = (VDTMemlimitPair){1200, 0, 1050, 0};
+    target.hasLastPair = true;
+    target.lastPair = p->pair;
     VDTApplyReport report = VDTApplyExecute(&program, &target, FakeBackendVtable(), &fake);
     assert(report.memoryOutcome == VDTApplyOutcomeRestored);
     assert(report.memoryVerified);
@@ -250,7 +254,9 @@ static void test_identity_post_check(void) {
     VDTApplyProgram program = VDTApplyBuildProgram(905, &custom, NULL, 21, false, false, capsCustom());
     VDTApplyTarget target = targetFor(p);
     VDTApplyReport report = VDTApplyExecute(&program, &target, FakeBackendVtable(), &fake);
-    assert(report.memoryOutcome == VDTApplyOutcomeApplied);
+    assert(report.memoryOutcome == VDTApplyOutcomeAppliedUnverified);
+    assert(!report.memoryVerified && !report.afterMemlimit.hasValue);
+    assert(report.memorySkip == VDTApplySkipIdentity);
     assert(report.identityPostChecked);
     assert(!report.identityPostMatched);
     printf("[ok] identity post-check records drift\n");
@@ -364,8 +370,29 @@ static void test_coercion_surfaces_unverified(void) {
 
 static void test_skip_taxonomy(void) {
     VDTMemoryRule custom = memoryRule(VDTPolicyRecordEnabled, 64, 128);
-    VDTApplyProgram unknownOS = VDTApplyBuildProgram(79, &custom, NULL, 25, false, false, capsFull());
+    VDTApplyProgram unknownOS = VDTApplyBuildProgram(79, &custom, NULL, 20, false, false, capsFull());
     assert(unknownOS.opCount == 0 && unknownOS.memorySkip == VDTApplySkipReadOnly);
+
+    const int32_t futureOS[] = {25, 26, 30, INT32_MAX};
+    VDTJetsamRule named = namedRule(VDTPolicyRecordEnabled, VDTJetsamNamedForeground);
+    for (size_t i = 0; i < sizeof(futureOS) / sizeof(futureOS[0]); ++i) {
+        VDTApplyProgram future = VDTApplyBuildProgram(79, &custom, &named, futureOS[i], false, false, capsFull());
+        assert(future.opCount == 2);
+        assert(future.memorySkip == VDTApplySkipNone && future.jetsamSkip == VDTApplySkipNone);
+        assert(future.ops[0].kind == VDTOpKindSetPriority && future.ops[0].priorityBand == 100);
+        assert(future.ops[1].kind == VDTOpKindSetMemory);
+        assert(future.ops[1].pair.active == 64 && future.ops[1].pair.activeAttrs == VDT_APPLY_CUSTOM_ATTRS);
+        assert(future.ops[1].pair.inactive == 128 && future.ops[1].pair.inactiveAttrs == VDT_APPLY_CUSTOM_ATTRS);
+
+        FakeBackend fake;
+        FakeBackendReset(&fake);
+        FakeProcess *p = prepareProcess(&fake, 79, 180);
+        VDTApplyTarget target = targetFor(p);
+        VDTApplyReport report = VDTApplyExecute(&future, &target, FakeBackendVtable(), &fake);
+        assert(report.memoryOutcome == VDTApplyOutcomeApplied && report.memoryVerified);
+        assert(report.jetsamOutcome == VDTApplyOutcomeApplied && report.jetsamVerified);
+        assert(p->effectivePriority == 100 && p->pair.active == 64 && p->pair.inactive == 128);
+    }
 
     VDTMemoryRule systemOnly = memoryRule(VDTPolicyRecordEnabled, 0, 0);
     VDTApplyProgram system = VDTApplyBuildProgram(79, &systemOnly, NULL, 21, false, false, capsFull());
@@ -425,7 +452,46 @@ static void test_backend_missing(void) {
     printf("[ok] missing backend fails closed\n");
 }
 
+static void test_conditional_restore_and_per_operation_identity(void) {
+    FakeBackend f; FakeBackendReset(&f); FakeProcess *p = prepareProcess(&f, 914, 18);
+    VDTMemoryRule m = memoryRule(VDTPolicyRecordEnabled,64,128);
+    VDTJetsamRule j = namedRule(VDTPolicyRecordEnabled,VDTJetsamNamedForeground);
+    VDTApplyTarget t=targetFor(p); t.hasPriorPair=true; t.priorPair=(VDTMemlimitPair){1024,0,2048,0};
+    VDTMemoryRule off = memoryRule(VDTPolicyRecordDisabled,0,0);
+    VDTJetsamRule offPriority = namedRule(VDTPolicyRecordDisabled,VDTJetsamNamedForeground);
+    VDTApplyProgram restore=VDTApplyBuildProgram(914,&off,NULL,21,true,false,capsFull());
+    VDTApplyReport r=VDTApplyExecute(&restore,&t,FakeBackendVtable(),&f);
+    assert(r.memorySkip==VDTApplySkipRestorePending && FakeBackendLogCount(&f,"setMem")==0);
+    t.hasLastPair=true; t.lastPair=(VDTMemlimitPair){64,1,128,1};
+    r=VDTApplyExecute(&restore,&t,FakeBackendVtable(),&f);
+    assert(r.memorySkip==VDTApplySkipConflict && FakeBackendLogCount(&f,"setMem")==0);
+    assert(r.priorMemlimit.hasValue && r.priorMemlimit.pair.active==1024);
+    VDTApplyProgram apply=VDTApplyBuildProgram(914,&m,NULL,21,true,false,capsFull());
+    r=VDTApplyExecute(&apply,&t,FakeBackendVtable(),&f);
+    assert(r.memorySkip==VDTApplySkipConflict && FakeBackendLogCount(&f,"setMem")==0);
+    FakeBackendReset(&f); p=prepareProcess(&f,914,18); t=targetFor(p);
+    apply=VDTApplyBuildProgram(914,&m,&j,21,false,false,capsFull());
+    f.faultAfterCallback=2; f.callbackFault=FakeCallbackReplaceInstance; // GET -> pre-SET identity
+    r=VDTApplyExecute(&apply,&t,FakeBackendVtable(),&f);
+    assert(FakeBackendLogCount(&f,"setPrio")==0 && FakeBackendLogCount(&f,"setMem")==0);
+    assert(r.jetsamSkip==VDTApplySkipIdentity && r.memorySkip==VDTApplySkipIdentity);
+    FakeBackendReset(&f); p=prepareProcess(&f,914,18); t=targetFor(p);
+    p->changeTokenAfterWrite=true;
+    r=VDTApplyExecute(&apply,&t,FakeBackendVtable(),&f);
+    assert(FakeBackendLogCount(&f,"setPrio")==1 && FakeBackendLogCount(&f,"setMem")==0);
+    assert(r.jetsamOutcome==VDTApplyOutcomeAppliedUnverified && r.memorySkip==VDTApplySkipIdentity);
+    FakeBackendReset(&f); p=prepareProcess(&f,914,18); t=targetFor(p);
+    t.hasPriorPriority=true; t.priorPriority=13; t.hasLastPriority=true; t.lastPriority=18;
+    restore=VDTApplyBuildProgram(914,NULL,&offPriority,21,false,true,capsFull());
+    p->failGetPriorityOnCall=2;
+    r=VDTApplyExecute(&restore,&t,FakeBackendVtable(),&f);
+    assert(r.jetsamOutcome==VDTApplyOutcomeRestoreUnconfirmed && r.priorPriority.priority==13);
+    assert(!r.afterPriority.hasValue && FakeBackendLogCount(&f,"setPrio")==1);
+    puts("[ok] conditional writeback, kept originals, identity after GET/between resources, unconfirmed restore");
+}
+
 int main(void) {
+    test_conditional_restore_and_per_operation_identity();
     test_constants();
     test_capability_gate();
     test_memory_custom_apply();

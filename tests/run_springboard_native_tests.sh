@@ -7,7 +7,7 @@ if [ "$(uname -s)" != Darwin ] || [ "$(id -u)" -ne 0 ]; then
 fi
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT HUP INT TERM
-for name in VDTProcessIdentity VDTPolicyTransition VDTNicePolicy VDTNiceStore VDTBundleRules VDTMemoryPolicy VDTJetsamPolicy VDTResourceApply; do
+for name in VDTProcessIdentity VDTPolicyTransition VDTNicePolicy VDTNiceStore VDTBundleRules VDTMemoryPolicy VDTJetsamPolicy VDTResourceApply VDTResourceSystemIO; do
     xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -I. -c "$name.c" -o "$out/$name.o"
 done
 compile_test() {
@@ -18,7 +18,8 @@ compile_test() {
         "$out/VDTNicePolicy.o" "$out/VDTNiceStore.o" "$out/VDTBundleRules.o" \
         "$out/VDTMemoryPolicy.o" "$out/VDTJetsamPolicy.o" "$out/VDTResourceApply.o" -o "$binary"
 }
-compile_test "$out/springboard" tests/test_springboard_native.mm -DVDT_RESOURCE_RESOLVER=1
+compile_test "$out/springboard" tests/test_springboard_native.mm -DVDT_RESOURCE_RESOLVER=1 \
+    VDTResourceShared.mm VDTResourceRuntime.mm VDTResourceSystemBackend.mm "$out/VDTResourceSystemIO.o"
 "$out/springboard"
 # Isolate old declarations and the unchanged nice coordinator together. The
 # old source is literal git bytes, not a model or rewritten fallback function.

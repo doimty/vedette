@@ -13,6 +13,7 @@
 #import "VDTBundleIdentity.h"
 #import "VDTBundleRules.h"
 #import "VDTResourceApply.h"
+#import "VDTResourceRuntime.h"
 #import "VDTNiceShared.h"
 
 #include <errno.h>
@@ -265,11 +266,8 @@ NSArray<NSDictionary *>* vdt_configs_from_prefs(NSDictionary *prefs){
 
 #pragma mark - Resource rules (memoryRules / jetsamRules)
 
-// The Jetsam policy cores are versioned by Darwin major; iOS 15–18 map to
-// Darwin 21–24. Unknown future versions resolve to a read-only plan.
-static int32_t vdt_target_darwin_major(void){
-    return (int32_t)(NSProcessInfo.processInfo.operatingSystemVersion.majorVersion + 6);
-}
+// Version authority is queried by the durable system adapter. A saved raw
+// priority retains its sourceDarwinMajor; this parser never invents provenance.
 
 // Classify an untrusted plist value exactly the way the C cores expect. A
 // CFBoolean or a non-integral number must never be coerced into an integer.
@@ -326,7 +324,7 @@ static VDTJetsamRule resource_jetsam_core_rule(NSDictionary *rule, VDTPolicyReco
         // The saved band is owned by the device that wrote it: a later OS
         // upgrade turns the source major into a mismatch the core refuses
         // instead of silently migrating the number.
-        .rawSourceDarwinMajor = resource_policy_integer(@(vdt_target_darwin_major()))
+        .rawSourceDarwinMajor = resource_policy_integer(rule[@"sourceDarwinMajor"])
     };
     return VDTParseJetsamRule(&input);
 }
@@ -363,7 +361,7 @@ static NSDictionary *resource_rule_from_entry(NSDictionary *validatedEntry,
         @"state": @(state),
         VDTConfigEnabledKey: @(state == VDTPolicyRecordEnabled)
     } mutableCopy];
-    for (NSString *key in @[@"schema", @"active", @"inactive", @"priority"]) {
+    for (NSString *key in @[@"schema", @"active", @"inactive", @"priority", @"sourceDarwinMajor"]) {
         if (validatedEntry[key]) rule[key] = validatedEntry[key];
     }
     return rule;
@@ -1002,100 +1000,28 @@ static int policy_set_fatal(pid_t pid, int percentage, int interval, void *conte
     return proc_set_cpumon_params_fatal(pid, percentage, interval);
 }
 
-#pragma mark - Resource stage (staged enablement)
+#pragma mark - Resource stage (durable, independently scheduled)
 
-// Production capabilities stay fully disabled until the M6 enablement step.
-// The engine still builds programs and reports why nothing can be written, so
-// the UI can distinguish saved from applied without faking either.
-static VDTApplyCapabilities vdt_resource_capabilities(void){
-    VDTApplyCapabilities capabilities = {};
-    capabilities.writeMemoryCustom = false;
-    capabilities.writeMemoryUnlimited = false;
-    capabilities.writeJetsamBand = false;
-    capabilities.restoreWriteback = false;
-    return capabilities;
-}
-
-// No production syscall backend is wired yet. A NULL backend keeps the engine
-// fail-closed: it reports "backend missing" instead of issuing any syscall.
-static const VDTResourceBackend *vdt_resource_backend(void){
-    return NULL;
-}
-
-// Applies the resolved resource rules for one target through the injectable
-// backend. The stage is independent of the CPU transition in both directions:
-// a CPU success never marks resource work as done, and a resource failure
-// never blocks CPU protection nor erases what the CPU side achieved.
-static BOOL vdt_apply_resource_target(NSDictionary *rawTarget){
+// The coordinator supplies precise-system capabilities, explicit opt-in,
+// write-ahead originals/pending intents and conditional restoration. It runs
+// independently of CPU dedup, and never treats a saved setting as applied.
+BOOL vdt_apply_resource_target(NSDictionary *rawTarget){
     NSDictionary *target = vdt_dictionary(rawTarget);
     NSNumber *pidValue = target ? vdt_number(target[VDTTargetPidKey]) : nil;
     if (!target || !pidValue || pidValue.intValue <= 0) return NO;
-
     NSDictionary *memoryRule = vdt_dictionary(target[VDTTargetMemoryRuleKey]);
     NSDictionary *jetsamRule = vdt_dictionary(target[VDTTargetJetsamRuleKey]);
-    if (!memoryRule && !jetsamRule) return YES;
-
-    pid_t pid = (pid_t)pidValue.intValue;
     VDTMemoryRule memoryCore = {};
     VDTJetsamRule jetsamCore = {};
-    if (memoryRule) {
-        memoryCore = resource_memory_core_rule(memoryRule,
-            (VDTPolicyRecordState)[vdt_number(memoryRule[@"state"]) unsignedLongValue]);
-    }
-    if (jetsamRule) {
-        jetsamCore = resource_jetsam_core_rule(jetsamRule,
-            (VDTPolicyRecordState)[vdt_number(jetsamRule[@"state"]) unsignedLongValue]);
-    }
-
-    // No revert records exist until the write channel is enabled, so restore
-    // requirements resolve to NoWrite instead of a blind SET of defaults.
-    VDTApplyProgram program = VDTApplyBuildProgram(pid,
-        memoryRule ? &memoryCore : NULL,
-        jetsamRule ? &jetsamCore : NULL,
-        vdt_target_darwin_major(),
-        false,
-        false,
-        vdt_resource_capabilities());
-
-    if (program.opCount == 0) {
-        VDTProbeRecord(@"runningboardd.resourceStage", @{
-            @"pid": @(pid),
-            @"name": target[VDTTargetNameKey] ?: @"",
-            @"ops": @0,
-            @"memorySkip": @(program.memorySkip),
-            @"jetsamSkip": @(program.jetsamSkip),
-            @"writeChannel": @"disabled"
-        });
-        return YES;
-    }
-
-    VDTApplyTarget applyTarget = {};
-    applyTarget.pid = pid;
-    VDTProcessInstanceToken token = {};
-    if (target_instance_token(target, &token)) {
-        applyTarget.hasExpectedToken = true;
-        applyTarget.expected = token;
-    }
-
-    VDTApplyReport report = VDTApplyExecute(&program, &applyTarget,
-        vdt_resource_backend(), NULL);
-
-    VDTProbeRecord(@"runningboardd.resourceStage", @{
-        @"pid": @(pid),
-        @"name": target[VDTTargetNameKey] ?: @"",
-        @"ops": @(program.opCount),
-        @"memoryOutcome": @(report.memoryOutcome),
-        @"jetsamOutcome": @(report.jetsamOutcome),
-        @"partial": @(report.partial),
-        @"identityPreMatched": @(report.identityPreMatched),
-        @"identityPostMatched": @(report.identityPostMatched),
-        @"writeChannel": vdt_resource_backend() ? @"enabled" : @"disabled"
-    });
-
-    // Only a failed write stays unsettled: the next scan retries it, while a
-    // disabled channel or a policy skip settles without pointless loops.
-    return report.memoryOutcome != VDTApplyOutcomeFailed &&
-        report.jetsamOutcome != VDTApplyOutcomeFailed;
+    if (memoryRule && [vdt_number(memoryRule[@"state"]) unsignedLongValue] == VDTPolicyRecordDisabled)
+        memoryCore.state = VDTPolicyRecordDisabled; // revoke using journal, no new numeric value
+    else if (memoryRule) memoryCore = resource_memory_core_rule(memoryRule,
+        (VDTPolicyRecordState)[vdt_number(memoryRule[@"state"]) unsignedLongValue]);
+    if (jetsamRule && [vdt_number(jetsamRule[@"state"]) unsignedLongValue] == VDTPolicyRecordDisabled)
+        jetsamCore.state = VDTPolicyRecordDisabled;
+    else if (jetsamRule) jetsamCore = resource_jetsam_core_rule(jetsamRule,
+        (VDTPolicyRecordState)[vdt_number(jetsamRule[@"state"]) unsignedLongValue]);
+    return vdt_resource_apply(target, memoryRule ? &memoryCore : NULL, jetsamRule ? &jetsamCore : NULL);
 }
 
 BOOL vdt_apply_target(NSDictionary *rawTarget){
@@ -1193,13 +1119,10 @@ BOOL vdt_apply_target(NSDictionary *rawTarget){
         });
     }
 
-    // The resource stage runs regardless of the CPU outcome in either
-    // direction. A CPU success must never mark memory/jetsam work as done, and
-    // a resource failure must never skip CPU protection or erase its result.
-    BOOL cpuApplied = result.success;
-    BOOL resourceSettled = vdt_apply_resource_target(target);
-
-    return cpuApplied && resourceSettled;
+    // CPU dedup owns only the CPU transition. The independent resource
+    // pipeline runs for every resolved target and reconciles its own journal;
+    // a resource failure cannot falsely retire or repeat a successful CPU rule.
+    return result.success;
 }
 
 void vdt_apply_targets(NSArray<NSDictionary *> *targets){

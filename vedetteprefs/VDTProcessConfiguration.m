@@ -6,6 +6,7 @@
 #import "VDTProcessConfiguration.h"
 #import "VDTApplicationListSubcontrollerController.h"
 #import "../VDTShared.h"
+#import "../VDTResourceShared.h"
 #import "ChoicyPreferences/CHPDaemonListController.h"
 #import "VDTLocalization.h"
 #import "VDTStyle.h"
@@ -241,7 +242,7 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
 
         //Memory rule
         PSSpecifier *memoryGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Memory") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [memoryGroupSpec setProperty:VDTLoc(self.class, @"Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.") forKey:@"footerText"];
+        [memoryGroupSpec setProperty:VDTLoc(self.class, @"Saved memory rules are applied only with resource writes enabled. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported.") forKey:@"footerText"];
         [rootSpecifiers addObject:memoryGroupSpec];
 
         PSSpecifier *memoryEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable memory rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSSwitchCell edit:nil];
@@ -271,7 +272,7 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
 
         //Reclaim priority rule
         PSSpecifier *jetsamGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Reclaim priority") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [jetsamGroupSpec setProperty:VDTLoc(self.class, @"Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.") forKey:@"footerText"];
+        [jetsamGroupSpec setProperty:VDTLoc(self.class, @"Saved reclaim-priority rules require resource writes. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination.") forKey:@"footerText"];
         [rootSpecifiers addObject:jetsamGroupSpec];
 
         PSSpecifier *jetsamEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable reclaim priority rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSSwitchCell edit:nil];
@@ -290,10 +291,72 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
         [jetsamBandSpec setProperty:VDTLoc(self.class, @"Priority band") forKey:@"label"];
         [rootSpecifiers addObject:jetsamBandSpec];
 
+        if ([self configurationType] == VDTConfigTypeExtension) {
+            PSSpecifier *memoryFollow = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app memory")
+                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+            [memoryFollow setButtonAction:@selector(vdtFollowMemoryApp)];
+            [rootSpecifiers addObject:memoryFollow];
+            PSSpecifier *priorityFollow = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app reclaim priority")
+                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+            [priorityFollow setButtonAction:@selector(vdtFollowJetsamApp)];
+            [rootSpecifiers addObject:priorityFollow];
+        }
+        PSSpecifier *receipt = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Last resource check")
+            target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [receipt setProperty:[self vdtResourceReceiptText] forKey:@"footerText"];
+        [rootSpecifiers addObject:receipt];
+        PSSpecifier *refreshReceipt = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Refresh")
+            target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+        [refreshReceipt setButtonAction:@selector(reloadSpecifiers)];
+        [rootSpecifiers addObject:refreshReceipt];
+
         _specifiers = rootSpecifiers;
     }
     
     return _specifiers;
+}
+
+- (NSString *)vdtResourceReceiptText {
+    NSDictionary *row = VDTResourceMatchingStatus([self validIdentifier], [self configurationType], getPrefs());
+    NSDictionary *labels = @{@"applied": @"Resource readback matched", @"restored": @"Recorded values restored",
+        @"partial": @"Resources partially applied", @"unverified": @"Resource write not verified", @"pending": @"Resource work pending", @"conflict": @"Resource drift; no overwrite",
+        @"store-error": @"Resource journal unavailable", @"unsupported": @"Resource writes unsupported on this system",
+        @"write-disabled": @"Resource writes are off", @"no-write": @"No resource write requested", @"gone": @"Previous process exited"};
+    NSString *label = labels[row[@"state"] ?: @""] ?: @"No matching resource receipt";
+    NSMutableArray *parts = [NSMutableArray arrayWithObject:VDTLoc(self.class, label)];
+    NSNumber *checkedAt = row[@"checkedAt"];
+    if ([checkedAt isKindOfClass:NSNumber.class] && checkedAt.doubleValue > 0) {
+        NSDateFormatter *formatter = [NSDateFormatter new];
+        formatter.dateStyle = NSDateFormatterShortStyle; formatter.timeStyle = NSDateFormatterMediumStyle;
+        [parts addObject:[formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:checkedAt.doubleValue]]];
+    }
+    id pair = row[@"memoryObserved"];
+    if ([pair isKindOfClass:NSArray.class] && [pair count] == 4)
+        [parts addObject:[NSString stringWithFormat:@"%@ %@ / %@ MiB", VDTLoc(self.class, @"Memory"), pair[0], pair[2]]];
+    if ([row[@"priorityObserved"] isKindOfClass:NSNumber.class])
+        [parts addObject:[NSString stringWithFormat:@"%@ %@", VDTLoc(self.class, @"Priority band"), row[@"priorityObserved"]]];
+    [parts addObject:VDTLoc(self.class, @"Historical readback, not live monitoring. Restoration uses observed values, not an exact original system policy.")];
+    return [parts componentsJoinedByString:@"\n"];
+}
+- (void)vdtFollowMemoryApp { [self vdtFollowResourceSection:@"memoryRules"]; }
+- (void)vdtFollowJetsamApp { [self vdtFollowResourceSection:@"jetsamRules"]; }
+- (void)vdtFollowResourceSection:(NSString *)section {
+    if ([self configurationType] != VDTConfigTypeExtension || ![@[@"memoryRules", @"jetsamRules"] containsObject:section]) return;
+    NSString *title = [section isEqual:@"memoryRules"] ? @"Follow containing app memory" : @"Follow containing app reclaim priority";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, title)
+        message:VDTLoc(self.class, @"Remove only this resource override? CPU, nice and the other resource are unchanged.")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel") style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, title) style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        VDTProcessConfiguration *owner = weakSelf; if (!owner) return;
+        BOOL saved = VDTResourceFollowApp([owner validIdentifier], section);
+        if (!saved) [owner presentResourceRuleError:VDTLoc(owner.class, @"Resource rule save failed")
+            message:VDTLoc(owner.class, @"The rule could not be saved. The previous saved value has been restored.")];
+        else [owner vdtReloadIndependentRules];
+        [owner reloadSpecifiers];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)confirmFollowContainingApp {
@@ -349,7 +412,9 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
             message:VDTLoc(self.class, @"Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value.")];
         return;
     }
-    BOOL saved = setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);
+    BOOL saved = [section isEqual:@"jetsamRules"] && [key isEqual:@"priority"]
+        ? VDTResourceSavePriority([self validIdentifier], [self configurationType], parsed)
+        : setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);
     // Reload through the getter even on failure; never leave an optimistic edit
     // displayed, post our own notification, or claim the saved rule was applied.
     [self reloadSpecifier:specifier animated:NO];

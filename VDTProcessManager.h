@@ -75,11 +75,12 @@ BOOL vdt_target_instance_is_current(NSDictionary *target);
 // Revalidates the PID, process start time, and bound path/name of a target.
 BOOL vdt_target_is_current(NSDictionary *target);
 
-// Applies one target and reports whether the complete transition succeeded.
-// A target with policy None or a zero percentage/interval is restored to system
-// defaults instead of limited. The CPU transition always runs first; the
-// resource stage runs afterwards regardless of the CPU outcome, and both sides
-// report separately so partial successes stay visible.
+// Applies only the CPU transition and reports CPU success. A target with policy
+// None or a zero percentage/interval restores CPU defaults. Resource work has
+// an independent lifecycle, return value and journal; CPU dedup cannot skip it.
+// Independently callable after resolution, including resource-only targets.
+// Lifetime, write opt-in, precise kernel and durable restoration gates apply.
+BOOL vdt_apply_resource_target(NSDictionary *target);
 BOOL vdt_apply_target(NSDictionary *target);
 void vdt_apply_targets(NSArray<NSDictionary *> *targets);
 

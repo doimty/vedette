@@ -82,6 +82,7 @@ typedef NS_ENUM(NSInteger, UIAlertActionStyle) { UIAlertActionStyleDefault };
 - (NSArray *)specifiers;
 - (void)presentResourceRuleError:(NSString *)title message:(NSString *)message;
 - (void)vdtReloadIndependentRules;
+- (NSString *)vdtResourceReceiptText;
 - (void)setResourceRuleValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readResourceRuleValue:(PSSpecifier *)specifier;
 @end
@@ -93,6 +94,8 @@ typedef NS_ENUM(NSInteger, UIAlertActionStyle) { UIAlertActionStyleDefault };
 - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readProcessConfigValue:(PSSpecifier *)specifier;
 - (void)confirmFollowContainingApp;
+- (void)vdtFollowMemoryApp;
+- (void)vdtFollowJetsamApp;
 - (id)readResourceRuleValue:(id)unused specifier:(PSSpecifier *)specifier;
 @end
 

@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
+static const int32_t versions[] = {21, 22, 23, 24, 25, 26, 30, INT32_MAX};
+
 static VDTPolicyInteger integer(int64_t value) { return (VDTPolicyInteger){VDTPolicyInputInteger, value}; }
 static VDTJetsamRule rawRule(int64_t band, int64_t source) {
     VDTJetsamRuleInput in = {VDTPolicyRecordEnabled, integer(1), VDTJetsamModeRaw,
@@ -43,7 +45,8 @@ static void test_named(void) {
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         VDTJetsamRule rule = namedRule(cases[i].name);
         assert(rule.parseStatus == VDTPolicyParseOK && rule.named == cases[i].name);
-        for (int32_t os = 21; os <= 24; ++os) {
+        for (size_t v = 0; v < sizeof(versions) / sizeof(versions[0]); ++v) {
+            const int32_t os = versions[v];
             VDTJetsamPlan plan = VDTPlanJetsamRule(&rule, os, false);
             assert(plan.status == VDTPolicyPlanReady && plan.reason == VDTPolicyReasonNone);
             assert(plan.band == (os == 21 ? cases[i].old : cases[i].modern));
@@ -51,13 +54,14 @@ static void test_named(void) {
         }
         assert(rule.named == cases[i].name); // mapping must not replace saved semantics
     }
-    assert(fake.count == 72);
+    assert(fake.count == 18 * (sizeof(versions) / sizeof(versions[0])));
     const VDTJetsamNamedBand reserved[] = {VDTJetsamNamedIdleDeferred,
         VDTJetsamNamedBackgroundOpportunistic, VDTJetsamNamedFreezer, VDTJetsamNamedAgingBand1Stuck};
     for (size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); ++i) {
         VDTJetsamRule rule = namedRule(reserved[i]);
         assert(rule.parseStatus == VDTPolicyParseOK);
-        for (int32_t os = 21; os <= 24; ++os) {
+        for (size_t v = 0; v < sizeof(versions) / sizeof(versions[0]); ++v) {
+            const int32_t os = versions[v];
             VDTJetsamPlan plan = VDTPlanJetsamRule(&rule, os, true);
             bool unavailable = (reserved[i] == VDTJetsamNamedFreezer && os == 21) ||
                 (reserved[i] == VDTJetsamNamedAgingBand1Stuck && os < 24);
@@ -66,7 +70,7 @@ static void test_named(void) {
             record(&fake, plan);
         }
     }
-    assert(fake.count == 72);
+    assert(fake.count == 18 * (sizeof(versions) / sizeof(versions[0])));
 }
 
 static VDTJetsamBandClass expected_class(int32_t os, int32_t band) {
@@ -76,7 +80,7 @@ static VDTJetsamBandClass expected_class(int32_t os, int32_t band) {
     if (band == 999) return VDTJetsamBandInternal;
     if (band < 0 || band > (os == 21 ? 21 : 210)) return VDTJetsamBandInvalid;
     if (os == 21 && (band == 1 || band == 2)) return VDTJetsamBandManagedReserved;
-    if (os >= 22 && ((band >= 1 && band <= 10) || band == 20 || band == 75 || (os == 24 && band == 15)))
+    if (os >= 22 && ((band >= 1 && band <= 10) || band == 20 || band == 75 || (os >= 24 && band == 15)))
         return VDTJetsamBandManagedReserved;
     for (size_t i = 0; i < sizeof(old) / sizeof(old[0]); ++i) {
         if (band == (os == 21 ? old[i] : modern[i])) return VDTJetsamBandNamedDefined;
@@ -86,7 +90,8 @@ static VDTJetsamBandClass expected_class(int32_t os, int32_t band) {
 
 static void test_raw_and_boundaries(void) {
     FakeRecorder fake = {0, -1};
-    for (int32_t os = 21; os <= 24; ++os) {
+    for (size_t v = 0; v < sizeof(versions) / sizeof(versions[0]); ++v) {
+        const int32_t os = versions[v];
         int32_t max = -1;
         assert(VDTJetsamMaxBand(os, &max) && max == (os == 21 ? 21 : 210));
         for (int32_t band = -3; band <= max + 1; ++band) {
@@ -108,9 +113,11 @@ static void test_raw_and_boundaries(void) {
     }
     const int32_t special[] = {75, 90, 150, 210};
     for (size_t i = 0; i < sizeof(special) / sizeof(special[0]); ++i) {
-        for (int32_t source = 21; source <= 24; ++source) {
+        for (size_t s = 0; s < sizeof(versions) / sizeof(versions[0]); ++s) {
+            const int32_t source = versions[s];
             VDTJetsamRule rule = rawRule(special[i], source);
-            for (int32_t target = 21; target <= 24; ++target) {
+            for (size_t t = 0; t < sizeof(versions) / sizeof(versions[0]); ++t) {
+                const int32_t target = versions[t];
                 VDTJetsamPlan plan = VDTPlanJetsamRule(&rule, target, false);
                 assert(rule.rawBand == special[i] && rule.rawSourceDarwinMajor == source);
                 if (target != source) {
@@ -166,7 +173,7 @@ static void test_typed_and_unknown(void) {
     assert(VDTParseJetsamRule(NULL).parseStatus == VDTPolicyParseInvalidArgument);
     assert(VDTPlanJetsamRule(NULL, 22, true).status == VDTPolicyPlanInvalid);
     assert(!VDTJetsamMaxBand(21, NULL));
-    const int32_t unknown[] = {0, -1, 20, 25, INT32_MAX};
+    const int32_t unknown[] = {0, -1, 20};
     FakeRecorder fake = {0, -1};
     for (size_t i = 0; i < sizeof(unknown) / sizeof(unknown[0]); ++i) {
         int32_t max = 123;
@@ -236,6 +243,6 @@ int main(void) {
     test_raw_and_boundaries();
     test_typed_and_unknown();
     test_system_disabled_invalid();
-    puts("jetsam production core PASS: named semantics, exhaustive band boundaries, raw75/90/150/210 provenance, typed/system/unknown OS; recorder only");
+    puts("jetsam production core PASS: named semantics and exhaustive band boundaries x 8 OS, raw75/90/150/210 provenance x 8 sources x 8 targets, typed/system/unknown OS; recorder only");
     return 0;
 }

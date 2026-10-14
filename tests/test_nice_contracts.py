@@ -135,20 +135,20 @@ class NiceContracts(unittest.TestCase):
                 'NICE_TEST_ROOT':str(root),'NICE_TEST_LOG':str(log),'NICE_TEST_EXIT':'0'}
             def run(name,action): return subprocess.run([bash,str(ROOT/'layout/DEBIAN'/name),action],env=env,capture_output=True)
             self.assertEqual(run('prerm','remove').returncode,0)
-            self.assertEqual(log.read_text().splitlines(),['restore-for-removal'])
+            self.assertEqual(log.read_text().splitlines(),['resource-restore-for-removal', 'restore-for-removal'])
             self.assertEqual(run('prerm','upgrade').returncode,0)
-            self.assertEqual(log.read_text().splitlines(),['restore-for-removal'])
+            self.assertEqual(log.read_text().splitlines(),['resource-restore-for-removal', 'restore-for-removal'])
             env['NICE_TEST_EXIT']='13';failed_remove=run('prerm','remove');self.assertEqual(failed_remove.returncode,0)
             self.assertIn(b'continuing package removal',failed_remove.stderr)
-            self.assertEqual(log.read_text().splitlines(),['restore-for-removal','restore-for-removal'])
+            self.assertEqual(log.read_text().splitlines(),['resource-restore-for-removal','restore-for-removal','resource-restore-for-removal','restore-for-removal'])
             log.unlink()
             # A failing resume must not leave the package half-configured either.
             failed_configure=run('postinst','configure');self.assertEqual(failed_configure.returncode,0)
             self.assertIn(b'continuing package configuration',failed_configure.stderr)
-            self.assertEqual(log.read_text().splitlines(),['resume','kill'])
+            self.assertEqual(log.read_text().splitlines(),['resource-resume','resume','kill'])
             log.unlink();env['NICE_TEST_EXIT']='0'
             self.assertEqual(run('postinst','configure').returncode,0)
-            self.assertEqual(log.read_text().splitlines(),['resume','kill'])
+            self.assertEqual(log.read_text().splitlines(),['resource-resume','resume','kill'])
     def test_cloud_native_execution_is_explicit(self):
         from ci_contract import workflow_test_source
         w=workflow_test_source(); runner=source('tests/run_nice_native_tests.sh')

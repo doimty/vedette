@@ -10,6 +10,8 @@
 #import "VDTProcessIdentity.h"
 #import "VDTNiceRuntime.h"
 #import "VDTNiceShared.h"
+#import "VDTResourceRuntime.h"
+#import "VDTResourceShared.h"
 
 #include <limits.h>
 #include <notify.h>
@@ -235,6 +237,49 @@ static void apply_nice_targets_sync(NSArray<NSDictionary *> *targets){
     schedule_nice_retry_sync();
 }
 
+// Resource work never passes through CPU's launch dedup. Retries reuse only
+// resolved metadata; every backend operation still proves the live identity.
+static NSArray<NSDictionary *> *resource_retry_targets;
+static BOOL resource_retry_scheduled;
+static NSUInteger resource_retry_generation;
+static void invalidate_resource_retry_sync(void){
+    ++resource_retry_generation;
+    resource_retry_scheduled = NO;
+}
+static void schedule_resource_retry_sync(void){
+    NSTimeInterval delay = vdt_resource_next_retry_delay();
+    if (resource_retry_scheduled || delay < 0) return;
+    resource_retry_scheduled = YES;
+    NSUInteger generation = resource_retry_generation;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0.05, delay) * NSEC_PER_SEC)),
+                   vedette_serial_queue(), ^{
+        if (generation != resource_retry_generation) return;
+        resource_retry_scheduled = NO;
+        vdt_resource_reconcile(resource_retry_targets ?: @[]);
+        for (NSDictionary *target in resource_retry_targets) vdt_apply_resource_target(target);
+        vdt_resource_publish();
+        schedule_resource_retry_sync();
+    });
+}
+static void apply_resource_targets_sync(NSArray<NSDictionary *> *targets, BOOL fullSnapshot){
+    if (fullSnapshot) {
+        resource_retry_targets = [targets copy];
+        vdt_resource_reconcile(targets);
+    } else {
+        NSMutableDictionary *byInstance = [NSMutableDictionary dictionary];
+        for (NSDictionary *target in resource_retry_targets) {
+            NSString *key = target_instance_key(target); if (key) byInstance[key] = target;
+        }
+        for (NSDictionary *target in targets) {
+            NSString *key = target_instance_key(target); if (key) byInstance[key] = target;
+        }
+        resource_retry_targets = byInstance.allValues;
+    }
+    for (NSDictionary *target in targets) vdt_apply_resource_target(target);
+    vdt_resource_publish();
+    schedule_resource_retry_sync();
+}
+
 static void reconcile_unreported_processes_sync(){
     NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, current_normalized_resource_rules_sync());
@@ -252,6 +297,7 @@ static void reconcile_unreported_processes_sync(){
     // Forget exited instances so a reused PID with a new start-time token is
     // independently eligible on the next launch signal.
     [tracked_process_instances() intersectSet:liveInstances];
+    apply_resource_targets_sync(targets, YES);
     vdt_nice_publish();
 }
 
@@ -283,6 +329,7 @@ static void handle_reported_pid_sync(pid_t pid){
     } else if (targets.count) {
         apply_launch_target_if_needed(targets.firstObject);
     }
+    apply_resource_targets_sync(targets, NO);
     schedule_launch_catch_up_sync();
 }
 
@@ -297,6 +344,8 @@ static void reloadPrefsSync(){
     normalized_nice_rules_snapshot = [VDTNiceRulesFromPrefs(newPrefs) copy];
     invalidate_nice_retry_sync();
     vdt_nice_reload(newPrefs);
+    invalidate_resource_retry_sync();
+    vdt_resource_reload(newPrefs);
 
     NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, resourceRules);
     HBLogDebug(@"Vedette configs: %@", configs);
@@ -321,6 +370,7 @@ static void reloadPrefsSync(){
         }
         if (success) [tracked_process_instances() addObject:instanceKey];
     }
+    apply_resource_targets_sync(targets, YES);
     vdt_nice_publish();
 }
 
@@ -357,6 +407,10 @@ static void restoreAllMonitors(){
         vdt_apply_targets(vdt_resolve_targets(restoreConfigs, vdt_resource_rules_from_prefs(getTempPrefs())));
         [tracked_process_instances() removeAllObjects];
         [managed_process_targets() removeAllObjects];
+        invalidate_resource_retry_sync();
+        vdt_resource_reload(prefs);
+        apply_resource_targets_sync(vdt_resolve_targets(vdt_configs_from_prefs(prefs),
+            vdt_resource_rules_from_prefs(prefs)), YES);
 
         [[NSFileManager defaultManager] removeItemAtPath:PREFS_PATH_TMP error:nil];
     });
@@ -411,6 +465,20 @@ static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
     });
 }
 
+// A public notification is not removal authority: the runtime requires the
+// root-owned request's current-boot nonce before pausing and restoring.
+static void resourceRemovalCallback(CFNotificationCenterRef center, void *observer,
+                                    CFStringRef name, const void *object, CFDictionaryRef userInfo){
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+    dispatch_async(vedette_serial_queue(), ^{
+        invalidate_resource_retry_sync();
+        vdt_resource_reload(getPrefs());
+        vdt_resource_restore_all();
+        vdt_resource_publish();
+        schedule_resource_retry_sync();
+    });
+}
+
 static NSString *current_executable_path(pid_t pid){
     char path[PROC_PIDPATHINFO_MAXSIZE];
     if (!VDTCopyProcessInfoString(pid, path, sizeof(path), proc_pidpath)) return nil;
@@ -426,6 +494,7 @@ static NSString *current_executable_path(pid_t pid){
 
             if (isRunningBoard) {
                 reloadPrefs();
+                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, resourceRemovalCallback, CFSTR(VDT_RESOURCE_RESTORE_NN), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                 CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RETRY_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                 CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RESTORE_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                 notify_register_dispatch(NOTIFY_PID_NN,

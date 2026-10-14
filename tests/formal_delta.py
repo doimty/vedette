@@ -12,7 +12,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 FORMAL_BASE = '1dfce93bd54b83292b1547d6a608a180fb4cd8b4'
-FORMAL_VERSION = '1.1.13-4'
+FORMAL_VERSION = '1.1.14-1'
 FORMAL_PATHS = frozenset({
     'VDTNiceShared.h', 'VDTNiceShared.mm', 'VDTNiceRuntime.h', 'VDTNiceRuntime.mm',
     'VDTShared.h', 'VDTShared.mm', 'VDTProcessManager.h', 'VDTProcessManager.mm',
@@ -31,7 +31,9 @@ FORMAL_PATHS = frozenset({
     'vedetteprefs/Resources/en.lproj/Localizable.strings',
     'vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings',
     '.github/workflows/roothide-build.yml', 'ci/stage_release.py', 'control',
-    '.gitattributes',
+    '.gitattributes', 'nicectl/main.mm', 'vedetteprefs/Makefile',
+    'layout/DEBIAN/postinst', 'layout/DEBIAN/prerm',
+    'layout-rootless/DEBIAN/postinst', 'layout-rootless/DEBIAN/prerm',
 })
 
 

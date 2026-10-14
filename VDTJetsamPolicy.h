@@ -75,7 +75,9 @@ typedef struct {
 } VDTJetsamPlan;
 
 VDTJetsamRule VDTParseJetsamRule(const VDTJetsamRuleInput *input);
-// MAX is known ONLY for the four explicitly verified target versions.
+// Numeric convention: Darwin21 uses 21, Darwin22+ uses 210. Later releases
+// follow the modern convention without a finite OS whitelist; kernel results
+// still determine actual application. This is not per-version device proof.
 bool VDTJetsamMaxBand(int32_t targetDarwinMajor, int32_t *out);
 VDTJetsamBandClass VDTClassifyJetsamBand(int32_t targetDarwinMajor, int32_t band);
 // No syscall/ABI payload/assertion is emitted. Raw cannot silently migrate even

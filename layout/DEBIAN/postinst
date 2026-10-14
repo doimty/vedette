@@ -5,6 +5,7 @@ set -u
 if command -v jbroot >/dev/null 2>&1; then
     ctl="$(jbroot)/usr/libexec/vedette-nicectl"
     if [ -x "$ctl" ]; then
+        "$ctl" resource-resume || echo "Vedette: resource resume failed (errno=$?); journal retained." >&2
         "$ctl" resume || echo "Vedette: nice resume failed (errno=$?); continuing package configuration." >&2
     else
         echo 'Vedette: nice control tool missing; continuing package configuration.' >&2

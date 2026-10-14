@@ -62,10 +62,11 @@ static void test_typed_inputs(void) {
 static void test_modes_and_plans(void) {
     const int64_t values[] = {0, -1, 128};
     const VDTMemoryMode modes[] = {VDTMemoryModeSystem, VDTMemoryModeUnlimited, VDTMemoryModeCustom};
-    const int32_t versions[] = {21, 22, 23, 24};
+    const int32_t versions[] = {21, 22, 23, 24, 25, 26, 30, INT32_MAX};
+    const size_t versionCount = sizeof(versions) / sizeof(versions[0]);
     FakeRecorder fake = {0, 0, 0};
-    // All 9 active/inactive combinations, independently, on every verified OS.
-    for (size_t v = 0; v < 4; ++v) {
+    // All 9 active/inactive combinations on legacy, modern and future majors.
+    for (size_t v = 0; v < versionCount; ++v) {
         for (size_t a = 0; a < 3; ++a) for (size_t i = 0; i < 3; ++i) {
             VDTMemoryRule rule = parse(VDTPolicyRecordEnabled, values[a], values[i]);
             assert(rule.parseStatus == VDTPolicyParseOK && rule.state == VDTPolicyRecordEnabled);
@@ -90,15 +91,15 @@ static void test_modes_and_plans(void) {
             }
         }
     }
-    assert(fake.count == 8);
+    assert(fake.count == 2 * versionCount);
     VDTMemoryRule different = parse(VDTPolicyRecordEnabled, 333, 77);
     record(&fake, VDTPlanMemoryRule(&different, 21, false));
-    assert(fake.count == 9 && fake.active == 333 && fake.inactive == 77);
+    assert(fake.count == 2 * versionCount + 1 && fake.active == 333 && fake.inactive == 77);
     VDTMemoryRule large = parse(VDTPolicyRecordEnabled, INT32_MAX, 1);
     VDTMemoryPlan largePlan = VDTPlanMemoryRule(&large, 22, false);
     assert(largePlan.status == VDTPolicyPlanReady && largePlan.activeMiB == INT32_MAX && largePlan.inactiveMiB == 1);
     // INT32_MAX is a user-specified Custom, NEVER an implementation of Unlimited.
-    const int32_t unknown[] = {0, -1, 20, 25, INT32_MAX};
+    const int32_t unknown[] = {0, -1, 20};
     for (size_t v = 0; v < sizeof(unknown) / sizeof(unknown[0]); ++v) {
         VDTMemoryPlan plan = VDTPlanMemoryRule(&different, unknown[v], true);
         assert(plan.status == VDTPolicyPlanReadOnly && plan.reason == VDTPolicyReasonUnknownTargetOS);
@@ -207,6 +208,6 @@ int main(void) {
     test_modes_and_plans();
     test_records_and_transitions();
     test_resource_inheritance();
-    puts("memory production core PASS: typed inputs, 9 mode pairs x 4 OS x 2 histories, 8192 resource/identity tuples; recorder only");
+    puts("memory production core PASS: typed inputs, 9 mode pairs x 8 OS x 2 histories (including future majors), 8192 resource/identity tuples; recorder only");
     return 0;
 }

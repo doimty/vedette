@@ -186,6 +186,36 @@ VDTApplyProgram VDTApplyBuildProgram(pid_t pid,
 // Execution
 // ---------------------------------------------------------------------------
 
+// Identity results aggregate every operation. A successful token read is not
+// a kernel-atomic binding; the caller latches any failure and never resumes.
+static bool identityBefore(VDTApplyReport *report, const VDTApplyTarget *target,
+    const VDTResourceBackend *backend, void *backendContext) {
+    VDTProcessInstanceToken token = {0, 0};
+    const bool readable = backend->getInstanceToken &&
+        backend->getInstanceToken(backendContext, report->pid, &token);
+    const bool matched = readable && report->pid > 0 && target &&
+        target->pid == report->pid && target->hasExpectedToken &&
+        VDTProcessInstanceMatches(target->expected, token);
+    report->identityPreMatched = matched &&
+        (!report->identityPreChecked || report->identityPreMatched);
+    report->identityPreChecked = true;
+    if (!matched) report->identityPostMatched = false;
+    return matched;
+}
+
+static bool identityAfter(VDTApplyReport *report, const VDTApplyTarget *target,
+    const VDTResourceBackend *backend, void *backendContext) {
+    VDTProcessInstanceToken after = {0, 0};
+    const bool readable = backend->getInstanceToken &&
+        backend->getInstanceToken(backendContext, report->pid, &after);
+    const bool matched = readable && target && target->hasExpectedToken &&
+        VDTProcessInstanceMatches(target->expected, after);
+    report->identityPostMatched = matched && report->identityPreMatched &&
+        (!report->identityPostChecked || report->identityPostMatched);
+    report->identityPostChecked = true;
+    return matched;
+}
+
 VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
     const VDTApplyTarget *target,
     const VDTResourceBackend *backend,
@@ -194,6 +224,16 @@ VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
     report.pid = program->pid;
     report.memorySkip = program->memorySkip;
     report.jetsamSkip = program->jetsamSkip;
+    // Preserve the first original even when identity/backend/compare fails.
+    // Fresh current observations below never replace an existing original.
+    if (target && target->hasPriorPair) {
+        report.priorMemlimit.hasValue = true;
+        report.priorMemlimit.pair = target->priorPair;
+    }
+    if (target && target->hasPriorPriority) {
+        report.priorPriority.hasValue = true;
+        report.priorPriority.priority = target->priorPriority;
+    }
     if (program->opCount == 0) {
         return report;
     }
@@ -213,62 +253,79 @@ VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
         return report;
     }
 
-    // Fail-closed identity pre-check: no writes without a verified instance.
-    VDTProcessInstanceToken token = {0, 0};
-    const bool readable = backend->getInstanceToken &&
-        backend->getInstanceToken(backendContext, program->pid, &token);
-    const bool matched = readable && target && target->hasExpectedToken &&
-        VDTProcessInstanceMatches(target->expected, token);
-    report.identityPreChecked = true;
-    report.identityPreMatched = matched;
-    if (!matched) {
-        if (wantsMemory) {
-            report.memoryOutcome = VDTApplyOutcomeSkipped;
-            report.memorySkip = VDTApplySkipIdentity;
-        }
-        if (wantsPriority) {
-            report.jetsamOutcome = VDTApplyOutcomeSkipped;
-            report.jetsamSkip = VDTApplySkipIdentity;
-        }
-        return report;
-    }
+    bool identityLost = false;
 
     for (unsigned i = 0; i < program->opCount; ++i) {
         const VDTApplyOp *op = &program->ops[i];
         if (op->kind == VDTOpKindSetPriority || op->kind == VDTOpKindRestorePriority) {
             const bool restore = op->kind == VDTOpKindRestorePriority;
+            if (identityLost || !identityBefore(&report, target, backend, backendContext)) {
+                identityLost = true;
+                report.jetsamOutcome = VDTApplyOutcomeSkipped;
+                report.jetsamSkip = VDTApplySkipIdentity;
+                continue;
+            }
             if (!backend->getPriority || !backend->setPriority) {
                 report.jetsamOutcome = VDTApplyOutcomeSkipped;
                 report.jetsamSkip = VDTApplySkipBackendMissing;
                 continue;
             }
-            if (restore && (!target || !target->hasPriorPriority)) {
+            if (restore && (!target->hasPriorPriority || !target->hasLastPriority)) {
                 report.jetsamOutcome = VDTApplyOutcomeSkipped;
                 report.jetsamSkip = VDTApplySkipRestorePending;
                 continue;
             }
             const int32_t expected = restore ? target->priorPriority : op->priorityBand;
-            if (!restore) {
-                VDTJetsamObservation before = {0};
-                if (!backend->getPriority(backendContext, program->pid, &before)) {
-                    report.jetsamOutcome = VDTApplyOutcomeSkipped;
-                    report.jetsamSkip = VDTApplySkipReadbackFailed;
-                    continue;
-                }
-                report.priorPriority.hasValue = true;
-                report.priorPriority.priority = before.effectivePriority;
-            }
-            if (!backend->setPriority(backendContext, program->pid, expected)) {
-                report.jetsamOutcome = VDTApplyOutcomeFailed;
+            VDTJetsamObservation before = {0};
+            const bool readPriorityBefore = backend->getPriority(backendContext, program->pid, &before);
+            // Also checks identity after a failed GET; its out value is ignored.
+            // This token is the immediate pre-SET gate when the GET succeeded.
+            if (!identityBefore(&report, target, backend, backendContext)) {
+                identityLost = true;
+                report.jetsamOutcome = VDTApplyOutcomeSkipped;
+                report.jetsamSkip = VDTApplySkipIdentity;
                 continue;
             }
+            if (!readPriorityBefore) {
+                report.jetsamOutcome = VDTApplyOutcomeSkipped;
+                report.jetsamSkip = VDTApplySkipReadbackFailed;
+                continue;
+            }
+            report.beforePriority.hasValue = true;
+            report.beforePriority.priority = before.effectivePriority;
+            if (!report.priorPriority.hasValue) {
+                report.priorPriority = report.beforePriority;
+            }
+            if (target->hasLastPriority && before.effectivePriority != target->lastPriority) {
+                report.jetsamOutcome = VDTApplyOutcomeSkipped;
+                report.jetsamSkip = VDTApplySkipConflict;
+                continue;
+            }
+            const bool wrotePriority = backend->setPriority(backendContext, program->pid, expected);
+            report.jetsamOutcome = !wrotePriority ? VDTApplyOutcomeFailed :
+                (restore ? VDTApplyOutcomeRestoreUnconfirmed : VDTApplyOutcomeAppliedUnverified);
+            // Even a failed SET can race PID replacement: never let it authorize
+            // the other resource. A successful SET stays observable immediately.
+            if (!identityAfter(&report, target, backend, backendContext)) {
+                identityLost = true;
+                report.jetsamSkip = VDTApplySkipIdentity;
+                continue;
+            }
+            if (!wrotePriority) continue;
             VDTJetsamObservation after = {0};
-            if (backend->getPriority(backendContext, program->pid, &after)) {
+            const bool readPriorityAfter = backend->getPriority(backendContext, program->pid, &after);
+            if (!identityAfter(&report, target, backend, backendContext)) {
+                identityLost = true;
+                report.jetsamSkip = VDTApplySkipIdentity;
+                continue;
+            }
+            if (readPriorityAfter) {
                 report.afterPriority.hasValue = true;
                 report.afterPriority.priority = after.effectivePriority;
+                // GET is effective, SET is requested: no invented coercion match.
                 report.jetsamVerified = after.effectivePriority == expected;
             } else {
-                report.jetsamVerified = false;
+                report.jetsamSkip = VDTApplySkipReadbackFailed;
             }
             if (restore) {
                 report.jetsamOutcome = report.jetsamVerified
@@ -281,38 +338,68 @@ VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
         }
         if (op->kind == VDTOpKindSetMemory || op->kind == VDTOpKindRestoreMemory) {
             const bool restore = op->kind == VDTOpKindRestoreMemory;
+            if (identityLost || !identityBefore(&report, target, backend, backendContext)) {
+                identityLost = true;
+                report.memoryOutcome = VDTApplyOutcomeSkipped;
+                report.memorySkip = VDTApplySkipIdentity;
+                continue;
+            }
             if (!backend->getMemlimit || !backend->setMemlimit) {
                 report.memoryOutcome = VDTApplyOutcomeSkipped;
                 report.memorySkip = VDTApplySkipBackendMissing;
                 continue;
             }
-            if (restore && (!target || !target->hasPriorPair)) {
+            if (restore && (!target->hasPriorPair || !target->hasLastPair)) {
                 report.memoryOutcome = VDTApplyOutcomeSkipped;
                 report.memorySkip = VDTApplySkipRestorePending;
                 continue;
             }
             const VDTMemlimitPair expected = restore ? target->priorPair : op->pair;
-            if (!restore) {
-                VDTMemlimitPair before = {0, 0, 0, 0};
-                if (!backend->getMemlimit(backendContext, program->pid, &before)) {
-                    report.memoryOutcome = VDTApplyOutcomeSkipped;
-                    report.memorySkip = VDTApplySkipReadbackFailed;
-                    continue;
-                }
-                report.priorMemlimit.hasValue = true;
-                report.priorMemlimit.pair = before;
-            }
-            if (!backend->setMemlimit(backendContext, program->pid, &expected)) {
-                report.memoryOutcome = VDTApplyOutcomeFailed;
+            VDTMemlimitPair before = {0, 0, 0, 0};
+            const bool readPairBefore = backend->getMemlimit(backendContext, program->pid, &before);
+            if (!identityBefore(&report, target, backend, backendContext)) {
+                identityLost = true;
+                report.memoryOutcome = VDTApplyOutcomeSkipped;
+                report.memorySkip = VDTApplySkipIdentity;
                 continue;
             }
+            if (!readPairBefore) {
+                report.memoryOutcome = VDTApplyOutcomeSkipped;
+                report.memorySkip = VDTApplySkipReadbackFailed;
+                continue;
+            }
+            report.beforeMemlimit.hasValue = true;
+            report.beforeMemlimit.pair = before;
+            if (!report.priorMemlimit.hasValue) {
+                report.priorMemlimit = report.beforeMemlimit;
+            }
+            if (target->hasLastPair && !pairEquals(before, target->lastPair)) {
+                report.memoryOutcome = VDTApplyOutcomeSkipped;
+                report.memorySkip = VDTApplySkipConflict;
+                continue;
+            }
+            const bool wrotePair = backend->setMemlimit(backendContext, program->pid, &expected);
+            report.memoryOutcome = !wrotePair ? VDTApplyOutcomeFailed :
+                (restore ? VDTApplyOutcomeRestoreUnconfirmed : VDTApplyOutcomeAppliedUnverified);
+            if (!identityAfter(&report, target, backend, backendContext)) {
+                identityLost = true;
+                report.memorySkip = VDTApplySkipIdentity;
+                continue;
+            }
+            if (!wrotePair) continue;
             VDTMemlimitPair after = {0, 0, 0, 0};
-            if (backend->getMemlimit(backendContext, program->pid, &after)) {
+            const bool readPairAfter = backend->getMemlimit(backendContext, program->pid, &after);
+            if (!identityAfter(&report, target, backend, backendContext)) {
+                identityLost = true;
+                report.memorySkip = VDTApplySkipIdentity;
+                continue;
+            }
+            if (readPairAfter) {
                 report.afterMemlimit.hasValue = true;
                 report.afterMemlimit.pair = after;
                 report.memoryVerified = pairEquals(after, expected);
             } else {
-                report.memoryVerified = false;
+                report.memorySkip = VDTApplySkipReadbackFailed;
             }
             if (restore) {
                 report.memoryOutcome = report.memoryVerified
@@ -325,13 +412,32 @@ VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
         }
     }
 
-    // Post-write instance re-check: records drift after the writes happened.
-    if (backend->getInstanceToken) {
-        VDTProcessInstanceToken after = {0, 0};
-        const bool readableAfter = backend->getInstanceToken(backendContext, program->pid, &after);
-        report.identityPostChecked = true;
-        report.identityPostMatched = readableAfter && target && target->hasExpectedToken &&
-            VDTProcessInstanceMatches(target->expected, after);
+    // A later operation can discover drift after an earlier verified write.
+    // Keep the write evidence, but do not claim this batch stayed on-instance.
+    if (identityLost) {
+        report.identityPostMatched = false;
+        if (report.memoryOutcome == VDTApplyOutcomeApplied ||
+            report.memoryOutcome == VDTApplyOutcomeAppliedUnverified) {
+            report.memoryOutcome = VDTApplyOutcomeAppliedUnverified;
+            report.memoryVerified = false;
+            report.memorySkip = VDTApplySkipIdentity;
+        } else if (report.memoryOutcome == VDTApplyOutcomeRestored ||
+            report.memoryOutcome == VDTApplyOutcomeRestoreUnconfirmed) {
+            report.memoryOutcome = VDTApplyOutcomeRestoreUnconfirmed;
+            report.memoryVerified = false;
+            report.memorySkip = VDTApplySkipIdentity;
+        }
+        if (report.jetsamOutcome == VDTApplyOutcomeApplied ||
+            report.jetsamOutcome == VDTApplyOutcomeAppliedUnverified) {
+            report.jetsamOutcome = VDTApplyOutcomeAppliedUnverified;
+            report.jetsamVerified = false;
+            report.jetsamSkip = VDTApplySkipIdentity;
+        } else if (report.jetsamOutcome == VDTApplyOutcomeRestored ||
+            report.jetsamOutcome == VDTApplyOutcomeRestoreUnconfirmed) {
+            report.jetsamOutcome = VDTApplyOutcomeRestoreUnconfirmed;
+            report.jetsamVerified = false;
+            report.jetsamSkip = VDTApplySkipIdentity;
+        }
     }
 
     const bool memoryGood = report.memoryOutcome == VDTApplyOutcomeApplied ||

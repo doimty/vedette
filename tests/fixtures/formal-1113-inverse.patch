@@ -10,7 +10,7 @@ index 9c030ba..6c6529f 100644
  tests/fixtures/appex-ui21-inverse.patch whitespace=-blank-at-eol
 +tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index 4c5466c..6681c86 100644
+index 4c5466c..b99a1a2 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
 @@ -8,10 +8,11 @@ on:
@@ -72,7 +72,7 @@ index 4c5466c..6681c86 100644
        PACKAGE_ARCH: ${{ matrix.package_arch }}
        PACKAGE_PREFIX: ${{ matrix.prefix }}
 -      PACKAGE_VERSION: 1.1.13-1+rc1
-+      PACKAGE_VERSION: 1.1.13-4
++      PACKAGE_VERSION: 1.1.14-1
        FINALPACKAGE: 1
        PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
  
@@ -816,7 +816,7 @@ index f7c52fd..46512e7 100644
      return row;
  }
 diff --git a/VDTProcessManager.h b/VDTProcessManager.h
-index 99f0626..3c18c39 100644
+index 99f0626..cff683f 100644
 --- a/VDTProcessManager.h
 +++ b/VDTProcessManager.h
 @@ -31,10 +31,23 @@ extern NSString * const VDTTargetExecutablePathKey;
@@ -843,23 +843,46 @@ index 99f0626..3c18c39 100644
  // valid identifier are dropped; entries with malformed parameters are retained
  // as disabled so a reload can undo limits previously applied by Vedette. The
  // global switch is folded into each entry's enabled flag.
+@@ -60,15 +73,16 @@ NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *>
+ BOOL vdt_target_instance_is_current(NSDictionary *target);
+ 
+ // Revalidates the PID, process start time, and bound path/name of a target.
+ BOOL vdt_target_is_current(NSDictionary *target);
+ 
+-// Applies one target and reports whether the complete transition succeeded.
+-// A target with policy None or a zero percentage/interval is restored to system
+-// defaults instead of limited. The CPU transition always runs first; the
+-// resource stage runs afterwards regardless of the CPU outcome, and both sides
+-// report separately so partial successes stay visible.
++// Applies only the CPU transition and reports CPU success. A target with policy
++// None or a zero percentage/interval restores CPU defaults. Resource work has
++// an independent lifecycle, return value and journal; CPU dedup cannot skip it.
++// Independently callable after resolution, including resource-only targets.
++// Lifetime, write opt-in, precise kernel and durable restoration gates apply.
++BOOL vdt_apply_resource_target(NSDictionary *target);
+ BOOL vdt_apply_target(NSDictionary *target);
+ void vdt_apply_targets(NSArray<NSDictionary *> *targets);
+ 
+ #ifdef __cplusplus
+ }
 diff --git a/VDTProcessManager.mm b/VDTProcessManager.mm
-index 300ea07..a2ce369 100644
+index 300ea07..af56daf 100644
 --- a/VDTProcessManager.mm
 +++ b/VDTProcessManager.mm
-@@ -11,10 +11,11 @@
+@@ -11,10 +11,12 @@
  #import "VDTPolicyTransition.h"
  #import "VDTSpringBoardIdentity.h"
  #import "VDTBundleIdentity.h"
  #import "VDTBundleRules.h"
  #import "VDTResourceApply.h"
++#import "VDTResourceRuntime.h"
 +#import "VDTNiceShared.h"
  
  #include <errno.h>
  #include <limits.h>
  #include <math.h>
  #include <os/lock.h>
-@@ -189,10 +190,14 @@ NSString * const VDTTargetExecutablePathKey = @"executablePath";
+@@ -189,10 +191,14 @@ NSString * const VDTTargetExecutablePathKey = @"executablePath";
  NSString * const VDTTargetProcCommKey = @"procComm";
  NSString * const VDTTargetStartSecondsKey = @"startSeconds";
  NSString * const VDTTargetStartMicrosecondsKey = @"startMicroseconds";
@@ -874,7 +897,7 @@ index 300ea07..a2ce369 100644
                                                       NSString *sectionKey,
                                                       NSString *identifierKey,
                                                       VDTConfigType type,
-@@ -201,10 +206,12 @@ static NSArray<NSDictionary *> *configs_from_section(NSDictionary *prefs,
+@@ -201,10 +207,12 @@ static NSArray<NSDictionary *> *configs_from_section(NSDictionary *prefs,
      NSArray *section = vdt_array(prefs[sectionKey]);
  
      for (id rawEntry in section) {
@@ -887,7 +910,51 @@ index 300ea07..a2ce369 100644
          if (!identifier) continue;
  
          // The Settings app hosts the preference bundle itself; throttling it
-@@ -786,10 +793,107 @@ NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *>
+@@ -256,15 +264,12 @@ NSArray<NSDictionary *>* vdt_configs_from_prefs(NSDictionary *prefs){
+     return configs;
+ }
+ 
+ #pragma mark - Resource rules (memoryRules / jetsamRules)
+ 
+-// The Jetsam policy cores are versioned by Darwin major; iOS 15–18 map to
+-// Darwin 21–24. Unknown future versions resolve to a read-only plan.
+-static int32_t vdt_target_darwin_major(void){
+-    return (int32_t)(NSProcessInfo.processInfo.operatingSystemVersion.majorVersion + 6);
+-}
++// Version authority is queried by the durable system adapter. A saved raw
++// priority retains its sourceDarwinMajor; this parser never invents provenance.
+ 
+ // Classify an untrusted plist value exactly the way the C cores expect. A
+ // CFBoolean or a non-integral number must never be coerced into an integer.
+ static VDTPolicyInteger resource_policy_integer(id value){
+     if (!value) return (VDTPolicyInteger){VDTPolicyInputNull, 0};
+@@ -317,11 +322,11 @@ static VDTJetsamRule resource_jetsam_core_rule(NSDictionary *rule, VDTPolicyReco
+         .named = VDTJetsamNamedInvalid,
+         .rawBand = resource_policy_integer(rule[@"priority"]),
+         // The saved band is owned by the device that wrote it: a later OS
+         // upgrade turns the source major into a mismatch the core refuses
+         // instead of silently migrating the number.
+-        .rawSourceDarwinMajor = resource_policy_integer(@(vdt_target_darwin_major()))
++        .rawSourceDarwinMajor = resource_policy_integer(rule[@"sourceDarwinMajor"])
+     };
+     return VDTParseJetsamRule(&input);
+ }
+ 
+ // One normalised resource rule. `state` mirrors the frozen cores: presence —
+@@ -354,11 +359,11 @@ static NSDictionary *resource_rule_from_entry(NSDictionary *validatedEntry,
+         VDTConfigTypeKey: @(type),
+         @"section": sectionKey,
+         @"state": @(state),
+         VDTConfigEnabledKey: @(state == VDTPolicyRecordEnabled)
+     } mutableCopy];
+-    for (NSString *key in @[@"schema", @"active", @"inactive", @"priority"]) {
++    for (NSString *key in @[@"schema", @"active", @"inactive", @"priority", @"sourceDarwinMajor"]) {
+         if (validatedEntry[key]) rule[key] = validatedEntry[key];
+     }
+     return rule;
+ }
+ 
+@@ -786,10 +791,107 @@ NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *>
  
      NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs, resourceMaps);
      return target ? @[target] : @[];
@@ -995,6 +1062,147 @@ index 300ea07..a2ce369 100644
  static BOOL target_instance_token(NSDictionary *target, VDTProcessInstanceToken *outToken){
      if (!outToken) return NO;
  
+@@ -896,104 +998,32 @@ static int policy_set_throttle(pid_t pid, int percentage, void *context){
+ static int policy_set_fatal(pid_t pid, int percentage, int interval, void *context){
+     (void)context;
+     return proc_set_cpumon_params_fatal(pid, percentage, interval);
+ }
+ 
+-#pragma mark - Resource stage (staged enablement)
+-
+-// Production capabilities stay fully disabled until the M6 enablement step.
+-// The engine still builds programs and reports why nothing can be written, so
+-// the UI can distinguish saved from applied without faking either.
+-static VDTApplyCapabilities vdt_resource_capabilities(void){
+-    VDTApplyCapabilities capabilities = {};
+-    capabilities.writeMemoryCustom = false;
+-    capabilities.writeMemoryUnlimited = false;
+-    capabilities.writeJetsamBand = false;
+-    capabilities.restoreWriteback = false;
+-    return capabilities;
+-}
+-
+-// No production syscall backend is wired yet. A NULL backend keeps the engine
+-// fail-closed: it reports "backend missing" instead of issuing any syscall.
+-static const VDTResourceBackend *vdt_resource_backend(void){
+-    return NULL;
+-}
++#pragma mark - Resource stage (durable, independently scheduled)
+ 
+-// Applies the resolved resource rules for one target through the injectable
+-// backend. The stage is independent of the CPU transition in both directions:
+-// a CPU success never marks resource work as done, and a resource failure
+-// never blocks CPU protection nor erases what the CPU side achieved.
+-static BOOL vdt_apply_resource_target(NSDictionary *rawTarget){
++// The coordinator supplies precise-system capabilities, explicit opt-in,
++// write-ahead originals/pending intents and conditional restoration. It runs
++// independently of CPU dedup, and never treats a saved setting as applied.
++BOOL vdt_apply_resource_target(NSDictionary *rawTarget){
+     NSDictionary *target = vdt_dictionary(rawTarget);
+     NSNumber *pidValue = target ? vdt_number(target[VDTTargetPidKey]) : nil;
+     if (!target || !pidValue || pidValue.intValue <= 0) return NO;
+-
+     NSDictionary *memoryRule = vdt_dictionary(target[VDTTargetMemoryRuleKey]);
+     NSDictionary *jetsamRule = vdt_dictionary(target[VDTTargetJetsamRuleKey]);
+-    if (!memoryRule && !jetsamRule) return YES;
+-
+-    pid_t pid = (pid_t)pidValue.intValue;
+     VDTMemoryRule memoryCore = {};
+     VDTJetsamRule jetsamCore = {};
+-    if (memoryRule) {
+-        memoryCore = resource_memory_core_rule(memoryRule,
+-            (VDTPolicyRecordState)[vdt_number(memoryRule[@"state"]) unsignedLongValue]);
+-    }
+-    if (jetsamRule) {
+-        jetsamCore = resource_jetsam_core_rule(jetsamRule,
+-            (VDTPolicyRecordState)[vdt_number(jetsamRule[@"state"]) unsignedLongValue]);
+-    }
+-
+-    // No revert records exist until the write channel is enabled, so restore
+-    // requirements resolve to NoWrite instead of a blind SET of defaults.
+-    VDTApplyProgram program = VDTApplyBuildProgram(pid,
+-        memoryRule ? &memoryCore : NULL,
+-        jetsamRule ? &jetsamCore : NULL,
+-        vdt_target_darwin_major(),
+-        false,
+-        false,
+-        vdt_resource_capabilities());
+-
+-    if (program.opCount == 0) {
+-        VDTProbeRecord(@"runningboardd.resourceStage", @{
+-            @"pid": @(pid),
+-            @"name": target[VDTTargetNameKey] ?: @"",
+-            @"ops": @0,
+-            @"memorySkip": @(program.memorySkip),
+-            @"jetsamSkip": @(program.jetsamSkip),
+-            @"writeChannel": @"disabled"
+-        });
+-        return YES;
+-    }
+-
+-    VDTApplyTarget applyTarget = {};
+-    applyTarget.pid = pid;
+-    VDTProcessInstanceToken token = {};
+-    if (target_instance_token(target, &token)) {
+-        applyTarget.hasExpectedToken = true;
+-        applyTarget.expected = token;
+-    }
+-
+-    VDTApplyReport report = VDTApplyExecute(&program, &applyTarget,
+-        vdt_resource_backend(), NULL);
+-
+-    VDTProbeRecord(@"runningboardd.resourceStage", @{
+-        @"pid": @(pid),
+-        @"name": target[VDTTargetNameKey] ?: @"",
+-        @"ops": @(program.opCount),
+-        @"memoryOutcome": @(report.memoryOutcome),
+-        @"jetsamOutcome": @(report.jetsamOutcome),
+-        @"partial": @(report.partial),
+-        @"identityPreMatched": @(report.identityPreMatched),
+-        @"identityPostMatched": @(report.identityPostMatched),
+-        @"writeChannel": vdt_resource_backend() ? @"enabled" : @"disabled"
+-    });
+-
+-    // Only a failed write stays unsettled: the next scan retries it, while a
+-    // disabled channel or a policy skip settles without pointless loops.
+-    return report.memoryOutcome != VDTApplyOutcomeFailed &&
+-        report.jetsamOutcome != VDTApplyOutcomeFailed;
++    if (memoryRule && [vdt_number(memoryRule[@"state"]) unsignedLongValue] == VDTPolicyRecordDisabled)
++        memoryCore.state = VDTPolicyRecordDisabled; // revoke using journal, no new numeric value
++    else if (memoryRule) memoryCore = resource_memory_core_rule(memoryRule,
++        (VDTPolicyRecordState)[vdt_number(memoryRule[@"state"]) unsignedLongValue]);
++    if (jetsamRule && [vdt_number(jetsamRule[@"state"]) unsignedLongValue] == VDTPolicyRecordDisabled)
++        jetsamCore.state = VDTPolicyRecordDisabled;
++    else if (jetsamRule) jetsamCore = resource_jetsam_core_rule(jetsamRule,
++        (VDTPolicyRecordState)[vdt_number(jetsamRule[@"state"]) unsignedLongValue]);
++    return vdt_resource_apply(target, memoryRule ? &memoryCore : NULL, jetsamRule ? &jetsamCore : NULL);
+ }
+ 
+ BOOL vdt_apply_target(NSDictionary *rawTarget){
+     NSDictionary *target = vdt_dictionary(rawTarget);
+     NSNumber *pidValue = vdt_number(target[VDTTargetPidKey]);
+@@ -1087,17 +1117,14 @@ BOOL vdt_apply_target(NSDictionary *rawTarget){
+             @"identityRejected": @(result.identityRejected),
+             @"errno": @(operationErrno)
+         });
+     }
+ 
+-    // The resource stage runs regardless of the CPU outcome in either
+-    // direction. A CPU success must never mark memory/jetsam work as done, and
+-    // a resource failure must never skip CPU protection or erase its result.
+-    BOOL cpuApplied = result.success;
+-    BOOL resourceSettled = vdt_apply_resource_target(target);
+-
+-    return cpuApplied && resourceSettled;
++    // CPU dedup owns only the CPU transition. The independent resource
++    // pipeline runs for every resolved target and reconciles its own journal;
++    // a resource failure cannot falsely retire or repeat a successful CPU rule.
++    return result.success;
+ }
+ 
+ void vdt_apply_targets(NSArray<NSDictionary *> *targets){
+     for (id target in targets) {
+         vdt_apply_target(target);
 diff --git a/VDTShared.h b/VDTShared.h
 index 013137d..94b5770 100644
 --- a/VDTShared.h
@@ -1152,10 +1360,23 @@ index 13c6627..89df94b 100644
                                             VDTConfigType type,
                                             NSString *sectionKey,
 diff --git a/Vedette.xm b/Vedette.xm
-index 7907eab..c64f6f0 100644
+index 7907eab..718b954 100644
 --- a/Vedette.xm
 +++ b/Vedette.xm
-@@ -72,10 +72,11 @@ static NSMutableDictionary<NSString *, NSDictionary *> *managed_process_targets(
+@@ -8,10 +8,12 @@
+ #import "VDTShared.h"
+ #import "VDTProbe.h"
+ #import "VDTProcessIdentity.h"
+ #import "VDTNiceRuntime.h"
+ #import "VDTNiceShared.h"
++#import "VDTResourceRuntime.h"
++#import "VDTResourceShared.h"
+ 
+ #include <limits.h>
+ #include <notify.h>
+ #include <unistd.h>
+ 
+@@ -72,10 +74,11 @@ static NSMutableDictionary<NSString *, NSDictionary *> *managed_process_targets(
  // This snapshot is confined to vedette_serial_queue. It contains only the
  // validated configuration, never a PID-lifetime proof; target identity is
  // still rechecked immediately before each policy syscall.
@@ -1167,7 +1388,7 @@ index 7907eab..c64f6f0 100644
      if (!normalized_configs_snapshot){
          normalized_configs_snapshot = [vdt_configs_from_prefs(VDTGetPrefs()) copy];
      }
-@@ -87,10 +88,17 @@ static NSArray<NSDictionary *> *current_normalized_resource_rules_sync(void){
+@@ -87,10 +90,17 @@ static NSArray<NSDictionary *> *current_normalized_resource_rules_sync(void){
          normalized_resource_rules_snapshot = [vdt_resource_rules_from_prefs(VDTGetPrefs()) copy];
      }
      return normalized_resource_rules_snapshot;
@@ -1185,7 +1406,7 @@ index 7907eab..c64f6f0 100644
      NSNumber *seconds = [target[VDTTargetStartSecondsKey] isKindOfClass:[NSNumber class]] ? target[VDTTargetStartSecondsKey] : nil;
      NSNumber *microseconds = [target[VDTTargetStartMicrosecondsKey] isKindOfClass:[NSNumber class]] ? target[VDTTargetStartMicrosecondsKey] : nil;
      NSString *identity = [target[VDTTargetExecutablePathKey] isKindOfClass:[NSString class]] ? target[VDTTargetExecutablePathKey] : nil;
-@@ -114,12 +122,11 @@ static BOOL target_has_enabled_policy(NSDictionary *target){
+@@ -114,12 +124,11 @@ static BOOL target_has_enabled_policy(NSDictionary *target){
      return value == VDTViolationPolicyMonitorAndTerminate ||
          value == VDTViolationPolicyThrottle;
  }
@@ -1199,7 +1420,7 @@ index 7907eab..c64f6f0 100644
  
      // A newly launched disabled target starts from system defaults. If this
      // instance was previously managed, however, explicitly retire that policy.
-@@ -197,17 +204,47 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
+@@ -197,26 +206,100 @@ static void retire_targets_without_active_config(NSArray<NSDictionary *> *config
              [tracked_process_instances() removeObject:instanceKey];
          }
      }
@@ -1234,6 +1455,49 @@ index 7907eab..c64f6f0 100644
 +    schedule_nice_retry_sync();
 +}
 +
++// Resource work never passes through CPU's launch dedup. Retries reuse only
++// resolved metadata; every backend operation still proves the live identity.
++static NSArray<NSDictionary *> *resource_retry_targets;
++static BOOL resource_retry_scheduled;
++static NSUInteger resource_retry_generation;
++static void invalidate_resource_retry_sync(void){
++    ++resource_retry_generation;
++    resource_retry_scheduled = NO;
++}
++static void schedule_resource_retry_sync(void){
++    NSTimeInterval delay = vdt_resource_next_retry_delay();
++    if (resource_retry_scheduled || delay < 0) return;
++    resource_retry_scheduled = YES;
++    NSUInteger generation = resource_retry_generation;
++    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0.05, delay) * NSEC_PER_SEC)),
++                   vedette_serial_queue(), ^{
++        if (generation != resource_retry_generation) return;
++        resource_retry_scheduled = NO;
++        vdt_resource_reconcile(resource_retry_targets ?: @[]);
++        for (NSDictionary *target in resource_retry_targets) vdt_apply_resource_target(target);
++        vdt_resource_publish();
++        schedule_resource_retry_sync();
++    });
++}
++static void apply_resource_targets_sync(NSArray<NSDictionary *> *targets, BOOL fullSnapshot){
++    if (fullSnapshot) {
++        resource_retry_targets = [targets copy];
++        vdt_resource_reconcile(targets);
++    } else {
++        NSMutableDictionary *byInstance = [NSMutableDictionary dictionary];
++        for (NSDictionary *target in resource_retry_targets) {
++            NSString *key = target_instance_key(target); if (key) byInstance[key] = target;
++        }
++        for (NSDictionary *target in targets) {
++            NSString *key = target_instance_key(target); if (key) byInstance[key] = target;
++        }
++        resource_retry_targets = byInstance.allValues;
++    }
++    for (NSDictionary *target in targets) vdt_apply_resource_target(target);
++    vdt_resource_publish();
++    schedule_resource_retry_sync();
++}
++
  static void reconcile_unreported_processes_sync(){
      NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
      NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, current_normalized_resource_rules_sync());
@@ -1247,7 +1511,17 @@ index 7907eab..c64f6f0 100644
          if (instanceKey) [liveInstances addObject:instanceKey];
          apply_launch_target_if_needed(target);
      }
-@@ -233,17 +270,19 @@ static void schedule_launch_catch_up_sync(){
+ 
+     // Forget exited instances so a reused PID with a new start-time token is
+     // independently eligible on the next launch signal.
+     [tracked_process_instances() intersectSet:liveInstances];
++    apply_resource_targets_sync(targets, YES);
+     vdt_nice_publish();
+ }
+ 
+ static void schedule_launch_catch_up_sync(){
+     if (launch_catch_up_scheduled) return;
+@@ -233,19 +316,22 @@ static void schedule_launch_catch_up_sync(){
  }
  
  static void handle_reported_pid_sync(pid_t pid){
@@ -1266,10 +1540,13 @@ index 7907eab..c64f6f0 100644
 +    } else if (targets.count) {
          apply_launch_target_if_needed(targets.firstObject);
      }
++    apply_resource_targets_sync(targets, NO);
      schedule_launch_catch_up_sync();
  }
  
-@@ -253,21 +292,23 @@ static void reloadPrefsSync(){
+ // Core prefs reload logic. Must be called on vedette_serial_queue.
+ static void reloadPrefsSync(){
+@@ -253,21 +339,25 @@ static void reloadPrefsSync(){
      NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);
      NSArray<NSDictionary *> *resourceRules = vdt_resource_rules_from_prefs(newPrefs);
      VDTSetPrefs(newPrefs);
@@ -1278,6 +1555,8 @@ index 7907eab..c64f6f0 100644
 +    normalized_nice_rules_snapshot = [VDTNiceRulesFromPrefs(newPrefs) copy];
 +    invalidate_nice_retry_sync();
      vdt_nice_reload(newPrefs);
++    invalidate_resource_retry_sync();
++    vdt_resource_reload(newPrefs);
  
      NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, resourceRules);
      HBLogDebug(@"Vedette configs: %@", configs);
@@ -1294,7 +1573,19 @@ index 7907eab..c64f6f0 100644
  
          BOOL enabled = target_has_enabled_policy(target);
          BOOL success = YES;
-@@ -292,12 +333,15 @@ static void reloadPrefs(){
+@@ -278,10 +368,11 @@ static void reloadPrefsSync(){
+             success = vdt_apply_target(target);
+             if (success) [managed_process_targets() removeObjectForKey:instanceKey];
+         }
+         if (success) [tracked_process_instances() addObject:instanceKey];
+     }
++    apply_resource_targets_sync(targets, YES);
+     vdt_nice_publish();
+ }
+ 
+ // Async wrapper — safe to call from any context (CFNotificationCallback, etc.)
+ static void reloadPrefs(){
+@@ -292,12 +383,15 @@ static void reloadPrefs(){
  
  static void restoreAllMonitors(){
      dispatch_async(vedette_serial_queue(), ^{
@@ -1311,7 +1602,22 @@ index 7907eab..c64f6f0 100644
          // resolved target takes the restore path and hands the process back to
          // the system. The previous implementation inferred app-vs-daemon from an
          // index comparison that mis-typed daemon entries whenever both sections
-@@ -353,16 +397,17 @@ static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
+@@ -311,10 +405,14 @@ static void restoreAllMonitors(){
+         }
+ 
+         vdt_apply_targets(vdt_resolve_targets(restoreConfigs, vdt_resource_rules_from_prefs(getTempPrefs())));
+         [tracked_process_instances() removeAllObjects];
+         [managed_process_targets() removeAllObjects];
++        invalidate_resource_retry_sync();
++        vdt_resource_reload(prefs);
++        apply_resource_targets_sync(vdt_resolve_targets(vdt_configs_from_prefs(prefs),
++            vdt_resource_rules_from_prefs(prefs)), YES);
+ 
+         [[NSFileManager defaultManager] removeItemAtPath:PREFS_PATH_TMP error:nil];
+     });
+ }
+ 
+@@ -353,21 +451,36 @@ static void niceRefreshCallback(CFNotificationCenterRef center, void *observer,
      dispatch_async(vedette_serial_queue(), ^{
          if (nice_refresh_scheduled) return;
          nice_refresh_scheduled = YES;
@@ -1331,8 +1637,39 @@ index 7907eab..c64f6f0 100644
      });
  }
  
++// A public notification is not removal authority: the runtime requires the
++// root-owned request's current-boot nonce before pausing and restoring.
++static void resourceRemovalCallback(CFNotificationCenterRef center, void *observer,
++                                    CFStringRef name, const void *object, CFDictionaryRef userInfo){
++    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
++    dispatch_async(vedette_serial_queue(), ^{
++        invalidate_resource_retry_sync();
++        vdt_resource_reload(getPrefs());
++        vdt_resource_restore_all();
++        vdt_resource_publish();
++        schedule_resource_retry_sync();
++    });
++}
++
+ static NSString *current_executable_path(pid_t pid){
+     char path[PROC_PIDPATHINFO_MAXSIZE];
+     if (!VDTCopyProcessInfoString(pid, path, sizeof(path), proc_pidpath)) return nil;
+     return [NSString stringWithUTF8String:path];
+ }
+@@ -379,10 +492,11 @@ static NSString *current_executable_path(pid_t pid){
+             NSString *executablePath = current_executable_path(pid);
+             BOOL isRunningBoard = [executablePath isEqualToString:@"/usr/libexec/runningboardd"];
+ 
+             if (isRunningBoard) {
+                 reloadPrefs();
++                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, resourceRemovalCallback, CFSTR(VDT_RESOURCE_RESTORE_NN), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                 CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RETRY_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                 CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RESTORE_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                 notify_register_dispatch(NOTIFY_PID_NN,
+                                          &notify_pid_token,
+                                          dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
 diff --git a/ci/stage_release.py b/ci/stage_release.py
-index 0d1f328..fe62099 100644
+index 0d1f328..89c891f 100644
 --- a/ci/stage_release.py
 +++ b/ci/stage_release.py
 @@ -14,11 +14,11 @@ def stage_release(stage,scheme):
@@ -1342,26 +1679,165 @@ index 0d1f328..fe62099 100644
      if not control.is_file() or control.is_symlink(): raise ValueError('missing/unsafe staged control')
      text=control.read_text();fields=dict(line.split(':',1) for line in text.splitlines() if ':' in line)
 -    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.13-1+rc1':
-+    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.13-4':
++    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-1':
          raise ValueError('wrong staged package/version')
      if fields.get('Architecture','').strip()!=ARCH[scheme]: raise ValueError('staged scheme/architecture mismatch')
      old='Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist'
      if text.count(old)!=1: raise ValueError('unexpected dependency declaration')
      if scheme=='rootless':
 diff --git a/control b/control
-index ffb89a4..b78bdd8 100644
+index ffb89a4..558bc05 100644
 --- a/control
 +++ b/control
-@@ -1,8 +1,8 @@
+@@ -1,10 +1,10 @@
  Package: com.doimty.vedette
  Name: Vedette
 -Version: 1.1.13-1+rc1
-+Version: 1.1.13-4
++Version: 1.1.14-1
  Architecture: iphoneos-arm
- Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级
+-Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级
++Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级，支持内存上限及回收优先级规则
  Conflicts: com.udevs.vedette
  Replaces: com.udevs.vedette
  Maintainer: doimty
+ Author: udevs
+ Section: Tweaks
+diff --git a/layout-rootless/DEBIAN/postinst b/layout-rootless/DEBIAN/postinst
+index 5972a1a..f31b573 100755
+--- a/layout-rootless/DEBIAN/postinst
++++ b/layout-rootless/DEBIAN/postinst
+@@ -4,10 +4,11 @@ set -u
+ # and never leave dpkg half-configured because of an advisory control step.
+ ctl=/var/jb/usr/libexec/vedette-nicectl
+ if [ ! -x "$ctl" ]; then
+     echo 'Vedette: nice control tool missing; continuing package configuration.' >&2
+ else
++    "$ctl" resource-resume || echo "Vedette: resource resume failed (errno=$?); journal retained." >&2
+     "$ctl" resume || echo "Vedette: nice resume failed (errno=$?); continuing package configuration." >&2
+ fi
+ 
+ echo "Killing runningboardd..."
+ killall -9 runningboardd || true
+diff --git a/layout-rootless/DEBIAN/prerm b/layout-rootless/DEBIAN/prerm
+index 841d2a9..e698c15 100755
+--- a/layout-rootless/DEBIAN/prerm
++++ b/layout-rootless/DEBIAN/prerm
+@@ -9,10 +9,11 @@ case "${1:-}" in
+     remove|deconfigure)
+         ctl=/var/jb/usr/libexec/vedette-nicectl
+         if [ ! -x "$ctl" ]; then
+             echo 'Vedette: nice restoration tool missing; continuing package removal.' >&2
+         else
++            "$ctl" resource-restore-for-removal || echo "Vedette: resource restoration failed (errno=$?); records retained until process exit/reboot or reinstall." >&2
+             "$ctl" restore-for-removal || continue_after_nice_failure "$?"
+         fi
+         ;;
+ esac
+ exit 0
+diff --git a/layout/DEBIAN/postinst b/layout/DEBIAN/postinst
+index 1e7e122..33020b9 100755
+--- a/layout/DEBIAN/postinst
++++ b/layout/DEBIAN/postinst
+@@ -3,10 +3,11 @@ set -u
+ # Resume is advisory. A control failure must never leave dpkg half-configured;
+ # the journal stays on disk and the runtime reloads it on the next launch.
+ if command -v jbroot >/dev/null 2>&1; then
+     ctl="$(jbroot)/usr/libexec/vedette-nicectl"
+     if [ -x "$ctl" ]; then
++        "$ctl" resource-resume || echo "Vedette: resource resume failed (errno=$?); journal retained." >&2
+         "$ctl" resume || echo "Vedette: nice resume failed (errno=$?); continuing package configuration." >&2
+     else
+         echo 'Vedette: nice control tool missing; continuing package configuration.' >&2
+     fi
+ else
+diff --git a/layout/DEBIAN/prerm b/layout/DEBIAN/prerm
+index 1601cbd..0f45af8 100755
+--- a/layout/DEBIAN/prerm
++++ b/layout/DEBIAN/prerm
+@@ -12,10 +12,11 @@ case "${1:-}" in
+         else
+             ctl="$(jbroot)/usr/libexec/vedette-nicectl"
+             if [ ! -x "$ctl" ]; then
+                 echo 'Vedette: nice restoration tool missing; continuing package removal.' >&2
+             else
++                "$ctl" resource-restore-for-removal || echo "Vedette: resource restoration failed (errno=$?); records retained until process exit/reboot or reinstall." >&2
+                 "$ctl" restore-for-removal || continue_after_nice_failure "$?"
+             fi
+         fi
+         ;;
+ esac
+diff --git a/nicectl/main.mm b/nicectl/main.mm
+index 36bfd82..72fecf9 100644
+--- a/nicectl/main.mm
++++ b/nicectl/main.mm
+@@ -1,9 +1,10 @@
+ // Copyright (c) 2026 Vedette contributors. SPDX-License-Identifier: GPL-3.0-only
+ // Root-only, one-shot removal handshake. This tool NEVER changes nice itself.
+ #import "../VDTNiceShared.h"
+ #import "../VDTNiceStore.h"
++#import "../VDTResourceShared.h"
+ #include <errno.h>
+ #include <notify.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include <time.h>
+@@ -52,13 +53,56 @@ static int restore(VDTNiceStore *store) {
+         struct timespec interval = {.tv_sec = 0, .tv_nsec = 100000000};
+         nanosleep(&interval, NULL);
+     }
+     return ETIMEDOUT;
+ }
++static int resourceControl(BOOL removal) {
++    NSString *boot = VDTNiceBootToken(), *nonce = NSUUID.UUID.UUIDString;
++    if (!boot) return ENOTSUP;
++    VDTNiceStore store;
++    int error = VDTNiceStoreOpen([jbroot(@"/var/tmp/com.doimty.vedette.resource") fileSystemRepresentation], removal, &store);
++    if (error == ENOENT && !removal) return 0;
++    if (error) return error;
++    if (!removal) {
++        error = VDTNiceStoreRemove(&store, VDT_NICE_REQUEST);
++        VDTNiceStoreClose(&store);
++        if (!error && notify_post(PREFS_CHANGED_NN.UTF8String) != NOTIFY_STATUS_OK) return EIO;
++        return error;
++    }
++    NSData *request = [NSPropertyListSerialization dataWithPropertyList:@{@"version": @1, @"boot": boot, @"nonce": nonce}
++        format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
++    error = request ? VDTNiceStoreWrite(&store, VDT_NICE_REQUEST, request.bytes, request.length) : EINVAL;
++    if (!error && notify_post(VDT_RESOURCE_RESTORE_NN) != NOTIFY_STATUS_OK) error = EIO;
++    double start = monotonic();
++    if (start < 0 && !error) error = EIO;
++    for (unsigned attempt = 0; !error && attempt < 80; ++attempt) {
++        NSDictionary *receipt = load(&store, VDT_NICE_STATUS, &error);
++        if (!error && [receipt[@"version"] isEqual:@1] && [receipt[@"boot"] isEqual:boot] &&
++            [receipt[@"restoreNonce"] isEqual:nonce] && [receipt[@"paused"] isEqual:@YES] &&
++            [receipt[@"storeError"] isEqual:@0] && [receipt[@"recordCount"] isEqual:@0]) {
++            NSDictionary *journal = load(&store, VDT_NICE_JOURNAL, &error);
++            if (!error && [journal[@"version"] isEqual:@1] && [journal[@"boot"] isEqual:boot] &&
++                [journal[@"records"] isKindOfClass:NSDictionary.class] && [journal[@"records"] count] == 0) {
++                VDTNiceStoreClose(&store); return 0;
++            }
++        }
++        // Missing initial receipts are normal while the serial queue drains.
++        if (error == ENOENT) error = 0;
++        if (error) break;
++        double now = monotonic(); if (now < start || now - start >= 8.0) break;
++        struct timespec interval = {.tv_sec=0, .tv_nsec=100000000}; nanosleep(&interval, NULL);
++    }
++    VDTNiceStoreClose(&store); return error ?: ETIMEDOUT;
++}
+ int main(int argc, char **argv) {
+     @autoreleasepool {
+         if (getuid() != 0 || geteuid() != 0) { fprintf(stderr, "nice control requires root\n"); return 1; }
++        if (argc == 2 && (!strcmp(argv[1], "resource-restore-for-removal") || !strcmp(argv[1], "resource-resume"))) {
++            int error = resourceControl(!strcmp(argv[1], "resource-restore-for-removal"));
++            if (error) fprintf(stderr, "resource control failed (errno=%d); journal retained\n", error);
++            return error ? 1 : 0;
++        }
+         if (argc != 2 || (strcmp(argv[1], "restore-for-removal") && strcmp(argv[1], "resume"))) {
+             fprintf(stderr, "usage: vedette-nicectl restore-for-removal|resume\n"); return 2;
+         }
+         BOOL removal = !strcmp(argv[1], "restore-for-removal");
+         VDTNiceStore store;
 diff --git a/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.h b/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.h
 index 07e6419..69e213b 100644
 --- a/vedetteprefs/ChoicyPreferences/CHPDaemonInfo.h
@@ -2042,11 +2518,28 @@ index b7ed792..d761aa0 100644
  
  - (void)viewDidLoad
  {
+diff --git a/vedetteprefs/Makefile b/vedetteprefs/Makefile
+index c420cd3..f43536e 100644
+--- a/vedetteprefs/Makefile
++++ b/vedetteprefs/Makefile
+@@ -2,11 +2,11 @@ TARGET := iphone:clang:16.5:15.0
+ 
+ include $(THEOS)/makefiles/common.mk
+ 
+ BUNDLE_NAME = VedettePrefs
+ 
+-VedettePrefs_FILES = $(wildcard *.m) $(wildcard ChoicyPreferences/*.m) ../VDTShared.mm ../VDTNiceShared.mm ../VDTNiceStore.c ../VDTBundleIdentity.mm ../VDTBundleRules.c
++VedettePrefs_FILES = $(wildcard *.m) $(wildcard ChoicyPreferences/*.m) ../VDTShared.mm ../VDTNiceShared.mm ../VDTNiceStore.c ../VDTBundleIdentity.mm ../VDTBundleRules.c ../VDTResourceShared.mm
+ VedettePrefs_FRAMEWORKS = UIKit
+ VedettePrefs_PRIVATE_FRAMEWORKS = Preferences
+ VedettePrefs_EXTRA_FRAMEWORKS = AltList
+ VedettePrefs_INSTALL_PATH = /Library/PreferenceBundles
+ VedettePrefs_CFLAGS = -fobjc-arc -I$(THEOS_PROJECT_DIR)
 diff --git a/vedetteprefs/Resources/en.lproj/Localizable.strings b/vedetteprefs/Resources/en.lproj/Localizable.strings
-index 2ef0acf..8a5767c 100644
+index 2ef0acf..c88aeb9 100644
 --- a/vedetteprefs/Resources/en.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/en.lproj/Localizable.strings
-@@ -124,7 +124,27 @@
+@@ -124,7 +124,48 @@
  "Reclaim priority" = "Reclaim priority";
  "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB." = "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.";
  "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.";
@@ -2074,11 +2567,32 @@ index 2ef0acf..8a5767c 100644
 +"Unable to load App extensions." = "Unable to load App extensions.";
 +"Unable to load Daemons." = "Unable to load Daemons.";
 +"Refresh failed. Showing the previous list." = "Refresh failed. Showing the previous list.";
++"Enable resource writes" = "Enable resource writes";
++"Resource writes are off by default. Enable only to apply your memory and reclaim-priority rules. Turning off requests conditional restoration of recorded values." = "Resource writes are off by default. Enable only to apply your memory and reclaim-priority rules. Turning off requests conditional restoration of recorded values.";
++"Saved memory rules are applied only with resource writes enabled. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported." = "Saved memory rules are applied only with resource writes enabled. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported.";
++"Saved reclaim-priority rules require resource writes. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination." = "Saved reclaim-priority rules require resource writes. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination.";
++"Resource readback matched" = "Resource readback matched";
++"Recorded values restored" = "Recorded values restored";
++"Resources partially applied" = "Resources partially applied";
++"Resource work pending" = "Resource work pending";
++"Resource drift; no overwrite" = "Resource drift; no overwrite";
++"Resource journal unavailable" = "Resource journal unavailable";
++"Resource writes unsupported on this system" = "Resource writes unsupported on this system";
++"Resource writes are off" = "Resource writes are off";
++"No resource write requested" = "No resource write requested";
++"Previous process exited" = "Previous process exited";
++"Historical readback, not live monitoring. Restoration uses observed values, not an exact original system policy." = "Historical readback, not live monitoring. Restoration uses observed values, not an exact original system policy.";
++"Follow containing app memory" = "Follow containing app memory";
++"Follow containing app reclaim priority" = "Follow containing app reclaim priority";
++"Remove only this resource override? CPU, nice and the other resource are unchanged." = "Remove only this resource override? CPU, nice and the other resource are unchanged.";
++"Last resource check" = "Last resource check";
++"No matching resource receipt" = "No matching resource receipt";
++"Resource write not verified" = "Resource write not verified";
 diff --git a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-index ed4be14..a83c618 100644
+index ed4be14..d542006 100644
 --- a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-@@ -124,7 +124,27 @@
+@@ -124,7 +124,48 @@
  "Reclaim priority" = "回收优先级";
  "Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB." = "保存的内存规则与生效状态分开显示：当前版本仅保存。0 = 系统默认、-1 = 不限制、正数 = MiB。";
  "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "保存的回收优先级规则与生效状态分开显示：当前版本仅保存。档位因系统版本而异；0 = idle、-1 会实际写入默认档。";
@@ -2106,6 +2620,27 @@ index ed4be14..a83c618 100644
 +"Unable to load App extensions." = "无法加载 App 扩展目录。";
 +"Unable to load Daemons." = "无法加载守护目录。";
 +"Refresh failed. Showing the previous list." = "刷新失败，继续显示上次的列表。";
++"Enable resource writes" = "启用资源写入";
++"Resource writes are off by default. Enable only to apply your memory and reclaim-priority rules. Turning off requests conditional restoration of recorded values." = "资源写入默认关闭。开启后应用内存和回收优先级规则；关闭后按记录值有条件恢复。";
++"Saved memory rules are applied only with resource writes enabled. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported." = "开启资源写入后才应用保存的内存规则。0 恢复记录值；两侧都为 -1 时解除单进程上限；正数对表示 MiB 硬上限。不支持混合模式。";
++"Saved reclaim-priority rules require resource writes. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination." = "回收优先级规则需要开启资源写入。0 = idle；关闭规则恢复记录值。保留档位和特殊值不应用。实际读回档位可能不同。高优先级不能避免超出内存上限后被终止。";
++"Resource readback matched" = "资源读回一致";
++"Recorded values restored" = "已恢复记录值";
++"Resources partially applied" = "资源部分生效";
++"Resource work pending" = "资源处理待完成";
++"Resource drift; no overwrite" = "检测到资源漂移，未覆盖";
++"Resource journal unavailable" = "资源记录不可用";
++"Resource writes unsupported on this system" = "此系统不支持资源写入";
++"Resource writes are off" = "资源写入已关闭";
++"No resource write requested" = "没有请求资源写入";
++"Previous process exited" = "之前的进程已退出";
++"Historical readback, not live monitoring. Restoration uses observed values, not an exact original system policy." = "这是历史读回，不是实时监控。恢复使用已观测值，不保证还原系统原始策略。";
++"Follow containing app memory" = "内存跟随所属 App";
++"Follow containing app reclaim priority" = "回收优先级跟随所属 App";
++"Remove only this resource override? CPU, nice and the other resource are unchanged." = "仅删除此资源覆盖？CPU、nice 和另一个资源设置不变。";
++"Last resource check" = "上次资源检查";
++"No matching resource receipt" = "没有匹配的资源回执";
++"Resource write not verified" = "资源写入未确认";
 diff --git a/vedetteprefs/VDTExtensionListController.h b/vedetteprefs/VDTExtensionListController.h
 index 92fc862..d82e04d 100644
 --- a/vedetteprefs/VDTExtensionListController.h
@@ -2658,22 +3193,39 @@ index 82a212b..5ccfd57 100644
              [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Pending targets: %@"), pending]];
          NSString *state = [self localizedState:receipt[@"state"]];
 diff --git a/vedetteprefs/VDTProcessConfiguration.h b/vedetteprefs/VDTProcessConfiguration.h
-index a3e969f..38408a1 100644
+index a3e969f..194873d 100644
 --- a/vedetteprefs/VDTProcessConfiguration.h
 +++ b/vedetteprefs/VDTProcessConfiguration.h
-@@ -19,6 +19,7 @@
+@@ -19,6 +19,12 @@
  - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier *)specifier;
  - (id)readProcessConfigValue:(PSSpecifier *)specifier;
  - (NSString *)vdtNiceIdentifier;
  - (VDTConfigType)vdtNiceConfigurationType;
  - (VDTNicePreferences *)vdtNicePreferences;
 +- (void)vdtReloadIndependentRules;
++- (NSString *)vdtResourceReceiptText;
++- (void)vdtFollowMemoryApp;
++- (void)vdtFollowJetsamApp;
++- (void)vdtFollowResourceSection:(NSString *)section;
++- (void)presentResourceRuleError:(NSString *)title message:(NSString *)message;
  @end
 diff --git a/vedetteprefs/VDTProcessConfiguration.m b/vedetteprefs/VDTProcessConfiguration.m
-index aa04ade..84a83b5 100644
+index aa04ade..7a09ea4 100644
 --- a/vedetteprefs/VDTProcessConfiguration.m
 +++ b/vedetteprefs/VDTProcessConfiguration.m
-@@ -222,19 +222,20 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+@@ -4,10 +4,11 @@
+ //  file 'LICENSE', which is part of this source code package.
+ 
+ #import "VDTProcessConfiguration.h"
+ #import "VDTApplicationListSubcontrollerController.h"
+ #import "../VDTShared.h"
++#import "../VDTResourceShared.h"
+ #import "ChoicyPreferences/CHPDaemonListController.h"
+ #import "VDTLocalization.h"
+ #import "VDTStyle.h"
+ #import "VDTHeaderCell.h"
+ #import "VDTActionListController.h"
+@@ -222,27 +223,28 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
          [intervalSpec setProperty:VEDETTE_IDENTIFIER forKey:@"defaults"];
          _intervalSpecifier = intervalSpec;
          [rootSpecifiers addObject:intervalSpec];
@@ -2697,10 +3249,102 @@ index aa04ade..84a83b5 100644
              [rootSpecifiers addObject:inheritance];
          }
  
-@@ -295,21 +296,27 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+         //Memory rule
+         PSSpecifier *memoryGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Memory") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+-        [memoryGroupSpec setProperty:VDTLoc(self.class, @"Saved memory rules and applied state stay separate: this build only saves. 0 = system default, -1 = unlimited, a positive number = MiB.") forKey:@"footerText"];
++        [memoryGroupSpec setProperty:VDTLoc(self.class, @"Saved memory rules are applied only with resource writes enabled. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported.") forKey:@"footerText"];
+         [rootSpecifiers addObject:memoryGroupSpec];
+ 
+         PSSpecifier *memoryEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable memory rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSSwitchCell edit:nil];
+         [memoryEnabledSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+         [memoryEnabledSpec setProperty:@NO forKey:@"default"];
+@@ -268,11 +270,11 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+         [memoryInactiveSpec setProperty:VDTLoc(self.class, @"Inactive limit (MiB)") forKey:@"label"];
+         [rootSpecifiers addObject:memoryInactiveSpec];
+ 
+         //Reclaim priority rule
+         PSSpecifier *jetsamGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Reclaim priority") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+-        [jetsamGroupSpec setProperty:VDTLoc(self.class, @"Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.") forKey:@"footerText"];
++        [jetsamGroupSpec setProperty:VDTLoc(self.class, @"Saved reclaim-priority rules require resource writes. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination.") forKey:@"footerText"];
+         [rootSpecifiers addObject:jetsamGroupSpec];
+ 
+         PSSpecifier *jetsamEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable reclaim priority rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSSwitchCell edit:nil];
+         [jetsamEnabledSpec setProperty:(isPreferencesApp?@NO:@YES) forKey:@"enabled"];
+         [jetsamEnabledSpec setProperty:@NO forKey:@"default"];
+@@ -287,29 +289,97 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+         [jetsamBandSpec setProperty:@"priority" forKey:@"key"];
+         [jetsamBandSpec setProperty:@"jetsamRules" forKey:@"vdtRuleSection"];
+         [jetsamBandSpec setProperty:VDTLoc(self.class, @"Priority band") forKey:@"label"];
+         [rootSpecifiers addObject:jetsamBandSpec];
+ 
++        if ([self configurationType] == VDTConfigTypeExtension) {
++            PSSpecifier *memoryFollow = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app memory")
++                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
++            [memoryFollow setButtonAction:@selector(vdtFollowMemoryApp)];
++            [rootSpecifiers addObject:memoryFollow];
++            PSSpecifier *priorityFollow = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Follow containing app reclaim priority")
++                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
++            [priorityFollow setButtonAction:@selector(vdtFollowJetsamApp)];
++            [rootSpecifiers addObject:priorityFollow];
++        }
++        PSSpecifier *receipt = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Last resource check")
++            target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
++        [receipt setProperty:[self vdtResourceReceiptText] forKey:@"footerText"];
++        [rootSpecifiers addObject:receipt];
++        PSSpecifier *refreshReceipt = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Refresh")
++            target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
++        [refreshReceipt setButtonAction:@selector(reloadSpecifiers)];
++        [rootSpecifiers addObject:refreshReceipt];
++
+         _specifiers = rootSpecifiers;
+     }
+     
      return _specifiers;
  }
  
++- (NSString *)vdtResourceReceiptText {
++    NSDictionary *row = VDTResourceMatchingStatus([self validIdentifier], [self configurationType], getPrefs());
++    NSDictionary *labels = @{@"applied": @"Resource readback matched", @"restored": @"Recorded values restored",
++        @"partial": @"Resources partially applied", @"unverified": @"Resource write not verified", @"pending": @"Resource work pending", @"conflict": @"Resource drift; no overwrite",
++        @"store-error": @"Resource journal unavailable", @"unsupported": @"Resource writes unsupported on this system",
++        @"write-disabled": @"Resource writes are off", @"no-write": @"No resource write requested", @"gone": @"Previous process exited"};
++    NSString *label = labels[row[@"state"] ?: @""] ?: @"No matching resource receipt";
++    NSMutableArray *parts = [NSMutableArray arrayWithObject:VDTLoc(self.class, label)];
++    NSNumber *checkedAt = row[@"checkedAt"];
++    if ([checkedAt isKindOfClass:NSNumber.class] && checkedAt.doubleValue > 0) {
++        NSDateFormatter *formatter = [NSDateFormatter new];
++        formatter.dateStyle = NSDateFormatterShortStyle; formatter.timeStyle = NSDateFormatterMediumStyle;
++        [parts addObject:[formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:checkedAt.doubleValue]]];
++    }
++    id pair = row[@"memoryObserved"];
++    if ([pair isKindOfClass:NSArray.class] && [pair count] == 4)
++        [parts addObject:[NSString stringWithFormat:@"%@ %@ / %@ MiB", VDTLoc(self.class, @"Memory"), pair[0], pair[2]]];
++    if ([row[@"priorityObserved"] isKindOfClass:NSNumber.class])
++        [parts addObject:[NSString stringWithFormat:@"%@ %@", VDTLoc(self.class, @"Priority band"), row[@"priorityObserved"]]];
++    [parts addObject:VDTLoc(self.class, @"Historical readback, not live monitoring. Restoration uses observed values, not an exact original system policy.")];
++    return [parts componentsJoinedByString:@"\n"];
++}
++- (void)vdtFollowMemoryApp { [self vdtFollowResourceSection:@"memoryRules"]; }
++- (void)vdtFollowJetsamApp { [self vdtFollowResourceSection:@"jetsamRules"]; }
++- (void)vdtFollowResourceSection:(NSString *)section {
++    if ([self configurationType] != VDTConfigTypeExtension || ![@[@"memoryRules", @"jetsamRules"] containsObject:section]) return;
++    NSString *title = [section isEqual:@"memoryRules"] ? @"Follow containing app memory" : @"Follow containing app reclaim priority";
++    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, title)
++        message:VDTLoc(self.class, @"Remove only this resource override? CPU, nice and the other resource are unchanged.")
++        preferredStyle:UIAlertControllerStyleAlert];
++    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"Cancel") style:UIAlertActionStyleCancel handler:nil]];
++    __weak typeof(self) weakSelf = self;
++    [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, title) style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
++        VDTProcessConfiguration *owner = weakSelf; if (!owner) return;
++        BOOL saved = VDTResourceFollowApp([owner validIdentifier], section);
++        if (!saved) [owner presentResourceRuleError:VDTLoc(owner.class, @"Resource rule save failed")
++            message:VDTLoc(owner.class, @"The rule could not be saved. The previous saved value has been restored.")];
++        else [owner vdtReloadIndependentRules];
++        [owner reloadSpecifiers];
++    }]];
++    [self presentViewController:alert animated:YES completion:nil];
++}
++
  - (void)confirmFollowContainingApp {
      if ([self configurationType] != VDTConfigTypeExtension) return;
 -    UIAlertController *alert = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Follow containing app")
@@ -2729,7 +3373,7 @@ index aa04ade..84a83b5 100644
                  [(VDTExtensionListController *)parent reloadExtensionRule:[owner validIdentifier]];
              [owner reloadSpecifiers];
          }]];
-@@ -322,10 +329,18 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+@@ -322,27 +392,39 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
      [alert addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"OK")
          style:UIAlertActionStyleDefault handler:nil]];
      [self presentViewController:alert animated:YES completion:nil];
@@ -2748,7 +3392,16 @@ index aa04ade..84a83b5 100644
      NSString *section = [specifier propertyForKey:@"vdtRuleSection"];
      NSNumber *parsed = VDTResourceRuleInput(value, key, section);
      if (!parsed) {
-@@ -339,10 +354,12 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+         [self reloadSpecifier:specifier animated:NO];
+         [self presentResourceRuleError:VDTLoc(self.class, @"Invalid resource rule")
+             message:VDTLoc(self.class, @"Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value.")];
+         return;
+     }
+-    BOOL saved = setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);
++    BOOL saved = [section isEqual:@"jetsamRules"] && [key isEqual:@"priority"]
++        ? VDTResourceSavePriority([self validIdentifier], [self configurationType], parsed)
++        : setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);
+     // Reload through the getter even on failure; never leave an optimistic edit
      // displayed, post our own notification, or claim the saved rule was applied.
      [self reloadSpecifier:specifier animated:NO];
      if (!saved) {
@@ -2761,7 +3414,7 @@ index aa04ade..84a83b5 100644
  
  - (id)readResourceRuleValue:(PSSpecifier*)specifier{
      NSString *key = [specifier propertyForKey:@"key"];
-@@ -363,11 +380,11 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
+@@ -363,11 +445,11 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
              case VDTConfigTypeApp:{
                  [(VDTApplicationListSubcontrollerController *)parentController reloadSpecifier:[(VDTApplicationListSubcontrollerController *)parentController specifierForApplicationWithIdentifier:[self validIdentifier]] animated:NO];
                  break;
@@ -2775,10 +3428,43 @@ index aa04ade..84a83b5 100644
                  if ([parentController isKindOfClass:VDTExtensionListController.class])
                      [(VDTExtensionListController *)parentController reloadExtensionRule:[self validIdentifier]];
 diff --git a/vedetteprefs/VDTRootListController.m b/vedetteprefs/VDTRootListController.m
-index 9804b03..54ffd91 100644
+index 9804b03..c6d0012 100644
 --- a/vedetteprefs/VDTRootListController.m
 +++ b/vedetteprefs/VDTRootListController.m
-@@ -61,11 +61,11 @@
+@@ -3,10 +3,11 @@
+ //  This file is subject to the terms and conditions defined in
+ //  file 'LICENSE', which is part of this source code package.
+ 
+ #import "VDTRootListController.h"
+ #import "../VDTShared.h"
++#import "../VDTResourceShared.h"
+ #import "VDTLocalization.h"
+ #import "VDTStyle.h"
+ #import "VDTHeaderCell.h"
+ #import "VDTAboutListController.h"
+ #import "VDTExtensionListController.h"
+@@ -34,10 +35,20 @@
+         [rootSpecifiers addObject:tweakEnabledSpec];
+         
+         
+         [tweakEnabledSpec setProperty:VDTSettingsSymbol(@"power") forKey:@"iconImage"];
+ 
++        PSSpecifier *resourceWriteGroup = [PSSpecifier emptyGroupSpecifier];
++        [resourceWriteGroup setProperty:VDTLoc(self.class,
++            @"Resource writes are off by default. Enable only to apply your memory and reclaim-priority rules. Turning off requests conditional restoration of recorded values.") forKey:@"footerText"];
++        [rootSpecifiers addObject:resourceWriteGroup];
++        PSSpecifier *resourceWriteSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable resource writes")
++            target:self set:@selector(setResourceWritePreference:specifier:) get:@selector(readResourceWritePreference:) detail:nil cell:PSSwitchCell edit:nil];
++        [resourceWriteSpec setProperty:VDT_RESOURCE_WRITE_KEY forKey:@"key"];
++        [resourceWriteSpec setProperty:@NO forKey:@"default"];
++        [rootSpecifiers addObject:resourceWriteSpec];
++
+         //Manage
+         PSSpecifier *manageGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Process rules") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+         [manageGroupSpec setProperty:VDTLoc(self.class, @"Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity.") forKey:@"footerText"];
+         [rootSpecifiers addObject:manageGroupSpec];
+         
+@@ -61,11 +72,11 @@
              target:nil set:nil get:nil detail:VDTExtensionListController.class cell:PSLinkCell edit:nil];
          [extensionListSpec setProperty:VDTSettingsSymbol(@"puzzlepiece.extension") forKey:@"iconImage"];
          [rootSpecifiers addObject:extensionListSpec];
@@ -2791,3 +3477,36 @@ index 9804b03..54ffd91 100644
          
          //reset
          PSSpecifier *resetGroupSpec = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+@@ -149,10 +160,32 @@
+ 
+ - (void)setPreferenceValue:(id)value specifier:(PSSpecifier*)specifier {
+     setValueForKey(specifier.properties[@"key"], value);
+ }
+ 
++- (id)readResourceWritePreference:(PSSpecifier *)specifier {
++    (void)specifier;
++    NSDictionary *prefs = getPrefs();
++    id saved = prefs[VDT_RESOURCE_WRITE_KEY];
++    return [saved isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)saved) == CFBooleanGetTypeID()
++        ? @([saved boolValue]) : @NO;
++}
++- (void)setResourceWritePreference:(id)value specifier:(PSSpecifier *)specifier {
++    (void)specifier;
++    if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID()) {
++        [self reloadSpecifiers]; return;
++    }
++    NSError *error = nil;
++    if (!VDTResourceSetWriteEnabled([value boolValue], &error)) {
++        UIAlertController *failed = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Resource rule save failed")
++            message:error.localizedDescription ?: VDTLoc(self.class, @"The rule could not be saved. The previous saved value has been restored.") preferredStyle:UIAlertControllerStyleAlert];
++        [failed addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"OK") style:UIAlertActionStyleDefault handler:nil]];
++        [self presentViewController:failed animated:YES completion:nil];
++    }
++    [self reloadSpecifiers];
++}
++
+ -(void)reset{
+     
+     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Vedette" message:VDTLoc(self.class, @"Remove all saved rules and request restoration of system defaults?") preferredStyle:UIAlertControllerStyleAlert];
+     
+     UIAlertAction *yesAction = [UIAlertAction actionWithTitle:VDTLoc(self.class, @"Reset settings") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){

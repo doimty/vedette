@@ -38,19 +38,21 @@ typedef struct {
     int32_t effectivePriority;
 } VDTJetsamObservation;
 
-// Contract: every function returns false on failure and must leave `out`
-// untouched on failure. The engine treats false as "unavailable" and fails
-// closed (skip, never write defaults). `band` is the resolved numeric value
-// produced by the policy core; this layer performs no mapping or migration.
+// Contract: every function returns false on failure; a reader should leave
+// `out` untouched on failure, but callers MUST ignore it whenever false is
+// returned. SET true means a write occurred, not that effective == requested.
+// The engine fails closed on unavailable reads (never writes invented defaults).
+// `band` is the resolved numeric value produced by the policy core; this layer
+// performs no mapping or migration, including effective-priority coercions.
 typedef struct VDTResourceBackend {
     const char *name;
     bool (*getMemlimit)(void *context, pid_t pid, VDTMemlimitPair *out);
     bool (*setMemlimit)(void *context, pid_t pid, const VDTMemlimitPair *pair);
     bool (*getPriority)(void *context, pid_t pid, VDTJetsamObservation *out);
     bool (*setPriority)(void *context, pid_t pid, int32_t band);
-    // Instance token (seconds, microseconds) used for before/after identity
-    // re-checks around every write batch. A missing reader or token fails
-    // closed: no writes are attempted without a verified instance.
+    // Instance token (seconds, microseconds) checked before every GET/SET and
+    // after every SET/verification GET. These checks are not an atomic binding
+    // to a syscall: a missing/mismatched token stops all subsequent writes.
     bool (*getInstanceToken)(void *context, pid_t pid, VDTProcessInstanceToken *out);
 } VDTResourceBackend;
 

@@ -24,6 +24,22 @@ static FakeProcess *findProcess(FakeBackend *state, pid_t pid) {
     return NULL;
 }
 
+// A one-shot fault occurs after the callback has formed its return value, so
+// the next callback sees a replacement instance or an unreadable identity.
+static bool finishCallback(FakeBackend *state, pid_t pid, bool result) {
+    state->callbackCount++;
+    if (state->callbackCount == state->faultAfterCallback) {
+        FakeProcess *p = findProcess(state, pid);
+        if (p && state->callbackFault == FakeCallbackReplaceInstance) {
+            p->token.seconds += 1;
+            p->token.microseconds += 1;
+        } else if (p && state->callbackFault == FakeCallbackTokenUnavailable) {
+            p->failToken = true;
+        }
+    }
+    return result;
+}
+
 // Coercions measured on the target device (m4-jetsam/REPORT.md):
 // -1 -> 18 (default shorthand), -2 -> idle head, aging bands 1/2 -> idle.
 static int32_t coerceBand(const FakeBackend *state, int32_t band) {
@@ -63,9 +79,14 @@ static bool fakeGetMemlimit(void *context, pid_t pid, VDTMemlimitPair *out) {
     snprintf(text, sizeof text, "getMem(%d)", (int)pid);
     appendLog(state, text);
     FakeProcess *p = findProcess(state, pid);
-    if (!p || p->failGetPair || !p->hasPair) return false;
+    if (p) p->getPairCalls++;
+    if (!p || p->failGetPair || !p->hasPair ||
+        (p->failGetPairOnCall && p->getPairCalls == p->failGetPairOnCall)) {
+        if (state->poisonFailedReads) *out = (VDTMemlimitPair){-123, 77, -456, 88};
+        return finishCallback(state, pid, false);
+    }
     *out = p->pair;
-    return true;
+    return finishCallback(state, pid, true);
 }
 
 static bool fakeSetMemlimit(void *context, pid_t pid, const VDTMemlimitPair *pair) {
@@ -74,12 +95,12 @@ static bool fakeSetMemlimit(void *context, pid_t pid, const VDTMemlimitPair *pai
     snprintf(text, sizeof text, "setMem(%d,%d/%d)", (int)pid, pair->active, pair->inactive);
     appendLog(state, text);
     FakeProcess *p = findProcess(state, pid);
-    if (!p || p->failSetPair) return false;
+    if (!p || p->failSetPair) return finishCallback(state, pid, false);
     p->pair = *pair;
     p->hasPair = true;
     recomputeEnforced(p);
     maybeChangeToken(p);
-    return true;
+    return finishCallback(state, pid, true);
 }
 
 static bool fakeGetPriority(void *context, pid_t pid, VDTJetsamObservation *out) {
@@ -88,9 +109,14 @@ static bool fakeGetPriority(void *context, pid_t pid, VDTJetsamObservation *out)
     snprintf(text, sizeof text, "getPrio(%d)", (int)pid);
     appendLog(state, text);
     FakeProcess *p = findProcess(state, pid);
-    if (!p || p->failGetPriority || !p->hasPriority) return false;
+    if (p) p->getPriorityCalls++;
+    if (!p || p->failGetPriority || !p->hasPriority ||
+        (p->failGetPriorityOnCall && p->getPriorityCalls == p->failGetPriorityOnCall)) {
+        if (state->poisonFailedReads) out->effectivePriority = -123;
+        return finishCallback(state, pid, false);
+    }
     out->effectivePriority = p->effectivePriority;
-    return true;
+    return finishCallback(state, pid, true);
 }
 
 static bool fakeSetPriority(void *context, pid_t pid, int32_t band) {
@@ -99,12 +125,12 @@ static bool fakeSetPriority(void *context, pid_t pid, int32_t band) {
     snprintf(text, sizeof text, "setPrio(%d,%d)", (int)pid, band);
     appendLog(state, text);
     FakeProcess *p = findProcess(state, pid);
-    if (!p || p->failSetPriority) return false;
+    if (!p || p->failSetPriority) return finishCallback(state, pid, false);
     p->effectivePriority = coerceBand(state, band);
     p->hasPriority = true;
     recomputeEnforced(p);
     maybeChangeToken(p);
-    return true;
+    return finishCallback(state, pid, true);
 }
 
 static bool fakeGetInstanceToken(void *context, pid_t pid, VDTProcessInstanceToken *out) {
@@ -113,9 +139,12 @@ static bool fakeGetInstanceToken(void *context, pid_t pid, VDTProcessInstanceTok
     snprintf(text, sizeof text, "token(%d)", (int)pid);
     appendLog(state, text);
     FakeProcess *p = findProcess(state, pid);
-    if (!p || p->failToken || !p->hasToken) return false;
+    if (!p || p->failToken || !p->hasToken) {
+        if (state->poisonFailedReads) *out = (VDTProcessInstanceToken){(uint64_t)pid, 1};
+        return finishCallback(state, pid, false);
+    }
     *out = p->token;
-    return true;
+    return finishCallback(state, pid, true);
 }
 
 static const VDTResourceBackend gFakeVtable = {
@@ -161,4 +190,12 @@ unsigned FakeBackendLogIndex(const FakeBackend *state, const char *needle) {
         if (strstr(state->log[i], needle) != NULL) return i;
     }
     return (unsigned)-1;
+}
+
+unsigned FakeBackendLogCount(const FakeBackend *state, const char *needle) {
+    unsigned count = 0;
+    for (unsigned i = 0; i < state->logCount; ++i) {
+        if (strstr(state->log[i], needle) != NULL) count++;
+    }
+    return count;
 }

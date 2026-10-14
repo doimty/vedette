@@ -173,3 +173,9 @@ M3不通过时不得宣称三模式完成。M2可单独形成有限候选，但�
 扩展nice的独立/继承/identity/journal/source receipt与四侧独立enabled置顶已接线，CPU Follow与nice Follow按族删除、重复记录读取/保存一致、写失败回读不通知。用户保持开源授权已执行：原公开 `doimty/vedette` 新 `release/1.1.13`，默认分支不动。接续实现有界重试/真实检查时间/目录自有命名与快照，run38399190238测试SHA bb4e17f完整原生无SKIP和rootless/roothide双包全success，独立成品布局/签名/版本/149键资源亦过；旧私有部分通过或计费未启动仅为历史。资源backend仍NULL/能力全false，不把列表置顶或mock资源策略当实际内存/Jetsam应用。详 [FORMAL_RELEASE.md](FORMAL_RELEASE.md)。真机UI与APT发布尚待，不自动装机。
 
 本批仅nice重试/真实回执时间与UI目录隔离/缓存，manager与memorystatus写入通道未改变。扩展目录快照不能用作实时PID身份或资源写入授权。C核/SDK与云Foundation证据层级分别记录；该云通过不证明实际设备RunningBoard/资源行为。
+
+### 正式资源后端收尾候选（2026-10-14）
+
+`feat/resource-writeback-20261014 @4c9af10` 本地接通真实后端、写前恢复journal、关闭/删除/重启后的条件恢复及独立资源执行。用户明确要求后端全放行，取消精确设备/构建/内核白名单；Darwin21使用21档、22+使用210档，后续版本沿用现代数值语义，不据版本未列举而禁用。journal按当前代际读写并记录来源，修复现代180/210档写后重启被自身拒绝的风险。
+
+默认资源写入仍需主动开启，保留权限、实例身份、读回和不覆盖外部漂移的保护。完整变更与尚缺原生/真机证据见 [RESOURCE_WRITEBACK.md](RESOURCE_WRITEBACK.md)。发布的1.1.13-4仍为仅保存版；本候选未commit/push/云编译/安装/发源。

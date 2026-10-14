@@ -13,7 +13,7 @@ VDTPolicyParseStatus VDTPolicyReadInt32(VDTPolicyInteger input, int32_t *out) {
 }
 
 bool VDTPolicyDarwinMajorIsKnown(int32_t major) {
-    return major == 21 || major == 22 || major == 23 || major == 24;
+    return major >= 21;
 }
 
 static bool recordStateValid(VDTPolicyRecordState state) {

@@ -23,3 +23,5 @@ for suite in test_memory_policy test_resource_apply test_resource_manager test_r
 python3 -B tests/test_resource_preferences_native.py --require-native
 python3 -B tests/test_rebuild_baseline.py
 python3 -B tests/test_formal_projection.py
+python3 -B tests/test_resource_writeback_contracts.py
+sudo python3 -B tests/test_resource_runtime_native.py --require-native

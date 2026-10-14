@@ -44,7 +44,7 @@ METHOD_PREFIXES = (
     '- (VDTNicePreferences *)vdtNicePreferences', '- (NSArray *)specifiers',
     '- (void)presentResourceRuleError:', '- (void)vdtReloadIndependentRules',
     '- (void)setResourceRuleValue:',
-    '- (id)readResourceRuleValue:',
+    '- (id)readResourceRuleValue:', '- (NSString *)vdtResourceReceiptText',
 )
 
 
@@ -103,7 +103,8 @@ def detail_contract(source):
         if key == 'enabled':
             assert f'[{name} setProperty:@NO forKey:@"default"];' in source
     assert 'NSNumber *parsed = VDTResourceRuleInput(value, key, section);' in setter
-    assert 'BOOL saved = setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);' in setter
+    assert 'setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);' in setter
+    assert 'VDTResourceSavePriority([self validIdentifier], [self configurationType], parsed)' in setter
     assert 'setValueForProcessConfigKey(' not in setter, 'must not write CPU/nice records'
     invalid = function_source(setter, 'if (!parsed)')
     assert '[self reloadSpecifier:specifier animated:NO];' in invalid
@@ -145,7 +146,7 @@ def storage_contract(source):
 
 def native_source(source):
     """All behavior under test is copied verbatim from production, not reimplemented."""
-    return ('#import "PreferencesHost.h"\n' + parser_source(source) +
+    return ('#import "PreferencesHost.h"\n#import "VDTResourceShared.h"\n' + parser_source(source) +
             '\n@implementation VDTProcessConfiguration\n' +
             '\n\n'.join(function_source(source, prefix) for prefix in METHOD_PREFIXES) +
             '\n@end\n')
@@ -191,8 +192,8 @@ class SourceContracts(unittest.TestCase):
                                     'id parsed = value;')
 
     def test_cpu_store_reroute_rejected(self):
-        self.reject_detail_mutation('BOOL saved = setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);',
-                                    'BOOL saved = (setValueForProcessConfigKey([self validIdentifier], key, parsed, [self configurationType]), YES);')
+        self.reject_detail_mutation('setValueForProcessResourceRuleKey([self validIdentifier], key, parsed, [self configurationType], section);',
+                                    '(setValueForProcessConfigKey([self validIdentifier], key, parsed, [self configurationType]), YES);')
 
     def test_failed_save_without_readback_rejected(self):
         self.reject_detail_mutation('    [self reloadSpecifier:specifier animated:NO];\n    if (!saved)',
@@ -271,11 +272,15 @@ def run_native():
             # Objective-C, the shared store and fixture are Objective-C++.
             for index, (path, language) in enumerate([
                     (extracted, 'objective-c'), (SHARED, 'objective-c++'),
+                    (ROOT / 'VDTResourceShared.mm', 'objective-c++'),
+                    (ROOT / 'VDTNiceShared.mm', 'objective-c++'),
+                    (ROOT / 'VDTNiceStore.c', 'c'),
                     (ROOT / 'tests/test_resource_preferences_native.mm', 'objective-c++')]):
                 target = directory / (label + '-' + str(index) + '.o')
-                compiler = 'clang' if language == 'objective-c' else 'clang++'
-                standard = [] if language == 'objective-c' else ['-std=c++17']
-                subprocess.run(['xcrun', compiler, *standard, *common, '-x', language,
+                compiler = 'clang' if language in ('objective-c', 'c') else 'clang++'
+                standard = ['-std=c11'] if language == 'c' else ([] if language == 'objective-c' else ['-std=c++17'])
+                flags = [flag for flag in common if language != 'c' or flag not in ('-fobjc-arc', '-fblocks')]
+                subprocess.run(['xcrun', compiler, *standard, *flags, '-x', language,
                                 '-c', str(path), '-o', str(target)], check=True)
                 objects.append(str(target))
             subprocess.run(['xcrun', 'clang++', *objects, '-framework', 'Foundation',

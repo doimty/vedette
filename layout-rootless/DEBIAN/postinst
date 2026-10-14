@@ -6,6 +6,7 @@ ctl=/var/jb/usr/libexec/vedette-nicectl
 if [ ! -x "$ctl" ]; then
     echo 'Vedette: nice control tool missing; continuing package configuration.' >&2
 else
+    "$ctl" resource-resume || echo "Vedette: resource resume failed (errno=$?); journal retained." >&2
     "$ctl" resume || echo "Vedette: nice resume failed (errno=$?); continuing package configuration." >&2
 fi
 

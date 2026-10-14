@@ -14,8 +14,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 C_SOURCES = ['VDTNicePolicy', 'VDTNiceStore', 'VDTProcessIdentity',
              'VDTPolicyTransition', 'VDTBundleRules', 'VDTMemoryPolicy',
-             'VDTJetsamPolicy', 'VDTResourceApply']
+             'VDTJetsamPolicy', 'VDTResourceApply', 'VDTResourceSystemIO']
 MM_SOURCES = ['VDTNiceShared.mm', 'VDTShared.mm', 'VDTProcessManager.mm',
+              'VDTResourceShared.mm', 'VDTResourceRuntime.mm', 'VDTResourceSystemBackend.mm',
               'VDTBundleIdentity.mm', 'tests/test_extension_nice_native.mm']
 MUTANTS = {
     'noExtensionResolve': ('VDTProcessManager.mm',

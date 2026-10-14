@@ -4,7 +4,7 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = VedettePrefs
 
-VedettePrefs_FILES = $(wildcard *.m) $(wildcard ChoicyPreferences/*.m) ../VDTShared.mm ../VDTNiceShared.mm ../VDTNiceStore.c ../VDTBundleIdentity.mm ../VDTBundleRules.c
+VedettePrefs_FILES = $(wildcard *.m) $(wildcard ChoicyPreferences/*.m) ../VDTShared.mm ../VDTNiceShared.mm ../VDTNiceStore.c ../VDTBundleIdentity.mm ../VDTBundleRules.c ../VDTResourceShared.mm
 VedettePrefs_FRAMEWORKS = UIKit
 VedettePrefs_PRIVATE_FRAMEWORKS = Preferences
 VedettePrefs_EXTRA_FRAMEWORKS = AltList
