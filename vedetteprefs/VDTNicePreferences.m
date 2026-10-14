@@ -31,12 +31,10 @@ id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSS
 @interface VDTNicePreferences () {
     __weak VDTProcessConfiguration *_owner;
     NSMutableArray<PSSpecifier *> *_specifiers;
-    PSSpecifier *_statusSpecifier;
     PSSpecifier *_enabledSpecifier;
     PSSpecifier *_valueSpecifier;
     PSSpecifier *_inheritanceSpecifier;
     PSSpecifier *_followSpecifier;
-    NSString *_statusText;
     int _notifyToken;
     BOOL _observerRegistered;
     BOOL _buildingSpecifiers;
@@ -50,7 +48,6 @@ id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSS
     if (self) {
         _owner = owner;
         _notifyToken = -1;
-        _statusText = VDTLoc(self.class, @"Waiting for execution result");
         __weak VDTNicePreferences *weakSelf = self;
         int status = notify_register_dispatch(VDT_NICE_RESULTS_NOTIFICATION, &_notifyToken,
             dispatch_get_main_queue(), ^(int token) {
@@ -159,17 +156,6 @@ id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSS
             [_specifiers addObject:_followSpecifier];
             [self updateInheritancePresentation];
         }
-
-        PSSpecifier *statusGroup = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Nice execution status")
-            target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [statusGroup setProperty:_statusText forKey:@"footerText"];
-        _statusSpecifier = statusGroup;
-        [_specifiers addObject:statusGroup];
-
-        PSSpecifier *retry = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Check / retry nice")
-            target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-        [retry setButtonAction:@selector(requestRetry:)];
-        [_specifiers addObject:retry];
 
         [self refreshMatchingStatus];
         _buildingSpecifiers = NO;
@@ -306,69 +292,14 @@ id VDTNicePreferenceValueWithPrefs(NSString *identifier, VDTConfigType type, NSS
 }
 
 - (void)setPendingStatusAndReload {
-    _statusText = VDTLoc(self.class, @"Waiting for execution result");
-    if (_statusSpecifier) {
-        [_statusSpecifier setProperty:_statusText forKey:@"footerText"];
-        if (!_buildingSpecifiers) [_owner reloadSpecifier:_statusSpecifier animated:YES];
-    }
-}
-
-- (NSString *)localizedState:(id)rawState {
-    if (![rawState isKindOfClass:[NSString class]]) return VDTLoc(self.class, @"Nice state unavailable");
-    NSDictionary<NSString *, NSString *> *keys = @{
-        @"applied": @"Nice state applied", @"restored": @"Nice state restored",
-        @"disabled": @"Nice state disabled", @"pending": @"Nice state pending",
-        @"target-not-running": @"No verified running instance",
-        @"identity-unavailable": @"Nice state identity unavailable",
-        @"read-failed": @"Nice state read failed", @"write-failed": @"Nice state write failed",
-        @"verify-failed": @"Nice state verify failed", @"store-failed": @"Nice state store failed",
-        @"conflict": @"Nice state conflict", @"invalid": @"Nice state invalid",
-        @"protected": @"Nice state protected", @"state-unavailable": @"Nice state unavailable",
-        @"boot-unavailable": @"Nice state boot unavailable", @"paused": @"Nice state paused"
-    };
-    NSString *key = keys[rawState];
-    return key ? VDTLoc(self.class, key) : VDTLoc(self.class, @"Nice state unavailable");
+    if (!_buildingSpecifiers) [_owner vdtMarkNiceCheckPending];
 }
 
 - (void)refreshMatchingStatus {
     if (!_owner) return;
-    NSDictionary *prefs = getPrefs();
-    NSString *host = VDTNiceContainingAppIdentifier(self.identifier, [_owner.specifier propertyForKey:@"vdtExtensionMetadata"]);
-    NSDictionary *receipt = VDTNiceMatchingStatusWithHost(self.identifier, self.configurationType, host, prefs);
     [self updateInheritancePresentation];
     [self updateProtectedSwitchAvailability];
-    if (![receipt isKindOfClass:[NSDictionary class]]) {
-        _statusText = VDTLoc(self.class, @"Waiting for execution result");
-    } else {
-        NSMutableArray<NSString *> *details = [NSMutableArray array];
-        id original = receipt[@"original"];
-        id current = receipt[@"observed"] ?: receipt[@"current"];
-        id error = receipt[@"error"];
-        id pending = receipt[@"pendingCount"];
-        id checked = receipt[@"oldestCheckedAt"] ?: receipt[@"checkedAt"];
-        if ([checked isKindOfClass:NSNumber.class] && [checked doubleValue] > 0) {
-            NSDate *date = [NSDate dateWithTimeIntervalSince1970:[checked doubleValue]];
-            NSString *stamp = [NSDateFormatter localizedStringFromDate:date
-                dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle];
-            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Last check: %@"), stamp]];
-        }
-        if ([receipt[@"retryPending"] boolValue]) [details addObject:VDTLoc(self.class, @"Bounded retry pending")];
-        if ([original isKindOfClass:[NSNumber class]])
-            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Original: %@"), original]];
-        if ([current isKindOfClass:[NSNumber class]])
-            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Last read back: %@"), current]];
-        if ([error isKindOfClass:[NSNumber class]])
-            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"errno: %@"), error]];
-        if ([pending isKindOfClass:[NSNumber class]])
-            [details addObject:[NSString stringWithFormat:VDTLoc(self.class, @"Pending targets: %@"), pending]];
-        NSString *state = [self localizedState:receipt[@"state"]];
-        NSString *base = [NSString stringWithFormat:VDTLoc(self.class, @"Latest receipt (not live): %@"), state];
-        _statusText = details.count ? [NSString stringWithFormat:@"%@\n%@", base, [details componentsJoinedByString:@" · "]] : base;
-    }
-    if (_statusSpecifier) {
-        [_statusSpecifier setProperty:_statusText forKey:@"footerText"];
-        if (!_buildingSpecifiers) [_owner reloadSpecifier:_statusSpecifier animated:YES];
-    }
+    if (!_buildingSpecifiers) [_owner vdtNiceCheckDidRefresh];
 }
 
 @end

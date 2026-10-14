@@ -46,7 +46,6 @@ OWNER_FUNCS = (
     '- (VDTNicePreferences *)vdtNicePreferences',
     '- (NSArray *)specifiers',
     '- (void)vdtReloadIndependentRules',
-    '- (NSString *)vdtResourceReceiptText',
     '- (void)vdtFollowMemoryApp', '- (void)vdtFollowJetsamApp',
     '- (void)vdtFollowResourceSection:', '- (void)presentResourceRuleError:',
 )

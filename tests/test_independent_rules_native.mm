@@ -121,6 +121,15 @@ extern "C" uint32_t VDTTestNotifyPost(const char *name) {
 }
 @end
 
+@implementation VDTProcessConfiguration (CheckDisplaySentinel)
+// The original independent-rules gate still exercises real nice saves/follows.
+// New check-display behavior is tested separately; do not fake its algorithm.
+- (NSArray *)vdtCheckResultSpecifiers { return @[]; }
+- (void)vdtRefreshCheckResults {}
+- (void)vdtMarkNiceCheckPending {}
+- (void)vdtNiceCheckDidRefresh {}
+@end
+
 @implementation VDTActionListController
 @end
 

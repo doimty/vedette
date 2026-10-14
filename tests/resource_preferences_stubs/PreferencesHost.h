@@ -82,9 +82,13 @@ typedef NS_ENUM(NSInteger, UIAlertActionStyle) { UIAlertActionStyleDefault };
 - (NSArray *)specifiers;
 - (void)presentResourceRuleError:(NSString *)title message:(NSString *)message;
 - (void)vdtReloadIndependentRules;
-- (NSString *)vdtResourceReceiptText;
 - (void)setResourceRuleValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readResourceRuleValue:(PSSpecifier *)specifier;
+@end
+
+@interface VDTProcessConfiguration (CheckDisplaySentinel)
+- (NSArray *)vdtCheckResultSpecifiers;
+- (void)vdtRefreshCheckResults;
 @end
 
 // Selector declarations for untouched CPU / inheritance rows. Those behaviors

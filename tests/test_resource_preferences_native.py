@@ -44,7 +44,7 @@ METHOD_PREFIXES = (
     '- (VDTNicePreferences *)vdtNicePreferences', '- (NSArray *)specifiers',
     '- (void)presentResourceRuleError:', '- (void)vdtReloadIndependentRules',
     '- (void)setResourceRuleValue:',
-    '- (id)readResourceRuleValue:', '- (NSString *)vdtResourceReceiptText',
+    '- (id)readResourceRuleValue:',
 )
 
 

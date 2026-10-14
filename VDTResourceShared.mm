@@ -14,16 +14,18 @@ static BOOL resourceBoolean(id value, BOOL fallback) {
         CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID() && [value boolValue]) : fallback;
 }
 NSString *VDTResourceStateDirectory(void) { return jbroot(@"/var/tmp/com.doimty.vedette.resource"); }
+// The per-rule switches are the only opt-in. The former resource-write toggle
+// is gone: memory/reclaim rules apply whenever they are enabled and Vedette is
+// on, while a stale @"resourceWriteEnabled" key in saved preferences is
+// ignored instead of blocking application.
 BOOL VDTResourceWriteEnabled(NSDictionary *prefs) {
-    return [prefs isKindOfClass:NSDictionary.class] && resourceBoolean(prefs[@"enabled"], YES) &&
-        resourceBoolean(prefs[VDT_RESOURCE_WRITE_KEY], NO);
+    return [prefs isKindOfClass:NSDictionary.class] && resourceBoolean(prefs[@"enabled"], YES);
 }
 // Only resource configuration is exposed in the readable receipt. Never copy
 // CPU/nice/unknown preferences, credentials, or complete user configurations.
 NSDictionary *VDTResourceConfiguration(NSDictionary *prefs) {
     if (![prefs isKindOfClass:NSDictionary.class]) prefs = @{};
-    NSMutableDictionary *result = [@{@"enabled": @(resourceBoolean(prefs[@"enabled"], YES)),
-        VDT_RESOURCE_WRITE_KEY: @(resourceBoolean(prefs[VDT_RESOURCE_WRITE_KEY], NO))} mutableCopy];
+    NSMutableDictionary *result = [@{@"enabled": @(resourceBoolean(prefs[@"enabled"], YES))} mutableCopy];
     for (NSString *section in @[@"memoryRules", @"jetsamRules"]) {
         id raw = prefs[section];
         if (raw && (![raw isKindOfClass:NSArray.class] || [raw count] > 4096)) {
@@ -58,15 +60,6 @@ static NSDictionary *resourcePrefsForUpdate(void) {
     if (![attributes[NSFileType] isEqual:NSFileTypeRegular] || [attributes[NSFileSize] unsignedLongLongValue] > VDT_NICE_STORE_LIMIT) return nil;
     id prefs = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
     return [prefs isKindOfClass:NSDictionary.class] ? prefs : nil;
-}
-BOOL VDTResourceSetWriteEnabled(BOOL enabled, NSError **error) {
-    NSDictionary *old = resourcePrefsForUpdate();
-    if (!old) return NO;
-    NSMutableDictionary *candidate = [old mutableCopy]; candidate[VDT_RESOURCE_WRITE_KEY] = @(enabled);
-    NSData *data = [NSPropertyListSerialization dataWithPropertyList:candidate format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
-    if (!data || data.length > VDT_NICE_STORE_LIMIT || ![data writeToFile:PREFS_PATH options:NSDataWritingAtomic error:error]) return NO;
-    notify_post(PREFS_CHANGED_NN.UTF8String);
-    return YES;
 }
 NSDictionary *VDTResourceMatchingStatus(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
     NSString *key = VDTNiceRuleKey(type, identifier), *boot = VDTNiceBootToken();

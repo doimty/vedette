@@ -92,11 +92,17 @@ typedef NS_ENUM(NSInteger, UIAlertActionStyle) {
 - (VDTNicePreferences *)vdtNicePreferences;
 - (NSArray *)specifiers;
 - (void)vdtReloadIndependentRules;
-- (NSString *)vdtResourceReceiptText;
 - (void)vdtFollowMemoryApp;
 - (void)vdtFollowJetsamApp;
 - (void)vdtFollowResourceSection:(NSString *)section;
 - (void)presentResourceRuleError:(NSString *)title message:(NSString *)message;
+@end
+
+@interface VDTProcessConfiguration (CheckDisplaySentinel)
+- (NSArray *)vdtCheckResultSpecifiers;
+- (void)vdtRefreshCheckResults;
+- (void)vdtMarkNiceCheckPending;
+- (void)vdtNiceCheckDidRefresh;
 @end
 
 @interface VDTActionListController : NSObject

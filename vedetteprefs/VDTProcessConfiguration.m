@@ -13,6 +13,7 @@
 #import "VDTHeaderCell.h"
 #import "VDTActionListController.h"
 #import "VDTNicePreferences.h"
+#import "VDTCheckResultsPreferences.h"
 #import "VDTExtensionListController.h"
 #import <CoreFoundation/CoreFoundation.h>
 #include <stdint.h>
@@ -86,11 +87,17 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
     VDTStyleTable(self.table);
 }
 
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [_checkResults refreshDisplay];
+}
+
 - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
-    if ([[specifier propertyForKey:@"vdtHeader"] boolValue])
+    if ([[specifier propertyForKey:@"vdtHeader"] boolValue] ||
+        [[specifier propertyForKey:@"vdtCheckResult"] boolValue])
         return UITableViewAutomaticDimension;
     return [super tableView:tableView heightForRowAtIndexPath:indexPath];
 }
@@ -157,6 +164,14 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
     if (!_nicePreferences) _nicePreferences = [[VDTNicePreferences alloc] initWithOwner:self];
     return _nicePreferences;
 }
+
+- (NSArray *)vdtCheckResultSpecifiers {
+    if (!_checkResults) _checkResults = [[VDTCheckResultsPreferences alloc] initWithOwner:self];
+    return [_checkResults specifiers];
+}
+- (void)vdtMarkNiceCheckPending { [_checkResults markNicePending]; }
+- (void)vdtNiceCheckDidRefresh { [_checkResults niceResultDidChange]; }
+- (void)vdtRefreshCheckResults { [_checkResults refreshDisplay]; }
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
@@ -242,7 +257,7 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
 
         //Memory rule
         PSSpecifier *memoryGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Memory") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [memoryGroupSpec setProperty:VDTLoc(self.class, @"Saved memory rules are applied only with resource writes enabled. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported.") forKey:@"footerText"];
+        [memoryGroupSpec setProperty:VDTLoc(self.class, @"Saved memory rules apply when this switch is on. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported.") forKey:@"footerText"];
         [rootSpecifiers addObject:memoryGroupSpec];
 
         PSSpecifier *memoryEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable memory rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSSwitchCell edit:nil];
@@ -272,7 +287,7 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
 
         //Reclaim priority rule
         PSSpecifier *jetsamGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Reclaim priority") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [jetsamGroupSpec setProperty:VDTLoc(self.class, @"Saved reclaim-priority rules require resource writes. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination.") forKey:@"footerText"];
+        [jetsamGroupSpec setProperty:VDTLoc(self.class, @"Saved reclaim-priority rules apply when this switch is on. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination.") forKey:@"footerText"];
         [rootSpecifiers addObject:jetsamGroupSpec];
 
         PSSpecifier *jetsamEnabledSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable reclaim priority rule") target:self set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:) detail:nil cell:PSSwitchCell edit:nil];
@@ -301,14 +316,7 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
             [priorityFollow setButtonAction:@selector(vdtFollowJetsamApp)];
             [rootSpecifiers addObject:priorityFollow];
         }
-        PSSpecifier *receipt = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Last resource check")
-            target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [receipt setProperty:[self vdtResourceReceiptText] forKey:@"footerText"];
-        [rootSpecifiers addObject:receipt];
-        PSSpecifier *refreshReceipt = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Refresh")
-            target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-        [refreshReceipt setButtonAction:@selector(reloadSpecifiers)];
-        [rootSpecifiers addObject:refreshReceipt];
+        [rootSpecifiers addObjectsFromArray:[self vdtCheckResultSpecifiers]];
 
         _specifiers = rootSpecifiers;
     }
@@ -316,28 +324,6 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
     return _specifiers;
 }
 
-- (NSString *)vdtResourceReceiptText {
-    NSDictionary *row = VDTResourceMatchingStatus([self validIdentifier], [self configurationType], getPrefs());
-    NSDictionary *labels = @{@"applied": @"Resource readback matched", @"restored": @"Recorded values restored",
-        @"partial": @"Resources partially applied", @"unverified": @"Resource write not verified", @"pending": @"Resource work pending", @"conflict": @"Resource drift; no overwrite",
-        @"store-error": @"Resource journal unavailable", @"unsupported": @"Resource writes unsupported on this system",
-        @"write-disabled": @"Resource writes are off", @"no-write": @"No resource write requested", @"gone": @"Previous process exited"};
-    NSString *label = labels[row[@"state"] ?: @""] ?: @"No matching resource receipt";
-    NSMutableArray *parts = [NSMutableArray arrayWithObject:VDTLoc(self.class, label)];
-    NSNumber *checkedAt = row[@"checkedAt"];
-    if ([checkedAt isKindOfClass:NSNumber.class] && checkedAt.doubleValue > 0) {
-        NSDateFormatter *formatter = [NSDateFormatter new];
-        formatter.dateStyle = NSDateFormatterShortStyle; formatter.timeStyle = NSDateFormatterMediumStyle;
-        [parts addObject:[formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:checkedAt.doubleValue]]];
-    }
-    id pair = row[@"memoryObserved"];
-    if ([pair isKindOfClass:NSArray.class] && [pair count] == 4)
-        [parts addObject:[NSString stringWithFormat:@"%@ %@ / %@ MiB", VDTLoc(self.class, @"Memory"), pair[0], pair[2]]];
-    if ([row[@"priorityObserved"] isKindOfClass:NSNumber.class])
-        [parts addObject:[NSString stringWithFormat:@"%@ %@", VDTLoc(self.class, @"Priority band"), row[@"priorityObserved"]]];
-    [parts addObject:VDTLoc(self.class, @"Historical readback, not live monitoring. Restoration uses observed values, not an exact original system policy.")];
-    return [parts componentsJoinedByString:@"\n"];
-}
 - (void)vdtFollowMemoryApp { [self vdtFollowResourceSection:@"memoryRules"]; }
 - (void)vdtFollowJetsamApp { [self vdtFollowResourceSection:@"jetsamRules"]; }
 - (void)vdtFollowResourceSection:(NSString *)section {
@@ -423,6 +409,7 @@ static NSNumber *VDTResourceRuleInput(id value, id key, id section) {
             message:VDTLoc(self.class, @"The rule could not be saved. The previous saved value has been restored.")];
     } else {
         [self vdtReloadIndependentRules];
+        [self vdtRefreshCheckResults];
     }
 }
 

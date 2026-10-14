@@ -28,8 +28,11 @@ class Writeback(unittest.TestCase):
   self.assertIn('!restore && ![current isEqual:wanted] && [side[@"phase"] isEqual:@"unverified"]',t)
  def test_opt_in_and_raw_version_are_not_invented(self):
   t=(ROOT/'VDTResourceShared.mm').read_text();m=(ROOT/'VDTProcessManager.mm').read_text()
-  self.assertIn('resourceBoolean(prefs[VDT_RESOURCE_WRITE_KEY], NO)',t)
   self.assertIn('resourceBoolean(prefs[@"enabled"], YES)',t)
+  gate=t[t.index('BOOL VDTResourceWriteEnabled'):t.index('NSDictionary *VDTResourceConfiguration')]
+  self.assertNotIn('resourceWriteEnabled',gate,'the write gate must not consult the removed opt-in key')
+  self.assertNotIn('VDTResourceSetWriteEnabled',t)
+  self.assertNotIn('Enable resource writes',(ROOT/'vedetteprefs/VDTRootListController.m').read_text())
   self.assertIn('row[@"sourceDarwinMajor"] = @(major)',t)
   self.assertIn('rawSourceDarwinMajor = resource_policy_integer(rule[@"sourceDarwinMajor"])',m)
   self.assertNotIn('rawSourceDarwinMajor = resource_policy_integer(@(vdt_target_darwin_major()))',m)

@@ -4,13 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define VDT_RESOURCE_WRITE_KEY @"resourceWriteEnabled"
 #define VDT_RESOURCE_STATUS_NN "com.doimty.vedette.resource-status"
 #define VDT_RESOURCE_RESTORE_NN "com.doimty.vedette.resource-removal"
 NSString *VDTResourceStateDirectory(void);
 BOOL VDTResourceWriteEnabled(NSDictionary *prefs);
 NSDictionary *VDTResourceConfiguration(NSDictionary *prefs);
-BOOL VDTResourceSetWriteEnabled(BOOL enabled, NSError **error);
 BOOL VDTResourceSavePriority(NSString *identifier, VDTConfigType type, NSNumber *value);
 BOOL VDTResourceFollowApp(NSString *identifier, NSString *section);
 NSDictionary *VDTResourceMatchingStatus(NSString *identifier, VDTConfigType type, NSDictionary *prefs);

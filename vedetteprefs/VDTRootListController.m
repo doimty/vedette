@@ -5,7 +5,6 @@
 
 #import "VDTRootListController.h"
 #import "../VDTShared.h"
-#import "../VDTResourceShared.h"
 #import "VDTLocalization.h"
 #import "VDTStyle.h"
 #import "VDTHeaderCell.h"
@@ -36,16 +35,6 @@
         
         
         [tweakEnabledSpec setProperty:VDTSettingsSymbol(@"power") forKey:@"iconImage"];
-
-        PSSpecifier *resourceWriteGroup = [PSSpecifier emptyGroupSpecifier];
-        [resourceWriteGroup setProperty:VDTLoc(self.class,
-            @"Resource writes are off by default. Enable only to apply your memory and reclaim-priority rules. Turning off requests conditional restoration of recorded values.") forKey:@"footerText"];
-        [rootSpecifiers addObject:resourceWriteGroup];
-        PSSpecifier *resourceWriteSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Enable resource writes")
-            target:self set:@selector(setResourceWritePreference:specifier:) get:@selector(readResourceWritePreference:) detail:nil cell:PSSwitchCell edit:nil];
-        [resourceWriteSpec setProperty:VDT_RESOURCE_WRITE_KEY forKey:@"key"];
-        [resourceWriteSpec setProperty:@NO forKey:@"default"];
-        [rootSpecifiers addObject:resourceWriteSpec];
 
         //Manage
         PSSpecifier *manageGroupSpec = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Process rules") target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
@@ -160,28 +149,6 @@
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier*)specifier {
     setValueForKey(specifier.properties[@"key"], value);
-}
-
-- (id)readResourceWritePreference:(PSSpecifier *)specifier {
-    (void)specifier;
-    NSDictionary *prefs = getPrefs();
-    id saved = prefs[VDT_RESOURCE_WRITE_KEY];
-    return [saved isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)saved) == CFBooleanGetTypeID()
-        ? @([saved boolValue]) : @NO;
-}
-- (void)setResourceWritePreference:(id)value specifier:(PSSpecifier *)specifier {
-    (void)specifier;
-    if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID()) {
-        [self reloadSpecifiers]; return;
-    }
-    NSError *error = nil;
-    if (!VDTResourceSetWriteEnabled([value boolValue], &error)) {
-        UIAlertController *failed = [UIAlertController alertControllerWithTitle:VDTLoc(self.class, @"Resource rule save failed")
-            message:error.localizedDescription ?: VDTLoc(self.class, @"The rule could not be saved. The previous saved value has been restored.") preferredStyle:UIAlertControllerStyleAlert];
-        [failed addAction:[UIAlertAction actionWithTitle:VDTLoc(self.class, @"OK") style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:failed animated:YES completion:nil];
-    }
-    [self reloadSpecifiers];
 }
 
 -(void)reset{

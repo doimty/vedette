@@ -18,7 +18,7 @@ def main():
         ('overwrite-original', '    id wanted = restore ? side[@"original"]',
          '    side[@"original"] = current;\n    id wanted = restore ? side[@"original"]', 'original'),
         ('ignore-drift', 'if (!atLast && !atWanted) {', 'if (false && !atLast && !atWanted) {', 'kernelPair.active==333'),
-        ('ignore-optin', 'resourceWrites = VDTResourceWriteEnabled(prefs);', 'resourceWrites = YES;', 'writes==0'),
+        ('ignore-main-switch', 'resourceWrites = VDTResourceWriteEnabled(prefs);', 'resourceWrites = YES;', 'writes==0'),
         ('repeat-unverified', 'if (!restore && ![current isEqual:wanted] &&', 'if (false && !restore && ![current isEqual:wanted] &&', 'priorityWrites==1'),
         ('retain-reused-pid', 'if (resourceGone(target)) {', 'if (false && resourceGone(target)) {', 'resourceRecords.count==0'),
         ('forget-failed-restore', '    if (!current) {\n        if (count < 3)',

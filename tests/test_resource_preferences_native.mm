@@ -123,6 +123,13 @@ static void invoke_setter(VDTProcessConfiguration *owner, PSSpecifier *specifier
 }
 @end
 
+@implementation VDTProcessConfiguration (CheckDisplaySentinel)
+// This editor fixture fakes ONLY the added display host. Actual check result
+// model and display wiring have their own required native / source CI gate.
+- (NSArray *)vdtCheckResultSpecifiers { return @[]; }
+- (void)vdtRefreshCheckResults {}
+@end
+
 @implementation VDTActionListController
 @end
 @implementation VDTNicePreferences

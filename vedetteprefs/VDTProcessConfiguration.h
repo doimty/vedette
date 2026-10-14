@@ -9,12 +9,13 @@
 #import "PrivateHeaders.h"
 #import "../VDTShared.h"
 
-@class VDTNicePreferences;
+@class VDTNicePreferences, VDTCheckResultsPreferences;
 
 @interface VDTProcessConfiguration : PSListController{
     PSSpecifier *_intervalSpecifier;
     PSSpecifier *_enabledSpecifier;
     VDTNicePreferences *_nicePreferences;
+    VDTCheckResultsPreferences *_checkResults;
 }
 - (void)setProcessConfigValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readProcessConfigValue:(PSSpecifier *)specifier;
@@ -22,7 +23,10 @@
 - (VDTConfigType)vdtNiceConfigurationType;
 - (VDTNicePreferences *)vdtNicePreferences;
 - (void)vdtReloadIndependentRules;
-- (NSString *)vdtResourceReceiptText;
+- (NSArray *)vdtCheckResultSpecifiers;
+- (void)vdtMarkNiceCheckPending;
+- (void)vdtNiceCheckDidRefresh;
+- (void)vdtRefreshCheckResults;
 - (void)vdtFollowMemoryApp;
 - (void)vdtFollowJetsamApp;
 - (void)vdtFollowResourceSection:(NSString *)section;

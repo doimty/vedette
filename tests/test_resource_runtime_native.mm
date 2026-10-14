@@ -85,7 +85,7 @@ static NSDictionary *target(void) {
         VDTTargetExecutablePathKey:@"/usr/bin/fixture-daemon",VDTTargetProcCommKey:@"fixture-daemon",
         VDTTargetStartSecondsKey:@100,VDTTargetStartMicrosecondsKey:@20};
 }
-static NSDictionary *prefs(BOOL enabled,BOOL optin) { return @{@"enabled":@(enabled),VDT_RESOURCE_WRITE_KEY:@(optin)}; }
+static NSDictionary *prefs(BOOL enabled) { return @{@"enabled":@(enabled)}; }
 static VDTMemoryRule memory(int32_t a,int32_t i) {
     VDTMemoryRuleInput input={VDTPolicyRecordEnabled,{VDTPolicyInputInteger,1},{VDTPolicyInputInteger,a},{VDTPolicyInputInteger,i}};
     return VDTParseMemoryRule(&input);
@@ -116,54 +116,58 @@ int main(void) {
             withIntermediateDirectories:YES attributes:nil error:nil]);
         NSDictionary *t=target(); VDTMemoryRule m=memory(64,128), changed=memory(96,192);
         VDTJetsamRule p=priority(13), coerced=priority(19);
-        reset(); vdt_resource_reload(prefs(YES,NO));
-        assert(vdt_resource_apply(t,&m,&p) && writes==0); // default opt-out
-        reset(); vdt_resource_reload(prefs(YES,YES));
+        reset(); vdt_resource_reload(prefs(YES));
+        assert(vdt_resource_apply(t,&m,&p) && writes==2 && kernelPair.active==64 && kernelPriority==13); // enabled rules apply without a separate opt-in
+        reset(); vdt_resource_reload(@{@"enabled":@YES,@"resourceWriteEnabled":@NO});
+        assert(vdt_resource_apply(t,&m,&p) && writes==2); // a stale legacy opt-out key is ignored
+        reset(); vdt_resource_reload(prefs(NO));
+        assert(vdt_resource_apply(t,&m,&p) && writes==0); // main switch off writes nothing
+        reset(); vdt_resource_reload(prefs(YES));
         for (unsigned i=0;i<2048;i++) resourceRecords[[NSString stringWithFormat:@"fixture-limit-%u",i]]=@{@"target":t};
         assert(!vdt_resource_apply(t,&m,NULL) && writes==0 && !resourceStoreError);
         // Keep the no-SET-before-durable-WAL failure first so its mutation is
         // killed by the intended authority assertion, not a later commit case.
-        reset(); vdt_resource_reload(prefs(YES,YES)); failCommit=1;
+        reset(); vdt_resource_reload(prefs(YES)); failCommit=1;
         assert(!vdt_resource_apply(t,&m,NULL) && writes==0 && resourceStoreError==EIO);
-        reset(); vdt_resource_reload(prefs(YES,YES));
+        reset(); vdt_resource_reload(prefs(YES));
         assert(vdt_resource_apply(t,&m,NULL) && writes==1 && kernelPair.active==64);
         assert(vdt_resource_apply(t,&changed,NULL) && writes==2 && kernelPair.active==96);
         assert([resourceRecords[resourceInstance(t)][@"memory"][@"original"][0] isEqual:@2048]);
-        vdt_resource_reload(prefs(NO,YES)); // global off still restores
+        vdt_resource_reload(prefs(NO)); // global off still restores
         assert(vdt_resource_apply(t,&changed,NULL) && writes==3 && kernelPair.active==2048 && resourceRecords.count==0);
-        reset(); vdt_resource_reload(prefs(YES,YES));
-        assert(vdt_resource_apply(t,&m,NULL)); restart(); vdt_resource_reload(prefs(YES,NO));
+        reset(); vdt_resource_reload(prefs(YES));
+        assert(vdt_resource_apply(t,&m,NULL)); restart(); vdt_resource_reload(prefs(NO));
         assert(vdt_resource_apply(t,&m,NULL) && kernelPair.active==2048 && resourceRecords.count==0);
-        reset(); vdt_resource_reload(prefs(YES,YES)); assert(vdt_resource_apply(t,&m,NULL));
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         VDTMemoryRule broken=m; broken.state=VDTPolicyRecordInvalid; broken.parseStatus=VDTPolicyParseInvalidRecord;
-        vdt_resource_reload(prefs(YES,NO));
+        vdt_resource_reload(prefs(NO));
         assert(vdt_resource_apply(t,&broken,NULL) && kernelPair.active==2048 && resourceRecords.count==0);
-        reset(); vdt_resource_reload(prefs(YES,YES)); assert(vdt_resource_apply(t,&m,NULL));
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         failCommit=2;
         assert(!vdt_resource_apply(t,NULL,NULL) && resourceRecords.count==0 && resourceStoreError==EIO);
-        vdt_resource_reload(prefs(YES,NO));
+        vdt_resource_reload(prefs(NO));
         assert(vdt_resource_apply(t,NULL,NULL) && resourceRecords.count==0 && !resourceStoreError && kernelPair.active==2048);
-        reset(); vdt_resource_reload(prefs(YES,YES)); failCommit=2;
+        reset(); vdt_resource_reload(prefs(YES)); failCommit=2;
         assert(!vdt_resource_apply(t,&m,NULL) && writes==1 && resourceStoreError==EIO);
-        restart(); vdt_resource_reload(prefs(YES,YES));
+        restart(); vdt_resource_reload(prefs(YES));
         assert(vdt_resource_apply(t,&m,NULL) && writes==1); // pending WAL recovered without repeat SET
         assert(vdt_resource_apply(t,NULL,NULL) && kernelPair.active==2048 && resourceRecords.count==0);
-        reset(); vdt_resource_reload(prefs(YES,YES)); failAfterWriteRead=YES;
+        reset(); vdt_resource_reload(prefs(YES)); failAfterWriteRead=YES;
         assert(!vdt_resource_apply(t,&m,NULL) && writes==1 && resourceRecords.count==1);
-        failAfterWriteRead=NO; restart(); vdt_resource_reload(prefs(YES,YES));
+        failAfterWriteRead=NO; restart(); vdt_resource_reload(prefs(YES));
         assert(vdt_resource_apply(t,&m,NULL) && writes==1);
         failAfterWriteRead=YES;
         assert(!vdt_resource_apply(t,NULL,NULL) && resourceRecords.count==1);
         failAfterWriteRead=NO;
         for (NSString *key in resourceDue.allKeys) resourceDue[key]=@0;
         assert(vdt_resource_apply(t,NULL,NULL) && resourceRecords.count==0 && kernelPair.active==2048);
-        reset(); vdt_resource_reload(prefs(YES,YES)); assert(vdt_resource_apply(t,&m,NULL));
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         kernelPair=(VDTMemlimitPair){333,1,333,1};
         assert(!vdt_resource_apply(t,NULL,NULL) && writes==1 && resourceRecords.count==1 && kernelPair.active==333);
-        reset(); vdt_resource_reload(prefs(YES,YES)); assert(vdt_resource_apply(t,&m,NULL));
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         kernelToken=(VDTProcessInstanceToken){101,20};
         assert(vdt_resource_apply(t,NULL,NULL) && writes==1 && resourceRecords.count==0); // gone, zero write to reused PID
-        reset(); supportedSystem=NO; vdt_resource_reload(prefs(YES,YES));
+        reset(); supportedSystem=NO; vdt_resource_reload(prefs(YES));
         assert(vdt_resource_apply(t,&m,&p) && writes==0);
         const int32_t modernMajors[]={22,25,26,30};
         const char *modernReleases[]={"22.1.0","25.0.0","26.2.0","30.9.0"};
@@ -171,57 +175,57 @@ int main(void) {
             reset(); fixtureRelease=modernReleases[i]; kernelPriority=180;
             VDTJetsamRule modern=priorityForMajor(150,modernMajors[i]);
             VDTJetsamRule highest=priorityForMajor(210,modernMajors[i]);
-            vdt_resource_reload(prefs(YES,YES));
+            vdt_resource_reload(prefs(YES));
             assert(vdt_resource_apply(t,NULL,&modern) && priorityWrites==1 && kernelPriority==150);
-            restart(); vdt_resource_reload(prefs(YES,YES));
+            restart(); vdt_resource_reload(prefs(YES));
             assert(!resourceStoreError && resourceRecords.count==1);
             assert([resourceRecords[resourceInstance(t)][@"priority"][@"original"] isEqual:@180]);
             assert(vdt_resource_apply(t,&m,&highest) && kernelPriority==210 && kernelPair.active==64);
-            unsigned before=writes; restart(); vdt_resource_reload(prefs(YES,YES));
+            unsigned before=writes; restart(); vdt_resource_reload(prefs(YES));
             assert(vdt_resource_apply(t,&m,&highest) && writes==before && !resourceStoreError);
-            vdt_resource_reload(prefs(NO,YES));
+            vdt_resource_reload(prefs(NO));
             assert(vdt_resource_apply(t,NULL,NULL) && kernelPriority==180 && kernelPair.active==2048 && resourceRecords.count==0);
         }
         // A same-boot record with different numeric semantics is not silently
         // reinterpreted; a real OS upgrade changes boot and follows old-boot discard.
         reset(); fixtureRelease="22.1.0"; kernelPriority=180;
-        VDTJetsamRule modern=priorityForMajor(150,22); vdt_resource_reload(prefs(YES,YES));
+        VDTJetsamRule modern=priorityForMajor(150,22); vdt_resource_reload(prefs(YES));
         assert(vdt_resource_apply(t,NULL,&modern)); resourceDarwin=21; assert(resourcePersist()); restart();
-        vdt_resource_reload(prefs(YES,YES));
+        vdt_resource_reload(prefs(YES));
         assert(!vdt_resource_apply(t,NULL,NULL) && resourceStoreError==EINVAL && priorityWrites==1);
-        reset(); vdt_resource_reload(prefs(YES,YES)); coercePriority=YES;
+        reset(); vdt_resource_reload(prefs(YES)); coercePriority=YES;
         assert(!vdt_resource_apply(t,NULL,&coerced) && priorityWrites==1);
-        restart(); vdt_resource_reload(prefs(YES,YES));
+        restart(); vdt_resource_reload(prefs(YES));
         assert(!vdt_resource_apply(t,NULL,&coerced) && priorityWrites==1); // no repeated coercion writes
-        reset(); vdt_resource_reload(prefs(YES,YES)); failMemory=YES;
+        reset(); vdt_resource_reload(prefs(YES)); failMemory=YES;
         assert(!vdt_resource_apply(t,&m,&p) && priorityWrites==1 && memoryWrites==0 && resourceRecords.count==1);
         for (unsigned i=0;i<5;i++) {
             for (NSString *key in resourceDue.allKeys) resourceDue[key]=@0;
             vdt_resource_apply(t,&m,&p);
         }
         assert(priorityWrites==1); // successful side never forced by failing sibling
-        reset(); vdt_resource_reload(prefs(YES,YES)); assert(vdt_resource_apply(t,&m,&p));
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,&p));
         vdt_resource_reconcile(@[]); assert(resourceRecords.count==0 && kernelPair.active==2048 && kernelPriority==18);
-        reset(); vdt_resource_reload(prefs(YES,YES)); assert(vdt_resource_apply(t,&m,NULL));
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         NSString *boot=resourceBoot; resourceBoot=@"foreign-boot"; assert(resourcePersist()); restart();
-        vdt_resource_reload(prefs(YES,NO)); assert(resourceRecords.count==0 && writes==1); // no cross-boot restore
+        vdt_resource_reload(prefs(NO)); assert(resourceRecords.count==0 && writes==1); // no cross-boot restore
         resourceBoot=boot;
-        reset(); vdt_resource_reload(prefs(YES,YES));
+        reset(); vdt_resource_reload(prefs(YES));
         resourceRecords[@"broken"]=@{@"target":t,@"memory":@{@"original":@0}}; assert(resourcePersist()); restart();
-        vdt_resource_reload(prefs(YES,YES)); assert(!vdt_resource_apply(t,&m,NULL) && writes==0 && resourceStoreError==EINVAL);
-        reset(); vdt_resource_reload(prefs(YES,YES)); assert(vdt_resource_apply(t,&m,NULL));
+        vdt_resource_reload(prefs(YES)); assert(!vdt_resource_apply(t,&m,NULL) && writes==0 && resourceStoreError==EINVAL);
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         VDTNiceStore store; assert(!VDTNiceStoreOpen(VDTResourceStateDirectory().fileSystemRepresentation,1,&store));
         NSData *request=[NSPropertyListSerialization dataWithPropertyList:@{@"version":@1,@"boot":resourceBoot,@"nonce":@"test-removal"}
             format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
         assert(!VDTNiceStoreWrite(&store,VDT_NICE_REQUEST,request.bytes,request.length)); VDTNiceStoreClose(&store);
-        vdt_resource_reload(prefs(YES,YES)); assert(resourcePaused && [resourceRestoreNonce isEqual:@"test-removal"]);
+        vdt_resource_reload(prefs(YES)); assert(resourcePaused && [resourceRestoreNonce isEqual:@"test-removal"]);
         assert(vdt_resource_restore_all() && resourceRecords.count==0 && kernelPair.active==2048); vdt_resource_publish();
-        reset(); vdt_resource_reload(prefs(YES,YES)); assert(vdt_resource_apply(t,&m,NULL));
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         assert(!VDTNiceStoreOpen(VDTResourceStateDirectory().fileSystemRepresentation,1,&store));
         NSData *bad=[NSPropertyListSerialization dataWithPropertyList:@{@"version":@1,@"boot":resourceBoot}
             format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
         assert(!VDTNiceStoreWrite(&store,VDT_NICE_REQUEST,bad.bytes,bad.length)); VDTNiceStoreClose(&store);
-        vdt_resource_reload(prefs(YES,YES));
+        vdt_resource_reload(prefs(YES));
         assert(!vdt_resource_apply(t,&changed,NULL) && writes==1 && resourceControlError==EINVAL);
         assert(resourcePersist());
         assert(!vdt_resource_apply(t,&changed,NULL) && writes==1 && resourceControlError==EINVAL);

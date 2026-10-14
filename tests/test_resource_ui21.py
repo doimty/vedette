@@ -23,11 +23,11 @@ NEW_LOC_KEYS = (
     'Enable memory rule',
     'Active limit (MiB)',
     'Inactive limit (MiB)',
-    'Saved memory rules are applied only with resource writes enabled. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported.',
+    'Saved memory rules apply when this switch is on. 0 restores the recorded value; -1 on both sides removes the per-process limit; positive pairs are hard MiB limits. Mixed modes are not supported.',
     'Reclaim priority',
     'Enable reclaim priority rule',
     'Priority band',
-    'Saved reclaim-priority rules require resource writes. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination.',
+    'Saved reclaim-priority rules apply when this switch is on. 0 = idle; disabling restores recorded values. Reserved and special bands are not applied. Observed effective priority may differ. High priority does not prevent memory-limit termination.',
 )
 
 RESOURCE_SELECTORS = 'set:@selector(setResourceRuleValue:specifier:) get:@selector(readResourceRuleValue:)'
@@ -70,9 +70,12 @@ def detail_contract(source):
     assert 'setValueForProcessConfigKey(' not in setter, 'resource setter must not write CPU records'
     reader = function_source(source, '- (id)readResourceRuleValue:')
     assert 'valueForProcessResourceRuleKey([self validIdentifier], key, [specifier propertyForKey:@"default"], [self configurationType], section);' in reader
-    assert 'only with resource writes enabled' in source
-    assert 'Historical readback, not live monitoring.' in source
-    assert 'VDTResourceMatchingStatus(' in source
+    assert 'apply when this switch is on' in source
+    assert 'resource writes enabled' not in source
+    assert 'require resource writes' not in source
+    assert '[rootSpecifiers addObjectsFromArray:[self vdtCheckResultSpecifiers]];' in source
+    assert 'vdtResourceReceiptText' not in source
+    assert source.index('[rootSpecifiers addObject:jetsamBandSpec];') < source.index('[rootSpecifiers addObjectsFromArray:[self vdtCheckResultSpecifiers]];')
     assert 'this build only saves' not in source
 
 
@@ -163,6 +166,12 @@ class ResourceRuleUI(unittest.TestCase):
         mutated = self.detail.replace(
             '[memoryEnabledSpec setProperty:@"memoryRules" forKey:@"vdtRuleSection"];',
             '[memoryEnabledSpec setProperty:@"appConfigs" forKey:@"vdtRuleSection"];', 1)
+        self.assertNotEqual(mutated, self.detail)
+        with self.assertRaises(AssertionError):
+            detail_contract(mutated)
+
+    def test_removed_resource_write_gate_wording_is_rejected(self):
+        mutated = self.detail.replace('apply when this switch is on', 'require resource writes', 1)
         self.assertNotEqual(mutated, self.detail)
         with self.assertRaises(AssertionError):
             detail_contract(mutated)
