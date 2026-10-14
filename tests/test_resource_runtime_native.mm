@@ -121,6 +121,10 @@ int main(void) {
         reset(); vdt_resource_reload(prefs(YES,YES));
         for (unsigned i=0;i<2048;i++) resourceRecords[[NSString stringWithFormat:@"fixture-limit-%u",i]]=@{@"target":t};
         assert(!vdt_resource_apply(t,&m,NULL) && writes==0 && !resourceStoreError);
+        // Keep the no-SET-before-durable-WAL failure first so its mutation is
+        // killed by the intended authority assertion, not a later commit case.
+        reset(); vdt_resource_reload(prefs(YES,YES)); failCommit=1;
+        assert(!vdt_resource_apply(t,&m,NULL) && writes==0 && resourceStoreError==EIO);
         reset(); vdt_resource_reload(prefs(YES,YES));
         assert(vdt_resource_apply(t,&m,NULL) && writes==1 && kernelPair.active==64);
         assert(vdt_resource_apply(t,&changed,NULL) && writes==2 && kernelPair.active==96);
@@ -139,8 +143,6 @@ int main(void) {
         assert(!vdt_resource_apply(t,NULL,NULL) && resourceRecords.count==0 && resourceStoreError==EIO);
         vdt_resource_reload(prefs(YES,NO));
         assert(vdt_resource_apply(t,NULL,NULL) && resourceRecords.count==0 && !resourceStoreError && kernelPair.active==2048);
-        reset(); vdt_resource_reload(prefs(YES,YES)); failCommit=1;
-        assert(!vdt_resource_apply(t,&m,NULL) && writes==0 && resourceStoreError==EIO);
         reset(); vdt_resource_reload(prefs(YES,YES)); failCommit=2;
         assert(!vdt_resource_apply(t,&m,NULL) && writes==1 && resourceStoreError==EIO);
         restart(); vdt_resource_reload(prefs(YES,YES));
