@@ -316,11 +316,18 @@ int main(void) {
     reset(); p=preferences(own,nil); savePrefs(p); reloadPrefsSync();
     REQUIRE(extensionNice()==5 && writes==1 && cpuCalls==0 && cpuDispatches==0);
     int published=posts, resourcePublished=resourcePosts;
-    reconcile_unreported_processes_sync(); handle_reported_pid_sync(424242);
+    reconcile_unreported_processes_sync();
+    REQUIRE(resourcePosts==resourcePublished+1);
+    // A reported PID also schedules immediate and trailing catch-up scans.
+    // Hold the trailing block so all four publications have explicit causes.
+    deferAfter=YES; handle_reported_pid_sync(424242);
+    REQUIRE(resourcePosts==resourcePublished+3 && deferredTasks.count==1);
+    dispatch_block_t resourceTail=[deferredTasks[0] copy]; [deferredTasks removeObjectAtIndex:0]; resourceTail();
+    REQUIRE(resourcePosts==resourcePublished+4 && deferredTasks.count==0);
     REQUIRE(writes==1 && cpuCalls==0 && posts==published);
-    REQUIRE(resourcePosts==resourcePublished+2); // two independent lifecycle receipts
     niceRefreshCallback(NULL,NULL,NULL,NULL,NULL); REQUIRE(writes==1 && cpuCalls==0);
-    REQUIRE(resourcePosts==resourcePublished+2); // nice retry cannot republish resources
+    REQUIRE(resourcePosts==resourcePublished+4); // nice retry cannot republish resources
+    deferAfter=NO;
     REQUIRE(VDTNiceRemoveIndependentRule(extID,VDTConfigTypeExtension,&error)); reloadPrefsSync();
     REQUIRE(extensionNice()==-1 && cpuCalls==0);
     savePrefs(p); reloadPrefsSync(); REQUIRE(extensionNice()==5);
