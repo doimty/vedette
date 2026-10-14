@@ -41,7 +41,7 @@ def main():
                 for arch in ('arm64','arm64e'):
                     for label,path in variants:
                         define=[] if path is None else ['-DVDT_RESOURCE_RUNTIME_FILE="'+str(path)+'"']
-                        run(['clang++','-std=c++17','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror','-fsyntax-only',
+                        run(['clang++','-std=gnu++98','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror','-fsyntax-only',
                             '-target',arch+'-apple-ios15.0','-isysroot',a.sdk,'-Itests/native_stubs','-I.',*define,MM[-1]])
                         print('SDK syntax only:',arch,label,flush=True)
             print(f'PASS resource fixture + {len(mutants)} mutants SDK syntax only; no Apple link/execute')
@@ -56,7 +56,7 @@ def main():
         env={**os.environ,'VDT_RESOURCE_RUNTIME_TEST_ROOT':str(tmp)}
         def compile_fixture(path=None):
             define=[] if path is None else ['-DVDT_RESOURCE_RUNTIME_FILE="'+str(path)+'"']
-            run(['xcrun','clang++','-std=c++17','-fobjc-arc','-fblocks','-O1','-Wall','-Wextra','-Werror','-Itests/native_stubs','-I.',
+            run(['xcrun','clang++','-std=gnu++98','-fobjc-arc','-fblocks','-O1','-Wall','-Wextra','-Werror','-Itests/native_stubs','-I.',
                 *define,*[ROOT/n for n in MM],*objects,'-framework','Foundation','-framework','CoreFoundation','-o',tmp/'fixture'])
         compile_fixture()
         subprocess.run([str(tmp/'fixture')],env=env,cwd=ROOT,check=True)

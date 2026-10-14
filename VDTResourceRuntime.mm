@@ -343,7 +343,7 @@ BOOL vdt_resource_apply(NSDictionary *rawTarget, const VDTMemoryRule *memory, co
         // Revocation is authorized by this lifetime's validated journal, not by
         // whether a newly edited rule still parses. Never let corrupt config
         // prevent a global off/removal request from undoing our own override.
-        effectiveMemory = {}; effectivePriority = {};
+        effectiveMemory = VDTMemoryRule(); effectivePriority = VDTJetsamRule();
         effectiveMemory.state = VDTPolicyRecordDisabled; effectivePriority.state = VDTPolicyRecordDisabled;
     }
     VDTApplyProgram program = VDTApplyBuildProgram([target[VDTTargetPidKey] intValue],
