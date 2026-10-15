@@ -4,8 +4,7 @@
 #import <Preferences/PSSpecifier.h>
 #import <Preferences/PSListController.h>
 
-PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model, BOOL detailed);
+PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model);
+UIColor *VDTCheckStateColor(NSString *tone);
 @interface VDTCheckResultCell : PSTableCell
-@end
-@interface VDTCheckDetailsController : PSListController
 @end

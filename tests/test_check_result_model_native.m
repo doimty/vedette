@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <errno.h>
 static unsigned checks;
 #define REQ(tag, ...) do { ++checks; if (!(__VA_ARGS__)) { fprintf(stderr, "CHECK_MODEL_FAIL:%s line %d\n", tag, __LINE__); abort(); } } while (0)
 static BOOL contains(NSString *text, NSString *fragment) { return [text rangeOfString:fragment].location != NSNotFound; }
@@ -13,11 +14,33 @@ static NSArray *project(NSDictionary *nice, NSDictionary *memory, NSDictionary *
         memory ?: @{@"enabled":@YES,@"active":@64,@"inactive":@128},
         priority ?: @{@"enabled":@YES,@"priority":@15},receipt,^NSString *(NSString *key) { return key; });
 }
+static NSString *fieldValue(NSDictionary *row, NSString *collection, NSString *identifier) {
+    for (NSDictionary *field in row[collection]) if ([field[@"id"] isEqual:identifier]) return field[@"value"];
+    return nil;
+}
+static NSString *detail(NSDictionary *row) {
+    NSMutableArray *lines = [NSMutableArray array];
+    for (NSDictionary *field in row[@"diagnosticFields"])
+        [lines addObject:[NSString stringWithFormat:@"%@: %@", field[@"label"], field[@"value"]]];
+    return [lines componentsJoinedByString:@"\n"];
+}
 static void checkShape(NSArray *rows) {
     REQ("three-rows", rows.count == 3);
     REQ("row-order", [rows[0][@"title"] isEqual:@"nice"] && [rows[1][@"title"] isEqual:@"Memory"] && [rows[2][@"title"] isEqual:@"Reclaim priority"]);
-    for (NSDictionary *row in rows) for (NSString *key in @[@"title",@"state",@"tone",@"summary",@"timestamp",@"details"])
-        REQ("string-fields", [row[key] isKindOfClass:NSString.class] && [row[key] length] > 0);
+    for (NSDictionary *row in rows) {
+        for (NSString *key in @[@"title",@"state",@"tone",@"summary",@"timestamp",@"scope"])
+            REQ("string-fields", [row[key] isKindOfClass:NSString.class] && [row[key] length] > 0);
+        REQ("stable-core-fields", [row[@"coreFields"] count] >= 6 && row[@"details"] == nil);
+        for (NSString *collection in @[@"coreFields", @"diagnosticFields"]) {
+            NSMutableSet *ids = [NSMutableSet set];
+            for (NSDictionary *field in row[collection]) {
+                REQ("field-shape", [field[@"value"] isKindOfClass:NSString.class] && [field[@"label"] length] > 0 && [field[@"id"] length] > 0);
+                REQ("field-id-unique", ![ids containsObject:field[@"id"]]); [ids addObject:field[@"id"]];
+            }
+        }
+        for (NSString *rawKey in @[@"code", @"errno", @"rawReadback", @"pid"])
+            REQ("raw-out-of-core", fieldValue(row,@"coreFields",rawKey) == nil);
+    }
 }
 int main(void) {
     @autoreleasepool {
@@ -25,9 +48,9 @@ int main(void) {
         NSDictionary *base = @{@"state":@"applied",@"memory":@"applied",@"priority":@"applied",@"memorySkip":@0,@"prioritySkip":@0,@"memoryObserved":@[@64,@1,@128,@1],@"priorityObserved":@15,@"checkedAt":@1700000005,@"pid":@42};
         NSArray *rows = project(nice,nil,nil,base); checkShape(rows);
         REQ("matched-side", [rows[1][@"state"] isEqual:@"Rule readback matched"] && [rows[2][@"state"] isEqual:@"Rule readback matched"]);
-        REQ("target-vs-readback", contains(rows[1][@"summary"],@"Saved target: 64 / 128 MiB") && contains(rows[1][@"summary"],@"Last read back: 64 / 128 MiB"));
-        REQ("hide-raw-pair", !contains(rows[1][@"summary"],@"Raw memory") && contains(rows[1][@"details"],@"[64, 1, 128, 1]"));
-        REQ("nice-detail-only", !contains(rows[0][@"summary"],@"errno") && contains(rows[0][@"details"],@"Original: 0") && contains(rows[0][@"details"],@"Pending targets: 0"));
+        REQ("target-vs-readback", contains(rows[1][@"summary"],@"Saved target (active / inactive): 64 / 128 MiB") && contains(rows[1][@"summary"],@"Last read back: 64 / 128 MiB"));
+        REQ("hide-raw-pair", !contains(rows[1][@"summary"],@"Raw memory") && contains(detail(rows[1]),@"[64, 1, 128, 1]"));
+        REQ("nice-detail-only", !contains(rows[0][@"summary"],@"errno") && contains(detail(rows[0]),@"Original: 0") && contains(detail(rows[0]),@"Pending targets: 0"));
         NSString *oldest = [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:1700000000]
             dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle];
         REQ("receipt-time", [rows[0][@"timestamp"] isEqual:[@"Last check: " stringByAppendingString:oldest]]);
@@ -36,6 +59,8 @@ int main(void) {
         [changed removeObjectForKey:@"priorityObserved"]; changed[@"prioritySkip"]=@3;
         rows=project(nice,nil,nil,changed);
         REQ("skip-not-success", [rows[2][@"state"] isEqual:@"Rule not applied"]);
+        REQ("skip-explanation", contains(fieldValue(rows[2], @"coreFields", @"policyNote"), @"policy skip") &&
+            contains(detail(rows[2]), @"policy skip"));
         REQ("skip-not-system", !contains(rows[2][@"state"],@"system") && [rows[1][@"tone"] isEqual:@"ok"]);
         REQ("missing-readback", contains(rows[2][@"summary"],@"Last read back: Not recorded"));
         changed[@"priority"]=@"conflict"; changed[@"prioritySkip"]=@0; changed[@"state"]=@"conflict";
@@ -45,6 +70,18 @@ int main(void) {
         changed=[base mutableCopy]; changed[@"state"]=@"conflict"; changed[@"memory"]=@"conflict";
         [changed removeObjectForKey:@"memoryObserved"]; rows=project(nice,nil,nil,changed);
         REQ("memory-conflict", [rows[1][@"tone"] isEqual:@"warning"] && [rows[2][@"state"] isEqual:@"Rule readback matched"]);
+        NSDictionary *sideReceipts = @{
+            @"state": @"partial", @"multipleInstances": @YES, @"instanceCount": @2,
+            @"sideReceipts": @{
+                @"memory": @{@"state": @"partial", @"memory": @"applied", @"memoryObserved": @[@64,@1,@128,@1],
+                    @"memoryCheckedAt": @1700000011, @"memoryEvidence": @"written-verified", @"pid": @42, @"checkedAt": @1700000011},
+                @"priority": @{@"state": @"partial", @"priority": @"conflict", @"priorityObserved": @21,
+                    @"priorityCheckedAt": @1700000012, @"priorityEvidence": @"read-before-conflict", @"pid": @43, @"checkedAt": @1700000012}
+            }
+        };
+        rows=project(nice,nil,nil,sideReceipts);
+        REQ("side-receipt-observed", [rows[2][@"state"] isEqual:@"Changed; not overwritten"] &&
+            contains(rows[2][@"summary"], @"Last read back: 21") && contains(detail(rows[2]), @"read-before-conflict"));
         changed=[base mutableCopy]; [changed removeObjectForKey:@"memory"]; [changed removeObjectForKey:@"priority"];
         rows=project(nice,nil,nil,changed);
         REQ("no-overall-fallback", [rows[1][@"state"] isEqual:@"Side result not recorded"] && [rows[2][@"state"] isEqual:@"Side result not recorded"]);
@@ -66,22 +103,37 @@ int main(void) {
         rows=project(nice,@{@"enabled":@YES,@"active":@64},nil,base);
         REQ("missing-field", contains(rows[1][@"summary"],@"Incomplete settings"));
         rows=project(nil,@{@"enabled":@NO,@"active":@64,@"inactive":@128},nil,nil);
-        REQ("disabled-not-applied", contains(rows[1][@"summary"],@"Saved target: Off") && ![rows[1][@"tone"] isEqual:@"ok"]);
+        REQ("disabled-not-applied", contains(rows[1][@"summary"],@"Saved target (active / inactive): Off") && ![rows[1][@"tone"] isEqual:@"ok"]);
         REQ("unknown-time", [rows[1][@"timestamp"] isEqual:@"Check time not recorded"]);
         changed=[base mutableCopy]; changed[@"multipleInstances"]=@YES;
         rows=project(nice,nil,nil,changed);
-        REQ("representative-only", contains(rows[1][@"summary"],@"selected instance only") && contains(rows[1][@"details"],@"Selected PID: 42"));
+        REQ("representative-only", contains(rows[1][@"scope"],@"selected instance only") && contains(detail(rows[1]),@"Selected PID: 42"));
         NSMutableDictionary *many=[nice mutableCopy]; many[@"targetCount"]=@2;
         rows=project(many,nil,nil,base);
-        REQ("nice-no-aggregate-value", contains(rows[0][@"summary"],@"Last read back: Not recorded") && contains(rows[0][@"summary"],@"individual readbacks unavailable"));
+        REQ("nice-no-aggregate-value", contains(rows[0][@"summary"],@"Last read back: Not recorded") && contains(rows[0][@"scope"],@"individual readbacks unavailable"));
         rows=project(@{@"state":@"write-failed",@"error":@13,@"pendingCount":@1,@"retryPending":@YES},nil,nil,base);
-        REQ("nice-failure", [rows[0][@"tone"] isEqual:@"warning"] && contains(rows[0][@"details"],@"errno: 13") && contains(rows[0][@"details"],@"Bounded retry pending"));
+        REQ("nice-failure", [rows[0][@"tone"] isEqual:@"warning"] && contains(detail(rows[0]),@"errno: 13") && contains(detail(rows[0]),@"Bounded retry pending"));
+        rows=project(@{@"state":@"receipt-unavailable",@"error":@(EFBIG),@"receiptUpdatedAt":@1700000000},nil,nil,base);
+        checkShape(rows);
+        REQ("nice-status-limit", [rows[0][@"state"] isEqual:@"Nice receipt exceeds size limit"] &&
+            [rows[0][@"tone"] isEqual:@"warning"] && !contains(rows[0][@"state"],@"write failed"));
+        REQ("nice-status-no-old-readback", contains(rows[0][@"summary"],@"Last read back: Not recorded"));
+        REQ("nice-status-no-check-time", [rows[0][@"timestamp"] isEqual:@"Check time not recorded"] &&
+            [fieldValue(rows[0],@"coreFields",@"checkTime") isEqual:@"Not recorded"] &&
+            [fieldValue(rows[0],@"coreFields",@"readTime") isEqual:@"Not recorded"]);
+        REQ("nice-status-save-time", [fieldValue(rows[0],@"diagnosticFields",@"receiptTime") isEqual:oldest]);
+        REQ("nice-status-no-journal-error", ![rows[0][@"state"] isEqual:@"Nice state store failed"] &&
+            ![rows[0][@"scope"] isEqual:@"No verified running instance"]);
+        rows=project(@{@"state":@"receipt-unavailable",@"error":@(EIO)},nil,nil,base);
+        REQ("nice-status-generic", [rows[0][@"state"] isEqual:@"Nice receipt unavailable"] && [rows[0][@"tone"] isEqual:@"warning"]);
+        rows=project(@{@"state":@"receipt-unavailable",@"error":@YES},nil,nil,base);
+        REQ("nice-status-bool-not-code", [rows[0][@"state"] isEqual:@"Nice receipt unavailable"]);
         rows=project(nil,nil,nil,@{@"state":@"unsupported",@"memorySkip":@3,@"prioritySkip":@3});
         REQ("policy-vs-backend", [rows[1][@"state"] isEqual:@"Rule not applied"]);
         rows=project(nil,nil,nil,@{@"state":@"unsupported"});
         REQ("backend-unavailable", [rows[1][@"state"] isEqual:@"Write backend unavailable"]);
         rows=project(nil,nil,nil,@{@"state":@"store-error",@"storeError":@22});
-        REQ("store-error", [rows[1][@"state"] isEqual:@"Resource journal unavailable"] && contains(rows[1][@"details"],@"errno: 22"));
+        REQ("store-error", [rows[1][@"state"] isEqual:@"Resource journal unavailable"] && contains(detail(rows[1]),@"Storage errno: 22"));
         rows=project(nil,nil,nil,@{@"state":@"write-disabled",@"memorySkip":@1,@"prioritySkip":@1});
         REQ("paused", [rows[1][@"state"] isEqual:@"Resource rules are paused"]);
         for (id malformed in @[[NSNull null],@[],@"not a dictionary",@42]) {
@@ -96,9 +148,9 @@ int main(void) {
         rows=VDTCheckResultModels(@{@"requestedEnabled":@YES,@"valid":@YES,@"value":@(UINT32_MAX)},nice,nil,nil,nil,nil);
         REQ("no-integer-narrowing", contains(rows[0][@"summary"],@"Incomplete settings"));
         rows=project(@{@"state":@"applied",@"current":@10},nil,nil,base);
-        REQ("old-current-is-historical", contains(rows[0][@"summary"],@"Last read back: 10"));
+        REQ("current-is-not-history", contains(rows[0][@"summary"],@"Last read back: Not recorded"));
         rows=VDTCheckResultModels(nil,nil,nil,nil,nil,^NSString *(NSString *key) { return [@"L:" stringByAppendingString:key]; });
-        REQ("localization", [rows[1][@"title"] isEqual:@"L:Memory"] && contains(rows[1][@"summary"],@"L:Saved target:"));
+        REQ("localization", [rows[1][@"title"] isEqual:@"L:Memory"] && contains(rows[1][@"summary"],@"L:Saved target (active / inactive):"));
         printf("PASS check-result model: %u checks; Foundation only, no UIKit or device IO\n",checks);
     }
     return 0;

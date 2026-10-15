@@ -3,12 +3,21 @@
 #import "VDTStyle.h"
 #import "VDTLocalization.h"
 
-PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model, BOOL detailed) {
+UIColor *VDTCheckStateColor(NSString *tone) {
+    if ([tone isEqual:@"ok"]) return VDTAccentColor();
+    if ([tone isEqual:@"plain"]) return UIColor.labelColor;
+    if ([tone isEqual:@"warning"]) return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+        return traits.userInterfaceStyle == UIUserInterfaceStyleDark
+            ? [UIColor colorWithRed:1 green:0.624 blue:0.039 alpha:1]
+            : [UIColor colorWithRed:0.604 green:0.302 blue:0 alpha:1];
+    }];
+    return UIColor.secondaryLabelColor;
+}
+PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
     PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil
         detail:nil cell:PSStaticTextCell edit:nil];
     [row setProperty:VDTCheckResultCell.class forKey:@"cellClass"];
     [row setProperty:@YES forKey:@"vdtCheckResult"];
-    [row setProperty:@(detailed) forKey:@"vdtCheckDetailed"];
     [row setProperty:[model copy] forKey:@"vdtCheckModel"];
     return row;
 }
@@ -17,6 +26,7 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model, BOOL detailed) {
 @property(nonatomic, strong) UILabel *checkState;
 @property(nonatomic, strong) UILabel *checkSummary;
 @property(nonatomic, strong) UILabel *checkTime;
+@property(nonatomic, strong) UILabel *checkScope;
 @property(nonatomic, strong) UIStackView *heading;
 @end
 @implementation VDTCheckResultCell
@@ -27,8 +37,8 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model, BOOL detailed) {
     self.textLabel.hidden = YES;
     self.detailTextLabel.hidden = YES;
     self.checkTitle = [UILabel new]; self.checkState = [UILabel new];
-    self.checkSummary = [UILabel new]; self.checkTime = [UILabel new];
-    for (UILabel *label in @[self.checkTitle, self.checkState, self.checkSummary, self.checkTime]) {
+    self.checkSummary = [UILabel new]; self.checkTime = [UILabel new]; self.checkScope = [UILabel new];
+    for (UILabel *label in @[self.checkTitle, self.checkState, self.checkSummary, self.checkTime, self.checkScope]) {
         label.numberOfLines = 0;
         label.adjustsFontForContentSizeCategory = YES;
         label.isAccessibilityElement = NO;
@@ -40,11 +50,13 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model, BOOL detailed) {
     self.checkTitle.textColor = UIColor.labelColor;
     self.checkSummary.textColor = UIColor.secondaryLabelColor;
     self.checkTime.textColor = UIColor.secondaryLabelColor;
+    self.checkScope.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    self.checkScope.textColor = UIColor.secondaryLabelColor;
     [self.checkTitle setContentHuggingPriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
     [self.checkState setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     self.heading = [[UIStackView alloc] initWithArrangedSubviews:@[self.checkTitle, self.checkState]];
     self.heading.spacing = 12;
-    UIStackView *column = [[UIStackView alloc] initWithArrangedSubviews:@[self.heading, self.checkSummary, self.checkTime]];
+    UIStackView *column = [[UIStackView alloc] initWithArrangedSubviews:@[self.heading, self.checkSummary, self.checkTime, self.checkScope]];
     column.axis = UILayoutConstraintAxisVertical; column.spacing = 5;
     column.translatesAutoresizingMaskIntoConstraints = NO;
     [self.contentView addSubview:column];
@@ -58,12 +70,26 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model, BOOL detailed) {
     [self updateCheck:specifier];
     return self;
 }
-- (void)updateHeadingLayout {
-    BOOL large = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
+- (void)updateHeadingForWidth:(CGFloat)width {
+    CGFloat available = MAX(0, width - 32);
+    CGFloat needed = [self.checkTitle sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width
+        + [self.checkState sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width + self.heading.spacing;
+    BOOL large = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory)
+        || (available > 0 && needed > available);
     self.heading.axis = large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
     self.heading.alignment = large ? UIStackViewAlignmentFill : UIStackViewAlignmentFirstBaseline;
     BOOL rtl = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
     self.checkState.textAlignment = large ? NSTextAlignmentNatural : (rtl ? NSTextAlignmentLeft : NSTextAlignmentRight);
+}
+- (void)updateHeadingLayout { [self updateHeadingForWidth:self.contentView.bounds.size.width]; }
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self updateHeadingLayout];
+}
+- (CGSize)systemLayoutSizeFittingSize:(CGSize)size withHorizontalFittingPriority:(UILayoutPriority)horizontal
+    verticalFittingPriority:(UILayoutPriority)vertical {
+    [self updateHeadingForWidth:size.width];
+    return [super systemLayoutSizeFittingSize:size withHorizontalFittingPriority:horizontal verticalFittingPriority:vertical];
 }
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
     [super traitCollectionDidChange:previous];
@@ -72,57 +98,20 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model, BOOL detailed) {
 - (void)updateCheck:(PSSpecifier *)specifier {
     NSDictionary *model = [specifier propertyForKey:@"vdtCheckModel"];
     if (![model isKindOfClass:NSDictionary.class]) model = @{};
-    BOOL detailed = [[specifier propertyForKey:@"vdtCheckDetailed"] boolValue];
     self.checkTitle.text = model[@"title"];
     self.checkState.text = model[@"state"];
-    self.checkSummary.text = model[detailed ? @"details" : @"summary"];
+    self.checkSummary.text = model[@"summary"];
     self.checkTime.text = model[@"timestamp"];
-    self.checkTime.hidden = detailed;
-    NSString *tone = model[@"tone"];
-    self.checkState.textColor = [tone isEqual:@"ok"] ? VDTAccentColor() :
-        ([tone isEqual:@"warning"] ? UIColor.systemOrangeColor : UIColor.secondaryLabelColor);
+    self.checkScope.text = model[@"scope"];
+    self.checkScope.hidden = self.checkScope.text.length == 0;
+    self.checkState.textColor = VDTCheckStateColor(model[@"tone"]);
+    [self updateHeadingLayout];
     self.isAccessibilityElement = YES;
     self.accessibilityLabel = [@[self.checkTitle.text ?: @"", self.checkState.text ?: @"",
-        self.checkSummary.text ?: @"", detailed ? @"" : (self.checkTime.text ?: @"")] componentsJoinedByString:@", "];
+        self.checkSummary.text ?: @"", self.checkTime.text ?: @"", self.checkScope.text ?: @""] componentsJoinedByString:@", "];
 }
 - (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
     [super refreshCellContentsWithSpecifier:specifier];
     [self updateCheck:specifier];
-}
-@end
-
-@implementation VDTCheckDetailsController
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.title = VDTLoc(self.class, @"Check details");
-    VDTStyleTable(self.table);
-}
-- (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
-- (NSArray *)specifiers {
-    if (!_specifiers) {
-        NSMutableArray *rows = [NSMutableArray array];
-        PSSpecifier *group = [PSSpecifier emptyGroupSpecifier];
-        [group setProperty:VDTLoc(self.class, @"Historical receipt, not live monitoring. Refresh only reloads saved results.") forKey:@"footerText"];
-        [rows addObject:group];
-        id models = [self.specifier propertyForKey:@"vdtCheckModels"];
-        if ([models isKindOfClass:NSArray.class])
-            for (id model in models)
-                if ([model isKindOfClass:NSDictionary.class]) [rows addObject:VDTCheckResultSpecifier(model, YES)];
-        _specifiers = rows;
-    }
-    return _specifiers;
-}
-- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    if ([[[self specifierAtIndexPath:indexPath] propertyForKey:@"vdtCheckResult"] boolValue]) return UITableViewAutomaticDimension;
-    return [super tableView:tableView heightForRowAtIndexPath:indexPath];
-}
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [super tableView:tableView cellForRowAtIndexPath:indexPath];
-    VDTStyleCell(cell); return cell;
-}
-- (void)traitCollectionDidChange:(UITraitCollection *)previous {
-    [super traitCollectionDidChange:previous];
-    if (previous && ![previous.preferredContentSizeCategory isEqual:self.traitCollection.preferredContentSizeCategory])
-        [self.table reloadData];
 }
 @end

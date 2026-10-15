@@ -5,9 +5,9 @@
 extern "C" {
 #endif
 typedef NSString *(^VDTCheckLocalizer)(NSString *key);
-// Pure display projection. Inputs are already selected rules / matching historical
-// receipts, never live observations. Each of the three rows has string fields
-// title, state, tone, summary, timestamp and details. No file, preference or kernel IO.
+// Pure historical display projection. Each row has title/state/tone/summary,
+// timestamp and scope, plus stable coreFields/diagnosticFields arrays. Fields
+// have id/label/value/tone. No current-observation fallback or file/kernel IO.
 NSArray<NSDictionary *> *VDTCheckResultModels(NSDictionary *niceRule, NSDictionary *niceReceipt,
     NSDictionary *memoryRule, NSDictionary *jetsamRule, NSDictionary *resourceReceipt,
     VDTCheckLocalizer localize);

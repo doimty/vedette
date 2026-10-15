@@ -2,6 +2,8 @@
 #import "VDTCheckResultsPreferences.h"
 #import "VDTCheckResultModel.h"
 #import "VDTCheckResultCell.h"
+#import "VDTCheckResultReader.h"
+#import "VDTCheckDetailsController.h"
 #import "VDTProcessConfiguration.h"
 #import "VDTNicePreferences.h"
 #import "VDTLocalization.h"
@@ -49,37 +51,22 @@
     id host = metadata[@"containingAppIdentifier"];
     return [host isKindOfClass:NSString.class] && [host length] ? host : nil;
 }
-- (NSDictionary *)resourceRule:(NSString *)section identifier:(NSString *)identifier type:(VDTConfigType)type
-    host:(NSString *)host prefs:(NSDictionary *)prefs {
-    // Match execution's presence-first extension inheritance. An own disabled
-    // or invalid record still blocks its host; use only cached verified metadata.
-    NSString *source = identifier; VDTConfigType sourceType = type;
-    if (!VDTHasProcessResourceRule(source, sourceType, section, prefs)) {
-        if (type != VDTConfigTypeExtension || !host || !VDTHasProcessResourceRule(host, VDTConfigTypeApp, section, prefs)) return nil;
-        source = host; sourceType = VDTConfigTypeApp;
-    }
-    NSMutableDictionary *rule = [NSMutableDictionary dictionary];
-    for (NSString *key in @[@"enabled", @"schema", @"active", @"inactive", @"priority", @"sourceDarwinMajor"]) {
-        id value = valueForProcessResourceRuleKeyWithPrefs(source, key, nil, sourceType, section, prefs);
-        if (value) rule[key] = value;
-    }
-    return rule;
+- (NSDictionary *)checkContext {
+    NSString *identifier = [_owner vdtNiceIdentifier];
+    if (![identifier isKindOfClass:NSString.class] || !identifier.length) return @{};
+    VDTConfigType type = [_owner vdtNiceConfigurationType];
+    NSString *host = type == VDTConfigTypeExtension ? [self verifiedHostForIdentifier:identifier] : nil;
+    NSMutableDictionary *context = [@{@"identifier": identifier, @"type": @(type),
+        @"nicePending": @(_nicePending)} mutableCopy];
+    if (host) context[@"host"] = host;
+    return [context copy];
 }
 - (void)reloadModels {
     if (!_owner || !_resultRows.count) return;
-    NSDictionary *prefs = getPrefs();
-    if (![prefs isKindOfClass:NSDictionary.class]) prefs = @{};
-    NSString *identifier = [_owner vdtNiceIdentifier];
-    VDTConfigType type = [_owner vdtNiceConfigurationType];
-    NSString *host = type == VDTConfigTypeExtension ? [self verifiedHostForIdentifier:identifier] : nil;
-    NSDictionary *niceRule = VDTNiceEffectiveRule(identifier, type, host, prefs);
-    NSDictionary *niceReceipt = _nicePending ? nil : VDTNiceMatchingStatusWithHost(identifier, type, host, prefs);
-    NSDictionary *resourceReceipt = VDTResourceMatchingStatus(identifier, type, prefs);
-    NSArray *models = VDTCheckResultModels(niceRule, niceReceipt,
-        [self resourceRule:@"memoryRules" identifier:identifier type:type host:host prefs:prefs],
-        [self resourceRule:@"jetsamRules" identifier:identifier type:type host:host prefs:prefs], resourceReceipt,
+    NSDictionary *context = [self checkContext];
+    NSArray *models = VDTReadCheckResultModels(context, _nicePending,
         ^NSString *(NSString *key) { return VDTLoc(self.class, key); });
-    [_details setProperty:[models copy] forKey:@"vdtCheckModels"];
+    [_details setProperty:context forKey:@"vdtCheckContext"];
     for (NSUInteger index = 0; index < _resultRows.count; index++) {
         PSSpecifier *row = _resultRows[index];
         [row setProperty:models[index] forKey:@"vdtCheckModel"];
@@ -98,7 +85,7 @@
         [rows addObject:group];
         NSMutableArray *results = [NSMutableArray array];
         for (NSUInteger index = 0; index < 3; index++) {
-            PSSpecifier *result = VDTCheckResultSpecifier(@{}, NO);
+            PSSpecifier *result = VDTCheckResultSpecifier(@{});
             [results addObject:result]; [rows addObject:result];
         }
         _resultRows = [results copy];

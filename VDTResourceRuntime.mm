@@ -141,11 +141,55 @@ static BOOL resourceGone(NSDictionary *target) {
          observed.microseconds != [target[VDTTargetStartMicrosecondsKey] unsignedLongLongValue]);
     return size <= 0 && errno == ESRCH;
 }
+// Receipt-only helpers. They never change recovery records or retry state.
+static NSNumber *resourceReceiptTime(void) {
+    int saved = errno;
+    NSNumber *value = @(NSDate.date.timeIntervalSince1970);
+    errno = saved; return value;
+}
+static void resourceReceiptRead(NSMutableDictionary *detail, NSString *name, id value,
+    NSNumber *startedAt, NSNumber *recordedAt, NSString *evidence) {
+    int saved = errno;
+    detail[[name stringByAppendingString:@"Observed"]] = value;
+    detail[[name stringByAppendingString:@"ObservedAt"]] = recordedAt;
+    detail[[name stringByAppendingString:@"ReadStartedAt"]] = startedAt;
+    detail[[name stringByAppendingString:@"Evidence"]] = evidence;
+    errno = saved;
+}
+static NSUInteger resourceReceiptRank(NSDictionary *row, NSString *side) {
+    if ([row[@"state"] isEqual:@"store-error"]) return 0;
+    NSString *state = row[side];
+    NSArray *failures = @[@"store-error", @"conflict", @"read-failed", @"unverified", @"restore-pending", @"pending"];
+    NSUInteger rank = [failures indexOfObject:state ?: @""];
+    if (rank != NSNotFound) return rank;
+    if ([state isEqual:@"applied"] || [state isEqual:@"restored"]) return 20;
+    NSInteger skip = [row[[side stringByAppendingString:@"Skip"]] integerValue];
+    if (skip == VDTApplySkipConflict) return 1;
+    if (skip == VDTApplySkipReadbackFailed || skip == VDTApplySkipIdentity) return 2;
+    if (skip != VDTApplySkipNone && skip != VDTApplySkipNoWrite) return 6;
+    if ([row[@"state"] isEqual:@"pending"] || [row[@"state"] isEqual:@"partial"] ||
+        [row[@"state"] isEqual:@"unsupported"]) return 7;
+    return 10; // missing evidence must not be hidden behind another instance's success
+}
+static NSDictionary *resourceSideReceipt(NSDictionary *row, NSString *side) {
+    NSMutableDictionary *value = [NSMutableDictionary dictionary];
+    for (NSString *key in @[@"state", @"pid", @"checkedAt", @"startSeconds", @"startMicroseconds"])
+        if (row[key]) value[key] = row[key];
+    if (row[side]) value[side] = row[side];
+    for (NSString *suffix in @[@"Skip", @"PlanSkip", @"ExecutionSkip", @"ExecutionOutcome", @"ExecutorRan",
+        @"Target", @"Action", @"CheckedAt", @"Observed", @"ObservedAt", @"ReadStartedAt", @"Evidence", @"Error"] ) {
+        NSString *key = [side stringByAppendingString:suffix];
+        if (row[key]) value[key] = row[key];
+    }
+    return value;
+}
 static void resourceRow(NSDictionary *target, NSString *state, NSDictionary *detail) {
     NSString *key = VDTNiceRuleKey((VDTConfigType)[target[VDTConfigTypeKey] unsignedIntegerValue], target[VDTTargetNameKey]);
     if (!key) return;
     NSMutableDictionary *row = [@{@"state": state, @"pid": target[VDTTargetPidKey],
-        @"checkedAt": @(NSDate.date.timeIntervalSince1970)} mutableCopy];
+        @"checkedAt": resourceReceiptTime(), @"boot": resourceBoot ?: @"",
+        @"type": target[VDTConfigTypeKey], @"identifier": target[VDTTargetNameKey],
+        @"startSeconds": target[VDTTargetStartSecondsKey], @"startMicroseconds": target[VDTTargetStartMicrosecondsKey]} mutableCopy];
     if (detail) [row addEntriesFromDictionary:detail];
     // Same-instance recovery replaces its own error. Successful sibling
     // instances cannot conceal an unresolved error from another lifetime.
@@ -164,6 +208,22 @@ static void resourceRow(NSDictionary *target, NSString *state, NSDictionary *det
     }
     NSMutableDictionary *aggregate = [selected mutableCopy];
     if (instances.count > 1) aggregate[@"multipleInstances"] = @YES;
+    aggregate[@"instanceCount"] = @(instances.count);
+    // Keep the legacy overall representative, but select each side separately.
+    // An instance with a priority conflict cannot conceal a sibling's memory failure.
+    NSMutableDictionary *sides = [NSMutableDictionary dictionary];
+    NSArray *ordered = [instances.allKeys sortedArrayUsingSelector:@selector(compare:)];
+    for (NSString *side in @[@"memory", @"priority"]) {
+        NSDictionary *worst = nil;
+        NSUInteger worstRank = NSNotFound;
+        for (NSString *key in ordered) {
+            NSDictionary *candidate = instances[key];
+            NSUInteger candidateRank = resourceReceiptRank(candidate, side);
+            if (!worst || candidateRank < worstRank) { worst = candidate; worstRank = candidateRank; }
+        }
+        sides[side] = resourceSideReceipt(worst ?: row, side);
+    }
+    if (instances.count > 1) aggregate[@"sideReceipts"] = sides;
     resourceRows[key] = aggregate;
 }
 static void resourceForgetRetries(NSString *instance) {
@@ -201,15 +261,28 @@ static BOOL resourceExecuteSide(NSDictionary *target, NSMutableDictionary *recor
     VDTResourceSystemContext *context, NSMutableDictionary *detail) {
     BOOL memory = [name isEqual:@"memory"], restore = op->kind == VDTOpKindRestoreMemory || op->kind == VDTOpKindRestorePriority;
     NSString *attemptKey = resourceAttemptKey(instance, name, op->kind);
+    detail[[name stringByAppendingString:@"CheckedAt"]] = resourceReceiptTime();
+    detail[[name stringByAppendingString:@"ExecutorRan"]] = @NO;
+    detail[[name stringByAppendingString:@"Action"]] = restore ? @"restore" : @"apply";
+    id receiptTarget = restore ? record[name][@"original"] : (memory ? resourcePair(op->pair) : @(op->priorityBand));
+    if (receiptTarget) detail[[name stringByAppendingString:@"Target"]] = receiptTarget;
     NSUInteger count = [resourceAttempts[attemptKey] unsignedIntegerValue];
     if ([resourceDue[attemptKey] doubleValue] > resourceNow()) { detail[name] = @"pending"; return NO; }
     [resourceDue removeObjectForKey:attemptKey];
+    NSNumber *readStartedAt = resourceReceiptTime();
     pid_t pid = [target[VDTTargetPidKey] intValue]; errno = 0;
     id current = resourceObserve(backend, context, pid, memory);
+    int readError = errno;
+    NSNumber *readRecordedAt = resourceReceiptTime();
     if (!current) {
         if (count < 3) resourceAttempts[attemptKey] = @(count + 1);
-        resourceRetry(attemptKey, errno ?: EIO); detail[name] = @"read-failed"; return NO;
+        resourceRetry(attemptKey, readError ?: EIO);
+        detail[name] = @"read-failed";
+        detail[[name stringByAppendingString:@"Error"]] = @(readError ?: EIO);
+        detail[[name stringByAppendingString:@"ExecutionSkip"]] = @(VDTApplySkipReadbackFailed);
+        return NO;
     }
+    resourceReceiptRead(detail, name, current, readStartedAt, readRecordedAt, @"read-before-execution");
     NSMutableDictionary *side = [record[name] mutableCopy];
     if (side) {
         BOOL atLast = [current isEqual:side[@"last"]];
@@ -221,6 +294,8 @@ static BOOL resourceExecuteSide(NSDictionary *target, NSMutableDictionary *recor
             detail[name] = @"restored"; return resourcePersist();
         }
         if (!atLast && !atWanted) {
+            detail[[name stringByAppendingString:@"ExecutionSkip"]] = @(VDTApplySkipConflict);
+            detail[[name stringByAppendingString:@"Evidence"]] = @"read-before-conflict";
             side[@"phase"] = @"conflict"; record[name] = side; resourceRecords[instance] = record;
             resourcePersist(); detail[name] = @"conflict"; return NO;
         }
@@ -243,6 +318,7 @@ static BOOL resourceExecuteSide(NSDictionary *target, NSMutableDictionary *recor
         if (record[@"memory"] || record[@"priority"]) resourceRecords[instance] = record;
         else [resourceRecords removeObjectForKey:instance];
         detail[name] = restore ? @"restored" : @"applied"; detail[[name stringByAppendingString:@"Observed"]] = current;
+        detail[[name stringByAppendingString:@"Evidence"]] = @"matched-without-set";
         [resourceAttempts removeObjectForKey:attemptKey]; return resourcePersist();
     }
     if (count >= 3) { detail[name] = @"pending"; return NO; }
@@ -264,9 +340,15 @@ static BOOL resourceExecuteSide(NSDictionary *target, NSMutableDictionary *recor
         bound.hasLastPriority = true; bound.lastPriority = [current intValue];
     }
     VDTApplyProgram program = {}; program.pid = pid; program.opCount = 1; program.ops[0] = *op;
+    NSNumber *executionStartedAt = resourceReceiptTime();
     errno = 0; VDTApplyReport report = VDTApplyExecute(&program, &bound, backend, context); int error = errno;
+    NSNumber *executionRecordedAt = resourceReceiptTime();
     VDTApplyOutcome outcome = memory ? report.memoryOutcome : report.jetsamOutcome;
     VDTApplySkip skip = memory ? report.memorySkip : report.jetsamSkip;
+    detail[[name stringByAppendingString:@"ExecutorRan"]] = @YES;
+    detail[[name stringByAppendingString:@"ExecutionSkip"]] = @(skip);
+    detail[[name stringByAppendingString:@"ExecutionOutcome"]] = @(outcome);
+    detail[[name stringByAppendingString:@"Error"]] = @(error);
     BOOL hasAfter = memory ? report.afterMemlimit.hasValue : report.afterPriority.hasValue;
     id after = hasAfter ? (memory ? resourcePair(report.afterMemlimit.pair) : @(report.afterPriority.priority)) : nil;
     BOOL identity = report.identityPostMatched;
@@ -289,7 +371,21 @@ static BOOL resourceExecuteSide(NSDictionary *target, NSMutableDictionary *recor
         } else { detail[name] = @"pending"; resourceRetry(attemptKey, error ?: EIO); }
         record[name] = side;
     }
-    if (validAfter) detail[[name stringByAppendingString:@"Observed"]] = after;
+    if (skip == VDTApplySkipIdentity) {
+        // Do not attach an operation's readback to an instance whose identity was lost.
+        for (NSString *suffix in @[@"Observed", @"ObservedAt", @"ReadStartedAt"])
+            [detail removeObjectForKey:[name stringByAppendingString:suffix]];
+        detail[[name stringByAppendingString:@"Evidence"]] = @"identity-unavailable";
+    } else if (validAfter) {
+        resourceReceiptRead(detail, name, after, executionStartedAt, executionRecordedAt,
+            good ? @"written-verified" : @"written-unconfirmed");
+    } else {
+        BOOL hasBefore = memory ? report.beforeMemlimit.hasValue : report.beforePriority.hasValue;
+        id before = hasBefore ? (memory ? resourcePair(report.beforeMemlimit.pair) : @(report.beforePriority.priority)) : nil;
+        if (before && report.identityPreMatched && resourceValueValid(before, memory))
+            resourceReceiptRead(detail, name, before, executionStartedAt, executionRecordedAt,
+                skip == VDTApplySkipConflict ? @"read-before-conflict" : @"read-before-execution");
+    }
     if (record[@"memory"] || record[@"priority"]) resourceRecords[instance] = record;
     else [resourceRecords removeObjectForKey:instance];
     return resourcePersist() && good && identity;
@@ -348,7 +444,8 @@ BOOL vdt_resource_apply(NSDictionary *rawTarget, const VDTMemoryRule *memory, co
     }
     VDTApplyProgram program = VDTApplyBuildProgram([target[VDTTargetPidKey] intValue],
         &effectiveMemory, &effectivePriority, darwinMajor, record[@"memory"] != nil, record[@"priority"] != nil, capabilities);
-    NSMutableDictionary *detail = [@{@"memorySkip": @(program.memorySkip), @"prioritySkip": @(program.jetsamSkip)} mutableCopy];
+    NSMutableDictionary *detail = [@{@"memorySkip": @(program.memorySkip), @"prioritySkip": @(program.jetsamSkip),
+        @"memoryPlanSkip": @(program.memorySkip), @"priorityPlanSkip": @(program.jetsamSkip)} mutableCopy];
     if (!program.opCount) {
         NSString *state = (!resourceWrites || resourcePaused) ? @"write-disabled" :
             ((program.memorySkip == VDTApplySkipUnsupported || program.jetsamSkip == VDTApplySkipUnsupported) ? @"unsupported" : @"no-write");
@@ -401,6 +498,15 @@ void vdt_resource_publish(void) {
         @"recordCount": @(resourceRecords.count), @"storeError": @(resourceStoreError ?: resourceControlError), @"paused": @(resourcePaused),
         @"restoreNonce": resourceRestoreNonce ?: @"", @"rows": resourceRows ?: @{}};
     NSData *data = [NSPropertyListSerialization dataWithPropertyList:receipt format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+    if (!data || data.length > VDT_NICE_STORE_LIMIT) {
+        // Keep the status file readable and explicit; never silently publish a
+        // truncated receipt or report a success that lost its evidence.
+        receipt = @{ @"version": @1, @"boot": resourceBoot, @"configuration": resourceConfiguration,
+            @"recordCount": @(resourceRecords.count), @"storeError": @(EFBIG),
+            @"paused": @(resourcePaused), @"restoreNonce": resourceRestoreNonce ?: @"", @"rows": @{} };
+        data = [NSPropertyListSerialization dataWithPropertyList:receipt
+            format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+    }
     if (!data || data.length > VDT_NICE_STORE_LIMIT) return;
     VDTNiceStore store;
     if (VDTNiceStoreOpen(VDTResourceStateDirectory().fileSystemRepresentation, 1, &store)) return;

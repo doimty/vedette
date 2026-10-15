@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <notify.h>
+#include <stdint.h>
 // The production CPU resolver is intentionally not linked into these tests.
 NSString * const VDTConfigTypeKey = @"type";
 NSString * const VDTTargetPidKey = @"pid";
@@ -43,11 +45,33 @@ static BOOL fakeCurrent(NSDictionary *target) { (void)target; return !missing &&
 #define setpriority fakeSet
 #define proc_pidinfo fakeInfo
 #define vdt_target_is_current fakeCurrent
+// Status-receipt interception, scoped to this translation unit only. The real
+// declarations are included above so the shared headers are never rewritten by
+// a macro, both wrappers call the real C functions, and the separately compiled
+// VDTNiceShared.mm keeps its own unredirected calls.
+static int statusWriteCalls, statusWriteFail, statusNotifyCount;
+static __typeof__(&notify_post) const vdtRealNotifyPost = &notify_post;
+static uint32_t vdtTestNotifyPost(const char *name) {
+    if (name && !strcmp(name, VDT_NICE_RESULTS_NOTIFICATION)) ++statusNotifyCount;
+    return vdtRealNotifyPost(name);
+}
+static int (*const vdtRealStoreWrite)(VDTNiceStore *, const char *, const void *, size_t) = &VDTNiceStoreWrite;
+static int vdtTestStoreWrite(VDTNiceStore *store, const char *name, const void *bytes, size_t length) {
+    if (name && !strcmp(name, VDT_NICE_STATUS)) {
+        ++statusWriteCalls;
+        if (statusWriteFail) return EIO;
+    }
+    return vdtRealStoreWrite(store, name, bytes, length);
+}
+#define notify_post(name) vdtTestNotifyPost(name)
+#define VDTNiceStoreWrite(store, name, bytes, length) vdtTestStoreWrite(store, name, bytes, length)
 #import "../VDTNiceRuntime.mm"
 #undef getpriority
 #undef setpriority
 #undef proc_pidinfo
 #undef vdt_target_is_current
+#undef notify_post
+#undef VDTNiceStoreWrite
 
 static NSTimeInterval testRetryNow = 10;
 static int fixtureStoreError, fixtureStoreCalls;
@@ -60,6 +84,30 @@ static int fixtureStoreError, fixtureStoreCalls;
     return fixtureStoreError ?: [super save:r target:t];
 }
 @end
+
+// Byte-level and deep-plist views of the store used by the receipt tests.
+static NSDictionary *statusFile(VDTNiceCoordinator *c) {
+    int error = 0;
+    NSDictionary *plist = readPlist(&c->store, VDT_NICE_STATUS, &error);
+    return error ? nil : plist;
+}
+static NSData *stateBytes(const char *name) {
+    return [NSData dataWithContentsOfFile:[VDTNiceStateDirectory()
+        stringByAppendingPathComponent:[NSString stringWithUTF8String:name]]];
+}
+static NSData *statusBytes(void) { return stateBytes(VDT_NICE_STATUS); }
+static NSData *journalBytes(void) { return stateBytes(VDT_NICE_JOURNAL); }
+// Deep immutable copy of an in-memory snapshot: a receipt publish must not
+// rewrite the journal-backed state it is only reading.
+static id plistSnapshot(id object) {
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:object
+        format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+    if (!data) return nil;
+    return [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
+}
+static NSArray *setSnapshot(NSSet *set) {
+    return [set.allObjects sortedArrayUsingSelector:@selector(compare:)];
+}
 
 static unsigned assertions;
 #define REQUIRE(x) do { ++assertions; if (!(x)) { fprintf(stderr,"native line %d: %s\n",__LINE__,#x); abort(); } } while (0)
@@ -76,6 +124,7 @@ static void clearFixture(void) {
     [[NSFileManager defaultManager] removeItemAtPath:VDTNiceStateDirectory() error:nil];
     niceNow = -1; writeCount = readCount = writeError = readError = 0;
     fixtureStoreError = fixtureStoreCalls = 0;
+    statusWriteFail = 0;
     missing = unavailable = reused = ignoreWrite = NO;
 }
 static void cycle(VDTNiceCoordinator *c, NSDictionary *p) {
@@ -250,6 +299,243 @@ int main(void) {
         REQUIRE([broken writeToFile:PREFS_PATH atomically:YES]);
         REQUIRE(!VDTNiceSavePreference(@"test-worker",VDTConfigTypeDaemon,VDT_NICE_VALUE_KEY,@5,&saveError));
         REQUIRE([[NSData dataWithContentsOfFile:PREFS_PATH] isEqual:broken]);
+        // ---- nice status receipt degradation (compact downgrade) -------------
+        // The status file is a rebuildable display cache: the generic writer
+        // stays fail-closed, the receipt writer degrades an oversized cache to a
+        // small boot-bound EFBIG envelope, and the reader never repairs an
+        // unreadable cache with an older success row.
+        clearFixture(); c = [VDTNiceCoordinator new];
+        NSMutableArray *daemons = [prefs(YES,5,@"compact-a")[@"daemonConfigs"] mutableCopy];
+        [daemons addObject:@{@"daemonName": @"idle-worker", @"enabled": @NO,
+            VDT_NICE_ENABLED_KEY: @NO, VDT_NICE_VALUE_KEY: @3, VDT_NICE_REVISION_KEY: @"compact-idle"}];
+        [daemons addObject:@{@"daemonName": @"idle-worker-2", @"enabled": @NO,
+            VDT_NICE_ENABLED_KEY: @YES, VDT_NICE_VALUE_KEY: @4, VDT_NICE_REVISION_KEY: @"compact-idle-2"}];
+        [daemons addObject:@{@"daemonName": @"broken-worker", @"enabled": @NO,
+            VDT_NICE_ENABLED_KEY: @YES, VDT_NICE_VALUE_KEY: @YES, VDT_NICE_REVISION_KEY: @"compact-bad"}];
+        [daemons addObject:@{@"daemonName": @"launchd", @"enabled": @NO,
+            VDT_NICE_ENABLED_KEY: @YES, VDT_NICE_VALUE_KEY: @0, VDT_NICE_REVISION_KEY: @"compact-guard"}];
+        NSDictionary *compactPrefs = @{@"enabled": @YES, @"daemonConfigs": daemons};
+        cycle(c, compactPrefs);
+        REQUIRE(niceNow == 5 && writeCount == 1 && c->records.count == 1);
+        // Positive control: an executed rule still produces a full receipt row.
+        NSDictionary *liveRow = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, compactPrefs);
+        REQUIRE([liveRow[@"state"] isEqual:@"applied"] && [liveRow[@"observed"] isEqual:@5]);
+        REQUIRE([liveRow[@"checkedAt"] doubleValue] > 0 && [liveRow[@"error"] isEqual:@0]);
+        REQUIRE(VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(YES,5,@"compact-z")) == nil);
+        // Rules that never executed and left no recovery record are ordinary:
+        // an empty "nothing to do" row would be a lie, so both the disabled and
+        // the enabled-but-never-attempted variants are dropped from the receipt.
+        REQUIRE(VDTNiceMatchingStatus(@"idle-worker", VDTConfigTypeDaemon, compactPrefs) == nil);
+        REQUIRE(VDTNiceMatchingStatus(@"idle-worker-2", VDTConfigTypeDaemon, compactPrefs) == nil);
+        int compactError = 0; NSDictionary *compactReceipt = readPlist(&c->store, VDT_NICE_STATUS, &compactError);
+        NSString *liveKey = ruleKey(target());
+        REQUIRE(!compactError && [compactReceipt[@"rules"][liveKey][@"state"] isEqual:@"applied"]);
+        REQUIRE(compactReceipt[@"rules"][@"1:idle-worker"] == nil);
+        REQUIRE(compactReceipt[@"rules"][@"1:idle-worker-2"] == nil);
+        // Invalid authority and protected daemons keep their diagnostic rows.
+        NSDictionary *invalidRow = VDTNiceMatchingStatus(@"broken-worker", VDTConfigTypeDaemon, compactPrefs);
+        REQUIRE([invalidRow[@"valid"] isEqual:@NO] && [invalidRow[@"state"] isEqual:@"invalid"]);
+        REQUIRE([VDTNiceMatchingStatus(@"launchd", VDTConfigTypeDaemon, compactPrefs)[@"state"] isEqual:@"protected"]);
+        // A store error and a pause are diagnostic too: un-executed rules keep a
+        // row instead of looking like a clean, empty cache.
+        clearFixture(); c = [VDTNiceCoordinator new]; cycle(c, compactPrefs);
+        REQUIRE([fm removeItemAtPath:VDTNiceStateDirectory() error:nil]);
+        cycle(c, compactPrefs);
+        REQUIRE(c->loadError != 0 && c->records.count == 1);
+        REQUIRE([VDTNiceMatchingStatus(@"idle-worker", VDTConfigTypeDaemon, compactPrefs)[@"state"]
+            isEqual:@"state-unavailable"]);
+        clearFixture(); c = [VDTNiceCoordinator new]; cycle(c, compactPrefs);
+        REQUIRE(writePlist(&c->store, VDT_NICE_REQUEST,
+            @{@"version": @1, @"boot": VDTNiceBootToken(), @"nonce": @"compact-pause"}) == 0);
+        cycle(c, compactPrefs);
+        REQUIRE(c->paused && niceNow == -1 && c->records.count == 0);
+        REQUIRE([VDTNiceMatchingStatus(@"idle-worker", VDTConfigTypeDaemon, compactPrefs)[@"state"] isEqual:@"paused"]);
+        // A recovery record without any execution outcome in this generation is
+        // still journal authority and must keep its row.
+        clearFixture(); c = [VDTNiceCoordinator new]; cycle(c, prefs(YES,7,@"pending-a"));
+        REQUIRE(c->records.count == 1 && niceNow == 7);
+        VDTNiceCoordinator *carry = [VDTNiceCoordinator new];
+        [carry reload:prefs(NO,7,@"pending-b")];
+        REQUIRE(carry->records.count == 1 && carry->outcomes.count == 0);
+        [carry publish];
+        NSDictionary *pendingRow = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(NO,7,@"pending-b"));
+        REQUIRE([pendingRow[@"state"] isEqual:@"pending"] && [pendingRow[@"pendingCount"] isEqual:@1]);
+
+        // Oversized receipt: one real outcome is polluted with a test-only
+        // payload so the real publish path has to degrade. The blob exists only
+        // in this coordinator's memory; the journal snapshots below prove none
+        // of it is ever handed to the journal.
+        clearFixture(); c = [VDTNiceCoordinator new]; cycle(c, prefs(YES,5,@"degrade-a"));
+        REQUIRE(niceNow == 5 && writeCount == 1);
+        NSDictionary *priorRow = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(YES,5,@"degrade-a"));
+        REQUIRE([priorRow[@"state"] isEqual:@"applied"] && [priorRow[@"observed"] isEqual:@5]);
+        NSData *priorBytes = statusBytes();
+        REQUIRE(priorBytes.length > 0 && priorBytes.length < VDT_NICE_STORE_LIMIT);
+        NSString *liveInstance = instanceKey(target());
+        REQUIRE([c->outcomes[liveInstance][@"state"] isEqual:@"applied"]);
+        NSDictionary *cleanOutcome = c->outcomes[liveInstance];
+        NSMutableDictionary *fat = [cleanOutcome mutableCopy];
+        fat[@"observed"] = [NSMutableData dataWithLength:3 * 1024 * 1024];
+        c->outcomes[liveInstance] = fat;
+        NSDictionary *recordsBefore = plistSnapshot(c->records);
+        NSDictionary *outcomesBefore = plistSnapshot(c->outcomes);
+        NSDictionary *attemptsBefore = plistSnapshot(c->attemptStates);
+        NSArray *attemptedBefore = plistSnapshot(setSnapshot(c->attempted));
+        NSArray *goneBefore = plistSnapshot(setSnapshot(c->goneCleanupStarted));
+        REQUIRE(recordsBefore && outcomesBefore && attemptsBefore && attemptedBefore && goneBefore);
+        NSData *journalBefore = journalBytes();
+        REQUIRE(journalBefore.length > 0 && journalBefore.length < VDT_NICE_STORE_LIMIT);
+        int readsBefore = readCount, writesBefore = writeCount, storesBefore = fixtureStoreCalls;
+        int notifyMark = statusNotifyCount;
+        c->receiptDirty = YES;
+        // Even the compact error envelope may fail to commit. A pre-write
+        // failure must not clear dirty, notify, or leave a partial new receipt.
+        statusWriteFail = 1;
+        int envelopeWriteMark = statusWriteCalls;
+        [c publish];
+        REQUIRE(c->receiptDirty == YES && statusNotifyCount == notifyMark && statusWriteCalls == envelopeWriteMark + 1);
+        REQUIRE([statusBytes() isEqual:priorBytes] && [journalBytes() isEqual:journalBefore]);
+        statusWriteFail = 0;
+        NSTimeInterval publishStart = NSDate.date.timeIntervalSince1970;
+        [c publish];
+        NSTimeInterval publishEnd = NSDate.date.timeIntervalSince1970;
+        // Saving the degraded envelope IS a successful receipt write, so it
+        // clears the dirty bit and posts exactly one change notification.
+        REQUIRE(statusNotifyCount == notifyMark + 1 && c->receiptDirty == NO);
+        NSDictionary *degradedReceipt = statusFile(c);
+        NSData *degradedBytes = statusBytes();
+        REQUIRE(degradedReceipt && degradedBytes.length < VDT_NICE_STORE_LIMIT && degradedBytes.length < 8192);
+        REQUIRE(![degradedBytes isEqual:priorBytes]);
+        REQUIRE([degradedReceipt[@"version"] isEqual:@1] && [degradedReceipt[@"boot"] isEqual:VDTNiceBootToken()]);
+        REQUIRE([degradedReceipt[@"statusError"] isEqual:@(EFBIG)] && [degradedReceipt[@"rules"] count] == 0);
+        NSTimeInterval degradedAt = [degradedReceipt[@"updatedAt"] doubleValue];
+        REQUIRE(degradedAt >= publishStart && degradedAt <= publishEnd);
+        for (NSString *dropped in @[@"observed", @"checkedAt", @"oldestCheckedAt", @"recordCount",
+            @"pendingRestoreCount", @"paused", @"restoreNonce", @"storeError"])
+            REQUIRE(degradedReceipt[dropped] == nil);
+        // The reader reports one global cache failure instead of the deleted
+        // success row, and the envelope time is never a check time.
+        NSDictionary *unavailable = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(YES,5,@"degrade-a"));
+        REQUIRE([unavailable[@"state"] isEqual:@"receipt-unavailable"] && [unavailable[@"error"] isEqual:@(EFBIG)]);
+        REQUIRE([unavailable[@"receiptUpdatedAt"] doubleValue] == degradedAt);
+        REQUIRE(unavailable[@"observed"] == nil && unavailable[@"checkedAt"] == nil &&
+            unavailable[@"pid"] == nil && unavailable[@"original"] == nil);
+        // Global means global: neither another settings revision nor another
+        // rule may revive the old success row.
+        REQUIRE([VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(NO,3,@"degrade-other"))[@"state"]
+            isEqual:@"receipt-unavailable"]);
+        REQUIRE([VDTNiceMatchingStatus(@"idle-worker", VDTConfigTypeDaemon, compactPrefs)[@"state"]
+            isEqual:@"receipt-unavailable"]);
+        REQUIRE([VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, @{})[@"state"] isEqual:@"receipt-unavailable"]);
+        // Degrading the cache must not touch the kernel, the journal or any
+        // in-memory recovery/attempt state.
+        REQUIRE(readCount == readsBefore && writeCount == writesBefore && fixtureStoreCalls == storesBefore);
+        REQUIRE([plistSnapshot(c->records) isEqual:recordsBefore] && c->records.count == 1);
+        REQUIRE([plistSnapshot(c->outcomes) isEqual:outcomesBefore]);
+        REQUIRE([plistSnapshot(c->attemptStates) isEqual:attemptsBefore]);
+        REQUIRE([plistSnapshot(setSnapshot(c->attempted)) isEqual:attemptedBefore]);
+        REQUIRE([plistSnapshot(setSnapshot(c->goneCleanupStarted)) isEqual:goneBefore]);
+        REQUIRE([journalBytes() isEqual:journalBefore]);
+        // The generic writer stays fail-closed: an oversized journal is refused
+        // whole and keeps its previous bytes, so no record is lost. The filler is
+        // only an argument here and is rejected before any write.
+        NSDictionary *oversized = @{@"version": @1, @"boot": VDTNiceBootToken(),
+            @"records": c->records, @"filler": [NSMutableData dataWithLength:3 * 1024 * 1024]};
+        REQUIRE(writePlist(&c->store, VDT_NICE_JOURNAL, oversized) == EFBIG);
+        REQUIRE([journalBytes() isEqual:journalBefore] && c->records.count == 1);
+        // The same refusal holds for the status name through the generic writer:
+        // only writeStatusReceipt is allowed to degrade.
+        REQUIRE(writePlist(&c->store, VDT_NICE_STATUS, oversized) == EFBIG);
+        REQUIRE([statusBytes() isEqual:degradedBytes]);
+        // The journal that refused that write is still the recovery source.
+        c->outcomes[liveInstance] = cleanOutcome;
+        cycle(c, prefs(NO,5,@"degrade-b"));
+        REQUIRE(niceNow == -1 && c->records.count == 0 && writeCount == writesBefore + 1);
+        REQUIRE(statusFile(c)[@"statusError"] == nil);
+        // writeStatusReceipt keeps the boot and the publication time of the
+        // receipt it could not store, and no success-only fields.
+        NSDictionary *crafted = @{@"version": @1, @"boot": @"fixture-boot-before-degrade", @"rules": @{},
+            @"updatedAt": @1234567.5, @"checkedAt": @999.0, @"recordCount": @3, @"paused": @NO,
+            @"restoreNonce": @"fix", @"observed": @(-9), @"filler": [NSMutableData dataWithLength:3 * 1024 * 1024]};
+        REQUIRE(writeStatusReceipt(&c->store, crafted) == 0);
+        NSDictionary *envelope = statusFile(c);
+        REQUIRE([envelope[@"version"] isEqual:@1] && [envelope[@"boot"] isEqual:@"fixture-boot-before-degrade"]);
+        REQUIRE([envelope[@"statusError"] isEqual:@(EFBIG)] && [envelope[@"updatedAt"] isEqual:@1234567.5]);
+        REQUIRE([envelope[@"rules"] isKindOfClass:NSDictionary.class] && [envelope[@"rules"] count] == 0);
+        for (NSString *dropped in @[@"checkedAt", @"recordCount", @"paused", @"restoreNonce", @"observed", @"filler"])
+            REQUIRE(envelope[dropped] == nil);
+        REQUIRE(statusBytes().length < 8192);
+        // Serialization or a pre-write disk failure must return non-zero instead
+        // of faking a successful publication.
+        NSData *envelopeBytes = statusBytes();
+        REQUIRE(writeStatusReceipt(&c->store, @{@"version": @1, @"boot": VDTNiceBootToken(),
+            @"updatedAt": @1.5, @"rules": @{}, @"illegal": [NSObject new]}) != 0);
+        REQUIRE([statusBytes() isEqual:envelopeBytes]);
+        statusWriteFail = 1;
+        int failedStatusWrites = statusWriteCalls;
+        REQUIRE(writeStatusReceipt(&c->store, @{@"version": @1, @"boot": VDTNiceBootToken(),
+            @"updatedAt": @2.5, @"rules": @{}}) != 0);
+        REQUIRE(statusWriteCalls == failedStatusWrites + 1 && [statusBytes() isEqual:envelopeBytes]);
+        statusWriteFail = 0;
+        // A failed publish keeps the dirty bit and posts nothing. The injection
+        // fails before any IO, so the previous receipt is provably untouched;
+        // this is a pre-write failure only, not a claim about every store error.
+        clearFixture(); c = [VDTNiceCoordinator new]; cycle(c, prefs(YES,6,@"fail-a"));
+        REQUIRE(niceNow == 6 && writeCount == 1);
+        NSData *successBytes = statusBytes();
+        NSDictionary *successRow = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(YES,6,@"fail-a"));
+        REQUIRE([successRow[@"state"] isEqual:@"applied"] && [successRow[@"observed"] isEqual:@6]);
+        statusWriteFail = 1;
+        int notifyFailMark = statusNotifyCount;
+        c->receiptDirty = YES;
+        [c publish];
+        REQUIRE(c->receiptDirty == YES && statusNotifyCount == notifyFailMark && [statusBytes() isEqual:successBytes]);
+        // Clearing the fault is enough: the same receipt is stored again and the
+        // real applied result becomes visible.
+        statusWriteFail = 0;
+        [c publish];
+        REQUIRE(c->receiptDirty == NO && statusNotifyCount == notifyFailMark + 1);
+        NSDictionary *repaired = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(YES,6,@"fail-a"));
+        REQUIRE([repaired[@"state"] isEqual:@"applied"] && [repaired[@"observed"] isEqual:@6]);
+        REQUIRE(repaired[@"statusError"] == nil && repaired[@"receiptUpdatedAt"] == nil);
+        // Envelope acceptance is strict: any malformed field makes the whole
+        // cache unreadable rather than reviving an older success row.
+        NSDictionary *goodEnvelope = @{@"version": @1, @"boot": VDTNiceBootToken(), @"rules": @{},
+            @"statusError": @(EFBIG), @"updatedAt": @(1234.5)};
+        REQUIRE(writePlist(&c->store, VDT_NICE_STATUS, goodEnvelope) == 0);
+        NSDictionary *envelopeRow = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, @{});
+        REQUIRE([envelopeRow[@"state"] isEqual:@"receipt-unavailable"] &&
+            [envelopeRow[@"error"] isEqual:@(EFBIG)] && [envelopeRow[@"receiptUpdatedAt"] isEqual:@1234.5]);
+        REQUIRE(envelopeRow[@"observed"] == nil && envelopeRow[@"checkedAt"] == nil &&
+            envelopeRow[@"pid"] == nil && envelopeRow[@"targetCount"] == nil);
+        // A stale success row smuggled into an envelope must not be reused.
+        NSMutableDictionary *smuggled = [goodEnvelope mutableCopy];
+        smuggled[@"rules"] = @{liveKey: @{@"state": @"applied", @"observed": @5, @"checkedAt": @7.0}};
+        REQUIRE(writePlist(&c->store, VDT_NICE_STATUS, smuggled) == 0);
+        NSDictionary *smuggledRow = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(YES,5,@"strict-a"));
+        REQUIRE([smuggledRow[@"state"] isEqual:@"receipt-unavailable"] && smuggledRow[@"observed"] == nil);
+        NSMutableDictionary *variant = nil;
+        NSMutableArray *malformed = [NSMutableArray array];
+        variant = [goodEnvelope mutableCopy]; variant[@"statusError"] = @YES; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"statusError"] = @"27"; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"statusError"] = @[@(EFBIG)]; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"statusError"] = @27.5; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"statusError"] = @(EFBIG + 1); [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; [variant removeObjectForKey:@"statusError"]; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; [variant removeObjectForKey:@"updatedAt"]; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"updatedAt"] = @0; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"updatedAt"] = @(-1); [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"updatedAt"] = @"1234.5"; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"updatedAt"] = @YES; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"updatedAt"] = @(NAN); [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"updatedAt"] = @(INFINITY); [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"updatedAt"] = @253402300800.0; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"boot"] = @"previous-boot"; [malformed addObject:variant];
+        variant = [goodEnvelope mutableCopy]; variant[@"version"] = @2; [malformed addObject:variant];
+        for (NSDictionary *fixture in malformed) {
+            REQUIRE(writePlist(&c->store, VDT_NICE_STATUS, fixture) == 0);
+            REQUIRE(VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(YES,5,@"strict-a")) == nil);
+        }
         [fm removeItemAtPath:testRoot error:nil];
         printf("nice Foundation integration: %u assertions passed (fake kernel)\n",assertions);
     }

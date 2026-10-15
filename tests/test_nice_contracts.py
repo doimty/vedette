@@ -54,6 +54,31 @@ class NiceContracts(unittest.TestCase):
         self.assertIn('![raw[@"boot"] isEqual:boot]',r)
         self.assertIn('@"value", @"valid", @"revision", @"enabled", @"requestedEnabled"',s)
         self.assertLess(s.index('if (![data writeToFile:PREFS_PATH options:NSDataWritingAtomic error:error]) return NO;'),s.index('notify_post([PREFS_CHANGED_NN UTF8String]);'))
+    def test_status_receipt_cache_isolated_from_recovery(self):
+        from test_resource_preferences_native import function_source
+        runtime = source('VDTNiceRuntime.mm')
+        previous = subprocess.check_output(['git', 'show',
+            '04b9144df0c31d47de2a65c8cde32044e93b0627:VDTNiceRuntime.mm'], cwd=ROOT).decode()
+        for prefix in ('static int writePlist(', '- (void)load {',
+                       '- (int)save:(const VDTNiceRecord *)r target:(NSDictionary *)target {', '- (void)checkRestoreRequest {'):
+            self.assertEqual(function_source(runtime, prefix), function_source(previous, prefix), prefix)
+        status = function_source(runtime, 'static int writeStatusReceipt(')
+        self.assertIn('VDTNiceStoreWrite(store, VDT_NICE_STATUS,', status)
+        self.assertIn('@"statusError": @(EFBIG)', status)
+        for forbidden in ('VDT_NICE_JOURNAL', '@"checkedAt"', '@"restoreNonce"', '@"recordCount"', '@"paused"'):
+            self.assertNotIn(forbidden, status)
+        publish = function_source(runtime, '- (void)publish {')
+        self.assertIn('writeStatusReceipt(&store, receipt)', publish)
+        self.assertIn('if (!error) {\n        receiptDirty = NO;', publish)
+        self.assertIn('[activeKeys containsObject:key]', publish)
+        for forbidden in ('setpriority(', 'getpriority(', '[self save:', 'removeObjectForKey:', 'removeAllObjects'):
+            self.assertNotIn(forbidden, publish)
+        reader = function_source(source('VDTNiceShared.mm'), 'NSDictionary *VDTNiceMatchingStatusWithHost(')
+        self.assertLess(reader.index('![receipt[@"boot"] isEqual:boot]'), reader.index('if (statusError)'))
+        self.assertLess(reader.index('if (statusError)'), reader.index('id row = receipt[@"rules"][key]'))
+        self.assertIn('@"receiptUpdatedAt": stamp', reader)
+        self.assertIn('CFBooleanGetTypeID()', reader)
+
     def test_stale_or_unreadable_journal_entries_never_dead_lock(self):
         r=source('VDTNiceRuntime.mm')
         boot=r.index('![raw[@"boot"] isEqual:boot]')

@@ -256,8 +256,22 @@ NSDictionary *VDTNiceMatchingStatusWithHost(NSString *identifier, VDTConfigType 
     id raw = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
     if (![raw isKindOfClass:NSDictionary.class]) return nil;
     NSDictionary *receipt = raw;
-    if (![receipt[@"version"] isEqual:@1] || ![receipt[@"boot"] isEqual:boot] ||
-        ![receipt[@"rules"] isKindOfClass:NSDictionary.class]) return nil;
+    if (![receipt[@"version"] isEqual:@1] || ![receipt[@"boot"] isEqual:boot]) return nil;
+    id statusError = receipt[@"statusError"];
+    if (statusError) {
+        const char *encoding = [statusError isKindOfClass:NSNumber.class] ? [statusError objCType] : NULL;
+        id stamp = receipt[@"updatedAt"];
+        if (!encoding || strlen(encoding) != 1 || !strchr("cCsSiIlLqQ", encoding[0]) ||
+            CFGetTypeID((__bridge CFTypeRef)statusError) == CFBooleanGetTypeID() ||
+            [statusError longLongValue] != EFBIG || ![stamp isKindOfClass:NSNumber.class] ||
+            CFGetTypeID((__bridge CFTypeRef)stamp) == CFBooleanGetTypeID() ||
+            !isfinite([stamp doubleValue]) || [stamp doubleValue] <= 0 ||
+            [stamp doubleValue] >= 253402300800.0) return nil;
+        // Global display-cache failure, not a rule result. Do not attach the
+        // current settings, reuse an old success row, or invent a check time.
+        return @{@"state": @"receipt-unavailable", @"error": statusError, @"receiptUpdatedAt": stamp};
+    }
+    if (![receipt[@"rules"] isKindOfClass:NSDictionary.class]) return nil;
     id row = receipt[@"rules"][key];
     if (![row isKindOfClass:NSDictionary.class] || ![row[@"state"] isKindOfClass:NSString.class]) return nil;
     if (type == VDTConfigTypeExtension && !host) host = row[@"containingAppIdentifier"];

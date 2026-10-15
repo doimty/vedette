@@ -23,6 +23,7 @@ def source_contracts():
     from test_preferences_ui import read_strings, validate_keys
     owner = (PREFS / 'VDTProcessConfiguration.m').read_text()
     adapter = (PREFS / 'VDTCheckResultsPreferences.m').read_text()
+    reader = (PREFS / 'VDTCheckResultReader.m').read_text()
     nice = (PREFS / 'VDTNicePreferences.m').read_text()
     cell = (PREFS / 'VDTCheckResultCell.m').read_text()
     model = MODEL.read_text()
@@ -31,17 +32,18 @@ def source_contracts():
     assert 'vdtResourceReceiptText' not in owner
     assert 'Nice execution status' not in nice and 'Check / retry nice' not in nice
     assert adapter.count('VDTLoc(self.class, @"Check / retry nice")') == 1
-    assert 'index < 3' in adapter and 'VDTCheckResultSpecifier(@{}, NO)' in adapter
+    assert 'index < 3' in adapter and 'VDTCheckResultSpecifier(@{})' in adapter
     assert 'detail:VDTCheckDetailsController.class cell:PSLinkCell' in adapter
-    assert '[_details setProperty:[models copy] forKey:@"vdtCheckModels"]' in adapter
-    assert 'vdtCheckResult' in owner and 'UITableViewAutomaticDimension' in owner
+    assert 'vdtCheckContext' in adapter
+    assert '[_details setProperty:context forKey:@"vdtCheckContext"]' in adapter
+    assert 'VDTCheckResultSpecifier(@{}, NO)' not in adapter
+    assert 'VDTNiceMatchingStatusWithHost(' in reader and 'VDTResourceMatchingStatus(' in reader
+    assert 'VDTCheckResultModels(' in reader
     assert 'cellClass' in cell and 'VDTCheckResultCell.class' in cell
     assert 'label.numberOfLines = 0' in cell and 'adjustsFontForContentSizeCategory = YES' in cell
     assert 'UIContentSizeCategoryIsAccessibilityCategory' in cell
     assert 'setPendingStatusAndReload' in nice and 'vdtMarkNiceCheckPending' in nice and 'vdtNiceCheckDidRefresh' in nice
     assert 'notify_cancel(_resourceToken)' in adapter and '__weak VDTCheckResultsPreferences' in adapter
-    assert 'VDTNiceMatchingStatusWithHost(' in adapter and 'VDTResourceMatchingStatus(' in adapter
-    assert 'VDTCheckResultModels(' in adapter
     for forbidden in ('notify_post(', 'memorystatus_control(', 'setpriority(', 'VDTResourceSetWriteEnabled', '_specifiers = nil'):
         assert forbidden not in adapter + model, 'read-only display violated: ' + forbidden
     for prefix in ('- (void)refreshDisplay', '- (void)reloadModels'):
@@ -73,7 +75,8 @@ def source_contracts():
     required |= {'nice', 'Memory', 'Reclaim priority', 'Recent check results', 'Check details', 'Refresh display',
                  'Check / retry nice', 'Multiple instances; selected instance only',
                  'Multiple instances; individual readbacks unavailable', 'Recorded instances: %@',
-                 'Original: %@', 'errno: %@', 'Pending targets: %@', 'Selected PID: %@', 'Skip code: %@'}
+                 'Original: %@', 'errno: %@', 'Pending targets: %@', 'Selected PID: %@', 'Skip code: %@',
+                 'Nice receipt exceeds size limit', 'Nice receipt unavailable', 'Receipt saved at'}
     validate_keys(required, en, zh)
     print('PASS check-result source wiring, CPU/nice freeze, localization (not UIKit)')
 
@@ -88,10 +91,14 @@ def mutants(source):
          'YES)', 'reject-partial-unlimited'),
         ('borrow-overall-state', 'return @"Side result not recorded";',
          'return @"Rule readback matched";', 'no-overall-fallback'),
-        ('invent-missing-readback', 'observed = number ? number.stringValue : VDTCheckText(localize, @"Not recorded");',
-         'observed = number ? number.stringValue : target;', 'missing-readback'),
+        ('invent-missing-readback', 'NSString *observed = memory ? VDTCheckMemoryReadback(rawObserved, localize)\n        : (VDTCheckNumber(rawObserved) ?: VDTCheckText(localize, @"Not recorded"));',
+         'NSString *observed = memory ? VDTCheckMemoryReadback(rawObserved, localize)\n        : (VDTCheckNumber(rawObserved) ?: target);', 'missing-readback'),
         ('forget-oldest-check', '(receipt[@"oldestCheckedAt"] ?: receipt[@"checkedAt"])',
          'receipt[@"checkedAt"]', 'receipt-time'),
+        ('receipt-error-as-applied', '? @"Nice receipt exceeds size limit" : @"Nice receipt unavailable";',
+         '? @"Nice state applied" : @"Nice receipt unavailable";', 'nice-status-limit'),
+        ('receipt-save-time-as-check', '(receipt[@"oldestCheckedAt"] ?: receipt[@"checkedAt"])',
+         '(receipt[@"oldestCheckedAt"] ?: receipt[@"checkedAt"] ?: receipt[@"receiptUpdatedAt"])', 'nice-status-no-check-time'),
     ]
     for name, old, new, expected in changes:
         assert source.count(old) == 1, 'non-unique mutation: ' + name

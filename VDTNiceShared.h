@@ -37,8 +37,10 @@ BOOL VDTNiceRemoveIndependentRule(NSString *identifier, VDTConfigType type, NSEr
 // or niceValue may be changed. Enabling an untouched rule atomically stores value 0.
 BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type,
                            NSString *key, id value, NSError **error);
-// Last execution receipt, not a live kernel query. Returns nil if boot, revision,
-// enabled/valid/value differ from CURRENT prefs, or the receipt is unavailable.
+// Last execution receipt, not a live kernel query. Returns nil for missing or
+// malformed receipts, boot mismatch, or a row not matching CURRENT prefs.
+// A boot-bound cache error instead returns receipt-unavailable/error and
+// receiptUpdatedAt, without check time/readback or any rule success claim.
 // A receipt row contains state (stable ASCII code), error, checkedAt, targetCount,
 // appliedCount, pendingCount; observed/original may be present for a single target.
 NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type,

@@ -190,17 +190,26 @@ static NSString *outcomeCode(VDTNiceOutcome outcome) {
 - (int)save:(const VDTNiceRecord *)record target:(NSDictionary *)target;
 @end
 
-typedef struct { __strong VDTNiceCoordinator *owner; __strong NSDictionary *target; } NativeContext;
+// Per-transition receipt evidence only; never persisted into the nice journal.
+typedef struct {
+    __strong VDTNiceCoordinator *owner;
+    __strong NSDictionary *target;
+    unsigned writeCalls;
+    NSTimeInterval observedAt;
+} NativeContext;
 static VDTNiceIdentity identityCallback(pid_t pid, void *raw) {
     return nativeIdentity(pid, ((NativeContext *)raw)->target);
 }
 static int readCallback(pid_t pid, int *value, void *raw) {
-    (void)raw; errno = 0; int n = getpriority(PRIO_PROCESS, (id_t)pid); int error = errno;
+    NativeContext *context = (NativeContext *)raw;
+    errno = 0; int n = getpriority(PRIO_PROCESS, (id_t)pid); int error = errno;
     if (n == -1 && error) return error;
-    *value = n; return 0;
+    context->observedAt = NSDate.date.timeIntervalSince1970;
+    errno = error; *value = n; return 0;
 }
 static int writeCallback(pid_t pid, int value, void *raw) {
-    (void)raw; errno = 0;
+    ++((NativeContext *)raw)->writeCalls;
+    errno = 0;
     return setpriority(PRIO_PROCESS, (id_t)pid, value) == 0 ? 0 : (errno ?: EIO);
 }
 static int saveCallback(const VDTNiceRecord *record, void *raw) {
@@ -220,6 +229,29 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     NSData *data = [NSPropertyListSerialization dataWithPropertyList:object format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
     if (!data || data.length > VDT_NICE_STORE_LIMIT) return EFBIG;
     return VDTNiceStoreWrite(store, name, data.bytes, data.length);
+}
+static int writeStatusReceipt(VDTNiceStore *store, NSDictionary *receipt) {
+    if (![NSPropertyListSerialization propertyList:receipt isValidForFormat:NSPropertyListBinaryFormat_v1_0]) return EINVAL;
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:receipt
+        format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+    if (!data) return EINVAL;
+    if (data.length > VDT_NICE_STORE_LIMIT) {
+        // Status is a rebuildable display cache, never the recovery journal.
+        // Publish a bounded error instead of leaving an old success on disk.
+        id stamp = receipt[@"updatedAt"];
+        if (!text(receipt[@"boot"], 100) || ![stamp isKindOfClass:NSNumber.class] ||
+            CFGetTypeID((__bridge CFTypeRef)stamp) == CFBooleanGetTypeID() ||
+            !isfinite([stamp doubleValue]) || [stamp doubleValue] <= 0 ||
+            [stamp doubleValue] >= 253402300800.0) return EFBIG;
+        NSDictionary *fallback = @{@"version": @1, @"boot": receipt[@"boot"],
+            @"rules": @{}, @"statusError": @(EFBIG), @"updatedAt": stamp};
+        // No checkedAt/readback or removal-ack fields: this records a failed
+        // receipt publication, not a kernel check or successful restoration.
+        data = [NSPropertyListSerialization dataWithPropertyList:fallback
+            format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+        if (!data || data.length > VDT_NICE_STORE_LIMIT) return EFBIG;
+    }
+    return VDTNiceStoreWrite(store, VDT_NICE_STATUS, data.bytes, data.length);
 }
 @implementation VDTNiceCoordinator
 - (instancetype)init {
@@ -355,7 +387,7 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     [attempted addObject:attemptKey];
     VDTNiceRecord r = {};
     if (records[key] && !decodeRecord(records[key][@"record"], &r)) { loadError = EINVAL; return; }
-    NativeContext context = {self, target};
+    NativeContext context = {self, target, 0, 0};
     VDTNiceOperations ops = {.identity = identityCallback, .readValue = readCallback,
         .writeValue = writeCallback, .saveRecord = saveCallback, .context = &context};
     VDTNiceResult result = VDTNiceTransition([target[VDTTargetPidKey] intValue], enabled, desired, &r, &ops);
@@ -371,7 +403,13 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
     NSMutableDictionary *outcome = [@{@"target": target, @"state": outcomeCode(result.outcome),
         @"error": @(result.error), @"checkedAt": @(NSDate.date.timeIntervalSince1970),
         @"attemptEnabled": @(enabled), @"retryPending": @(attempt.pending), @"attemptCount": @(attempt.count)} mutableCopy];
-    if (result.observedValid) outcome[@"observed"] = @(result.observedValue);
+    if (result.observedValid) {
+        outcome[@"observed"] = @(result.observedValue);
+        if (context.observedAt > 0) outcome[@"observedAt"] = @(context.observedAt);
+    }
+    outcome[@"writeCalls"] = @(context.writeCalls);
+    outcome[@"evidence"] = ((result.outcome == VDTNiceApplied || result.outcome == VDTNiceRestored) && result.observedValid)
+        ? (context.writeCalls ? @"written-verified" : @"matched-without-set") : @"execution-result";
     if (r.captured) outcome[@"original"] = @(r.originalValue);
     outcomes[key] = outcome;
     receiptDirty = YES;
@@ -465,9 +503,21 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         [group addObject:@{@"key": key, @"outcome": outcome}];
     }
     NSMutableDictionary *rows = [NSMutableDictionary dictionary];
+    NSMutableSet *activeKeys = [NSMutableSet setWithArray:groups.allKeys];
+    for (NSDictionary *entry in records.allValues) {
+        NSString *key = ruleKey(entry[@"target"]);
+        if (key) [activeKeys addObject:key];
+    }
     NSUInteger totalPendingRestore = 0;
     for (NSString *key in allRules) {
-        NSDictionary *rule = allRules[key]; NSMutableDictionary *row = [rule mutableCopy];
+        NSDictionary *rule = allRules[key];
+        // No execution/recovery evidence means no historical receipt. Preserve
+        // explicit errors and policy explanations rather than hiding them when
+        // a rule has not yet produced a target outcome.
+        if (![activeKeys containsObject:key] && !loadError && !paused &&
+            [rule[@"valid"] boolValue] &&
+            !(protectedRule(rule) && [rule[@"requestedEnabled"] boolValue])) continue;
+        NSMutableDictionary *row = [rule mutableCopy];
         BOOL enabled = [rule[@"enabled"] boolValue];
         NSString *state = enabled ? @"target-not-running" : @"disabled";
         NSUInteger targetCount = 0, appliedCount = 0, pendingCount = 0;
@@ -475,6 +525,7 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         NSTimeInterval newestCheck = 0, oldestCheck = DBL_MAX;
         BOOL retryPending = NO;
         NSArray *group = groups[key] ?: @[];
+        row[@"outcomeCount"] = @(group.count);
         for (NSDictionary *item in group) {
             NSDictionary *outcome = item[@"outcome"]; NSString *current = outcome[@"state"];
             NSTimeInterval checked = [outcome[@"checkedAt"] doubleValue];
@@ -486,8 +537,12 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
             if (failure) { ++pendingCount; state = current; error = [outcome[@"error"] intValue]; sawFailure = YES; }
             else if (!sawFailure && ![current isEqual:@"target-not-running"]) state = current;
             if (group.count == 1) {
-                if (outcome[@"observed"]) row[@"observed"] = outcome[@"observed"];
-                if (outcome[@"original"]) row[@"original"] = outcome[@"original"];
+                for (NSString *field in @[@"observed", @"original", @"observedAt", @"writeCalls", @"evidence"])
+                    if (outcome[field]) row[field] = outcome[field];
+                NSDictionary *target = outcome[@"target"];
+                row[@"pid"] = target[VDTTargetPidKey];
+                row[@"startSeconds"] = target[VDTTargetStartSecondsKey];
+                row[@"startMicroseconds"] = target[VDTTargetStartMicrosecondsKey];
             }
         }
         NSUInteger restoring = 0;
@@ -510,12 +565,13 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
         @"recordCount": @(records.count), @"pendingRestoreCount": @(totalPendingRestore),
         @"paused": @(paused), @"restoreNonce": restoreNonce ?: @"", @"storeError": @(loadError),
         @"updatedAt": @(NSDate.date.timeIntervalSince1970)};
-    int error = writePlist(&store, VDT_NICE_STATUS, receipt);
+    int error = writeStatusReceipt(&store, receipt);
     if (!error) {
         receiptDirty = NO;
+        // A saved error envelope is also a new display result, not SET success.
         notify_post(VDT_NICE_RESULTS_NOTIFICATION);
     }
-    // No success notification when even the receipt could not be saved.
+    // Any failed commit retains the dirty bit and sends no result notification.
 }
 @end
 static VDTNiceCoordinator *coordinator(void) {
