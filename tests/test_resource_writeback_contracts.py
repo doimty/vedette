@@ -2,13 +2,22 @@
 """Source contracts + compiled fixed-transport negatives; NOT Foundation/device."""
 from pathlib import Path
 import re, subprocess, tempfile, unittest
+from formal_delta import formal_baseline, without_formal_rules
 ROOT=Path(__file__).resolve().parents[1]
 class Writeback(unittest.TestCase):
  def test_frozen_cpu_nice_and_lists(self):
   names=['VDTNiceRuntime.mm','VDTNicePolicy.c','VDTNiceStore.c','VDTPolicyTransition.c','VDTProcessIdentity.c',
    'vedetteprefs/VDTExtensionListController.m','vedetteprefs/ChoicyPreferences/CHPDaemonListController.m']
   for name in names:
-   self.assertEqual((ROOT/name).read_bytes(),subprocess.check_output(['git','show','4c9af10:'+name],cwd=ROOT),name)
+   actual=(ROOT/name).read_bytes()
+   if name=='VDTNiceRuntime.mm':
+    # E1/cache changes are reviewed literal regions, not an exemption from
+    # freezing nice. Reject any byte not covered by that exact inverse patch.
+    self.assertEqual(without_formal_rules(name,actual),formal_baseline(name),name)
+    with self.assertRaises(AssertionError):
+     without_formal_rules(name,actual+b'\nunauthorized-writeback-edit\n')
+   else:
+    self.assertEqual(actual,subprocess.check_output(['git','show','4c9af10:'+name],cwd=ROOT),name)
  def test_runtime_write_ahead_and_restore_authority(self):
   t=(ROOT/'VDTResourceRuntime.mm').read_text()
   start=t.index('static BOOL resourceExecuteSide(');end=t.index('static int32_t resourceDarwinMajor',start);body=t[start:end]
