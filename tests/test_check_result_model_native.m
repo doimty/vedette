@@ -8,7 +8,7 @@
 #include <errno.h>
 static unsigned checks;
 #define REQ(tag, ...) do { ++checks; if (!(__VA_ARGS__)) { fprintf(stderr, "CHECK_MODEL_FAIL:%s line %d\n", tag, __LINE__); abort(); } } while (0)
-static BOOL contains(NSString *text, NSString *fragment) { return [text rangeOfString:fragment].location != NSNotFound; }
+static BOOL contains(NSString *text, NSString *fragment) { return [text isKindOfClass:NSString.class] && [text rangeOfString:fragment].location != NSNotFound; }
 static NSArray *project(NSDictionary *nice, NSDictionary *memory, NSDictionary *priority, NSDictionary *receipt) {
     return VDTCheckResultModels(@{@"requestedEnabled":@YES,@"valid":@YES,@"value":@10},nice,
         memory ?: @{@"enabled":@YES,@"active":@64,@"inactive":@128},
@@ -59,8 +59,14 @@ int main(void) {
         [changed removeObjectForKey:@"priorityObserved"]; changed[@"prioritySkip"]=@3;
         rows=project(nice,nil,nil,changed);
         REQ("skip-not-success", [rows[2][@"state"] isEqual:@"Rule not applied"]);
-        REQ("skip-explanation", contains(fieldValue(rows[2], @"coreFields", @"policyNote"), @"policy skip") &&
-            contains(detail(rows[2]), @"policy skip"));
+        NSString *policyNote = @"This rule was rejected. A policy skip is not a system-write failure.";
+        REQ("skip-explanation", [fieldValue(rows[2], @"coreFields", @"policyNote") isEqual:policyNote]);
+        REQ("skip-note-core-only", !contains(detail(rows[2]), @"policy skip"));
+        NSArray *localized = VDTCheckResultModels(nil, nil, nil, nil, changed, ^NSString *(NSString *key) {
+            return [key isEqual:policyNote] ? @"localized policy note" : key;
+        });
+        REQ("skip-note-localized", [fieldValue(localized[2], @"coreFields", @"policyNote") isEqual:@"localized policy note"]);
+        REQ("nil-not-a-text-match", !contains(nil, @"policy skip"));
         REQ("skip-not-system", !contains(rows[2][@"state"],@"system") && [rows[1][@"tone"] isEqual:@"ok"]);
         REQ("missing-readback", contains(rows[2][@"summary"],@"Last read back: Not recorded"));
         changed[@"priority"]=@"conflict"; changed[@"prioritySkip"]=@0; changed[@"state"]=@"conflict";

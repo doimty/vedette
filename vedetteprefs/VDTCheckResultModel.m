@@ -243,7 +243,7 @@ static NSDictionary *VDTCheckRow(NSString *title, NSDictionary *rule, NSDictiona
     ]];
     if ([stateKey isEqual:@"Rule not applied"])
         [core addObject:VDTCheckField(@"policyNote", @"Interpretation",
-            @"This rule was rejected. A policy skip is not a system-write failure.", @"plain", localize)];
+            VDTCheckText(localize, @"This rule was rejected. A policy skip is not a system-write failure."), @"plain", localize)];
     // Stable IDs/counts let native controllers update rows in place, including
     // missing fields. Raw diagnostics never enter the summary or core arrays.
     NSMutableArray *diagnostics = [NSMutableArray array];
