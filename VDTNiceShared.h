@@ -20,6 +20,12 @@ BOOL VDTNiceParseValue(id value, int *result);
 NSString *VDTNiceRuleKey(VDTConfigType type, NSString *identifier);
 NSString *VDTNiceStateDirectory(void);
 NSString *VDTNiceBootToken(void);
+// Display receipts use the stable boot-session UUID when available. The legacy
+// timeval token remains unchanged for recovery journals and removal handshakes.
+// Old receipts without a session field still require an exact legacy match;
+// a present but invalid/unavailable session never falls back to that match.
+NSDictionary *VDTNiceReceiptWithBootSession(NSDictionary *receipt);
+BOOL VDTNiceReceiptBootMatches(NSDictionary *receipt);
 // First-entry-wins. Each rule contains type/identifier/value/valid/revision,
 // requestedEnabled (per-rule), enabled (folds global switch). CPU keys are not read.
 NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *prefs);

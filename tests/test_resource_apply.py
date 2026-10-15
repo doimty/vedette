@@ -164,8 +164,18 @@ int main() {
              'if (!readPriorityBefore) {', 'if (!readPriorityBefore && false) {'),
             ('R14 post identity check bypass',
              'VDTProcessInstanceMatches(target->expected, after);', 'true;'),
-            ('R16 memory ownership drift ignored',
-             'if (target->hasLastPair && !pairEquals(before, target->lastPair)) {', 'if (false) {'),
+            ('R16 memory RESTORE drift guard ignored',
+             'if (restore && target->hasLastPair && !pairEquals(before, target->lastPair)) {', 'if (false) {'),
+            ('R19 priority RESTORE drift guard ignored',
+             'if (restore && target->hasLastPriority && before.effectivePriority != target->lastPriority) {', 'if (false) {'),
+            ('R20 memory APPLY drift blocked again',
+             'if (restore && target->hasLastPair && !pairEquals(before, target->lastPair)) {',
+             'if (target->hasLastPair && !pairEquals(before, target->lastPair)) {'),
+            ('R21 priority APPLY drift blocked again',
+             'if (restore && target->hasLastPriority && before.effectivePriority != target->lastPriority) {',
+             'if (target->hasLastPriority && before.effectivePriority != target->lastPriority) {'),
+            ('R22 priority original overwritten by current observation',
+             'if (!report.priorPriority.hasValue) {', 'if (true) {'),
             ('R17 restore last observation ignored',
              'if (restore && (!target->hasPriorPair || !target->hasLastPair)) {',
              'if (restore && !target->hasPriorPair) {'),
@@ -176,6 +186,13 @@ int main() {
              '                    ? VDTApplyOutcomeApplied : VDTApplyOutcomeAppliedUnverified;',
              'report.jetsamOutcome = VDTApplyOutcomeApplied;'),
         ]
+        targeted_assertions = {
+            'R16': 'r.memoryOutcome == VDTApplyOutcomeSkipped && r.memorySkip == VDTApplySkipConflict',
+            'R19': 'r.jetsamOutcome == VDTApplyOutcomeSkipped && r.jetsamSkip == VDTApplySkipConflict',
+            'R20': 'r.memoryOutcome == VDTApplyOutcomeApplied && r.memoryVerified',
+            'R21': 'r.jetsamOutcome == VDTApplyOutcomeApplied && r.jetsamVerified',
+            'R22': 'r.priorPriority.hasValue && r.priorPriority.priority == 18',
+        }
         originals = self.sources()
         for label, old, new in mutations:
             with self.subTest(mutant=label):
@@ -184,6 +201,9 @@ int main() {
                 texts = dict(originals)
                 texts[source] = text.replace(old, new, 1)
                 ran = self.run_kernel(texts, 'test_resource_apply.c', False)
+                expected = targeted_assertions.get(label.split()[0])
+                if expected:
+                    self.assertIn(expected, ran.stderr, 'mutant failed off-target: ' + label)
                 assertion = ran.stderr.strip().splitlines()[-1]
                 print('KILLED ' + label + ' (compiled; exit ' + str(ran.returncode) + '): ' + assertion,
                       flush=True)

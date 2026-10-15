@@ -24,9 +24,6 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
 @interface VDTCheckResultCell ()
 @property(nonatomic, strong) UILabel *checkTitle;
 @property(nonatomic, strong) UILabel *checkState;
-@property(nonatomic, strong) UILabel *checkSummary;
-@property(nonatomic, strong) UILabel *checkTime;
-@property(nonatomic, strong) UILabel *checkScope;
 @property(nonatomic, strong) UIStackView *heading;
 @end
 @implementation VDTCheckResultCell
@@ -37,34 +34,25 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
     self.textLabel.hidden = YES;
     self.detailTextLabel.hidden = YES;
     self.checkTitle = [UILabel new]; self.checkState = [UILabel new];
-    self.checkSummary = [UILabel new]; self.checkTime = [UILabel new]; self.checkScope = [UILabel new];
-    for (UILabel *label in @[self.checkTitle, self.checkState, self.checkSummary, self.checkTime, self.checkScope]) {
+    for (UILabel *label in @[self.checkTitle, self.checkState]) {
         label.numberOfLines = 0;
         label.adjustsFontForContentSizeCategory = YES;
         label.isAccessibilityElement = NO;
+        label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     }
-    self.checkTitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-    self.checkState.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    self.checkSummary.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-    self.checkTime.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
     self.checkTitle.textColor = UIColor.labelColor;
-    self.checkSummary.textColor = UIColor.secondaryLabelColor;
-    self.checkTime.textColor = UIColor.secondaryLabelColor;
-    self.checkScope.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-    self.checkScope.textColor = UIColor.secondaryLabelColor;
     [self.checkTitle setContentHuggingPriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
     [self.checkState setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     self.heading = [[UIStackView alloc] initWithArrangedSubviews:@[self.checkTitle, self.checkState]];
     self.heading.spacing = 12;
-    UIStackView *column = [[UIStackView alloc] initWithArrangedSubviews:@[self.heading, self.checkSummary, self.checkTime, self.checkScope]];
-    column.axis = UILayoutConstraintAxisVertical; column.spacing = 5;
+    UIStackView *column = self.heading;
     column.translatesAutoresizingMaskIntoConstraints = NO;
     [self.contentView addSubview:column];
     [NSLayoutConstraint activateConstraints:@[
         [column.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
         [column.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [column.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:13],
-        [column.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-13]
+        [column.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:11],
+        [column.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-11]
     ]];
     [self updateHeadingLayout];
     [self updateCheck:specifier];
@@ -99,16 +87,11 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
     NSDictionary *model = [specifier propertyForKey:@"vdtCheckModel"];
     if (![model isKindOfClass:NSDictionary.class]) model = @{};
     self.checkTitle.text = model[@"title"];
-    self.checkState.text = model[@"state"];
-    self.checkSummary.text = model[@"summary"];
-    self.checkTime.text = model[@"timestamp"];
-    self.checkScope.text = model[@"scope"];
-    self.checkScope.hidden = self.checkScope.text.length == 0;
-    self.checkState.textColor = VDTCheckStateColor(model[@"tone"]);
+    self.checkState.text = model[@"compactState"];
+    self.checkState.textColor = VDTCheckStateColor(model[@"compactTone"]);
     [self updateHeadingLayout];
     self.isAccessibilityElement = YES;
-    self.accessibilityLabel = [@[self.checkTitle.text ?: @"", self.checkState.text ?: @"",
-        self.checkSummary.text ?: @"", self.checkTime.text ?: @"", self.checkScope.text ?: @""] componentsJoinedByString:@", "];
+    self.accessibilityLabel = [@[self.checkTitle.text ?: @"", self.checkState.text ?: @""] componentsJoinedByString:@", "];
 }
 - (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
     [super refreshCellContentsWithSpecifier:specifier];

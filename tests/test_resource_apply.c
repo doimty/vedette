@@ -452,6 +452,55 @@ static void test_backend_missing(void) {
     printf("[ok] missing backend fails closed\n");
 }
 
+static void test_apply_drift_keeps_first_originals(void) {
+    FakeBackend f; FakeBackendReset(&f); FakeProcess *p = prepareProcess(&f, 915, 5);
+    p->pair = (VDTMemlimitPair){333, 0, 444, 1};
+    VDTApplyTarget t = targetFor(p);
+    t.hasPriorPair = true; t.priorPair = (VDTMemlimitPair){1024, 0, 2048, 1};
+    t.hasPriorPriority = true; t.priorPriority = 18;
+    t.hasLastPair = true; t.lastPair = (VDTMemlimitPair){32, 1, 48, 1};
+    t.hasLastPriority = true; t.lastPriority = 10;
+    VDTMemoryRule m = memoryRule(VDTPolicyRecordEnabled, 64, 128);
+    VDTJetsamRule j = rawRule(VDTPolicyRecordEnabled, 13, 21);
+    VDTApplyProgram apply = VDTApplyBuildProgram(915, &m, &j, 21, true, true, capsFull());
+    VDTApplyReport r = VDTApplyExecute(&apply, &t, FakeBackendVtable(), &f);
+    assert(r.jetsamOutcome == VDTApplyOutcomeApplied && r.jetsamVerified);
+    assert(r.memoryOutcome == VDTApplyOutcomeApplied && r.memoryVerified);
+    assert(r.jetsamSkip == VDTApplySkipNone && r.memorySkip == VDTApplySkipNone);
+    assert(r.beforePriority.hasValue && r.beforePriority.priority == 5);
+    assert(r.beforeMemlimit.hasValue && r.beforeMemlimit.pair.active == 333 && r.beforeMemlimit.pair.inactive == 444);
+    assert(r.priorPriority.hasValue && r.priorPriority.priority == 18);
+    assert(r.priorMemlimit.hasValue && r.priorMemlimit.pair.active == 1024 && r.priorMemlimit.pair.activeAttrs == 0 &&
+        r.priorMemlimit.pair.inactive == 2048 && r.priorMemlimit.pair.inactiveAttrs == 1);
+    assert(FakeBackendLogCount(&f, "setPrio") == 1 && FakeBackendLogCount(&f, "setMem") == 1);
+    assert(r.identityPreMatched && r.identityPostMatched && !r.partial);
+
+    // A new rule and another drift still cannot recapture the original.
+    t.lastPriority = r.afterPriority.priority; t.lastPair = r.afterMemlimit.pair;
+    p->effectivePriority = 6; p->pair = (VDTMemlimitPair){555, 1, 666, 0};
+    m = memoryRule(VDTPolicyRecordEnabled, 96, 192); j = rawRule(VDTPolicyRecordEnabled, 17, 21);
+    apply = VDTApplyBuildProgram(915, &m, &j, 21, true, true, capsFull());
+    r = VDTApplyExecute(&apply, &t, FakeBackendVtable(), &f);
+    assert(r.jetsamOutcome == VDTApplyOutcomeApplied && r.afterPriority.priority == 17);
+    assert(r.memoryOutcome == VDTApplyOutcomeApplied && r.afterMemlimit.pair.active == 96 && r.afterMemlimit.pair.inactive == 192);
+    assert(r.priorPriority.priority == 18 && r.priorMemlimit.pair.active == 1024 && r.priorMemlimit.pair.inactive == 2048);
+    assert(r.priorMemlimit.pair.activeAttrs == 0 && r.priorMemlimit.pair.inactiveAttrs == 1);
+    assert(FakeBackendLogCount(&f, "setPrio") == 2 && FakeBackendLogCount(&f, "setMem") == 2);
+
+    t.lastPriority = r.afterPriority.priority; t.lastPair = r.afterMemlimit.pair;
+    p->effectivePriority = 7; p->pair = (VDTMemlimitPair){777, 1, 888, 1};
+    VDTMemoryRule off = memoryRule(VDTPolicyRecordDisabled, 0, 0);
+    VDTJetsamRule offPriority = rawRule(VDTPolicyRecordDisabled, 0, 21);
+    VDTApplyProgram restore = VDTApplyBuildProgram(915, &off, &offPriority, 21, true, true, capsFull());
+    r = VDTApplyExecute(&restore, &t, FakeBackendVtable(), &f);
+    assert(r.jetsamOutcome == VDTApplyOutcomeSkipped && r.jetsamSkip == VDTApplySkipConflict);
+    assert(r.memoryOutcome == VDTApplyOutcomeSkipped && r.memorySkip == VDTApplySkipConflict);
+    assert(FakeBackendLogCount(&f, "setPrio") == 2 && FakeBackendLogCount(&f, "setMem") == 2);
+    assert(p->effectivePriority == 7 && p->pair.active == 777 && p->pair.inactive == 888);
+    assert(r.priorPriority.priority == 18 && r.priorMemlimit.pair.active == 1024 && r.priorMemlimit.pair.inactive == 2048);
+    puts("[ok] APPLY drift writes both sides, first originals survive rule changes, RESTORE drift still skips");
+}
+
 static void test_conditional_restore_and_per_operation_identity(void) {
     FakeBackend f; FakeBackendReset(&f); FakeProcess *p = prepareProcess(&f, 914, 18);
     VDTMemoryRule m = memoryRule(VDTPolicyRecordEnabled,64,128);
@@ -468,7 +517,8 @@ static void test_conditional_restore_and_per_operation_identity(void) {
     assert(r.priorMemlimit.hasValue && r.priorMemlimit.pair.active==1024);
     VDTApplyProgram apply=VDTApplyBuildProgram(914,&m,NULL,21,true,false,capsFull());
     r=VDTApplyExecute(&apply,&t,FakeBackendVtable(),&f);
-    assert(r.memorySkip==VDTApplySkipConflict && FakeBackendLogCount(&f,"setMem")==0);
+    assert(r.memoryOutcome==VDTApplyOutcomeApplied && r.memoryVerified && FakeBackendLogCount(&f,"setMem")==1);
+    assert(r.beforeMemlimit.pair.active==INT32_MAX && r.priorMemlimit.pair.active==1024);
     FakeBackendReset(&f); p=prepareProcess(&f,914,18); t=targetFor(p);
     apply=VDTApplyBuildProgram(914,&m,&j,21,false,false,capsFull());
     f.faultAfterCallback=2; f.callbackFault=FakeCallbackReplaceInstance; // GET -> pre-SET identity
@@ -491,6 +541,7 @@ static void test_conditional_restore_and_per_operation_identity(void) {
 }
 
 int main(void) {
+    test_apply_drift_keeps_first_originals();
     test_conditional_restore_and_per_operation_identity();
     test_constants();
     test_capability_gate();

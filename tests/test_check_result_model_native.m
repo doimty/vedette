@@ -28,7 +28,7 @@ static void checkShape(NSArray *rows) {
     REQ("three-rows", rows.count == 3);
     REQ("row-order", [rows[0][@"title"] isEqual:@"nice"] && [rows[1][@"title"] isEqual:@"Memory"] && [rows[2][@"title"] isEqual:@"Reclaim priority"]);
     for (NSDictionary *row in rows) {
-        for (NSString *key in @[@"title",@"state",@"tone",@"summary",@"timestamp",@"scope"])
+        for (NSString *key in @[@"title",@"state",@"tone",@"summary",@"timestamp",@"scope",@"compactState",@"compactTone"])
             REQ("string-fields", [row[key] isKindOfClass:NSString.class] && [row[key] length] > 0);
         REQ("stable-core-fields", [row[@"coreFields"] count] >= 6 && row[@"details"] == nil);
         for (NSString *collection in @[@"coreFields", @"diagnosticFields"]) {
@@ -47,6 +47,15 @@ int main(void) {
         NSDictionary *nice = @{@"state":@"applied",@"original":@0,@"observed":@10,@"error":@0,@"pendingCount":@0,@"targetCount":@1,@"checkedAt":@1700000010,@"oldestCheckedAt":@1700000000};
         NSDictionary *base = @{@"state":@"applied",@"memory":@"applied",@"priority":@"applied",@"memorySkip":@0,@"prioritySkip":@0,@"memoryObserved":@[@64,@1,@128,@1],@"priorityObserved":@15,@"checkedAt":@1700000005,@"pid":@42};
         NSArray *rows = project(nice,nil,nil,base); checkShape(rows);
+        for (NSDictionary *row in rows)
+            REQ("compact-confirmed", [row[@"compactState"] isEqual:@"Applied"] && [row[@"compactTone"] isEqual:@"ok"]);
+        NSArray *missing = project(nil,nil,nil,nil);
+        for (NSDictionary *row in missing)
+            REQ("compact-missing-not-success", [row[@"compactState"] isEqual:@"Not confirmed"] && ![row[@"compactTone"] isEqual:@"ok"]);
+        NSArray *pending = project(@{@"state":@"pending"},nil,nil,@{@"state":@"pending"});
+        for (NSDictionary *row in pending) REQ("compact-pending", [row[@"compactState"] isEqual:@"Pending"]);
+        NSMutableDictionary *restored = [base mutableCopy]; restored[@"memory"] = @"restored";
+        REQ("compact-restored", [project(nice,nil,nil,restored)[1][@"compactState"] isEqual:@"Restored"]);
         REQ("matched-side", [rows[1][@"state"] isEqual:@"Rule readback matched"] && [rows[2][@"state"] isEqual:@"Rule readback matched"]);
         REQ("target-vs-readback", contains(rows[1][@"summary"],@"Saved target (active / inactive): 64 / 128 MiB") && contains(rows[1][@"summary"],@"Last read back: 64 / 128 MiB"));
         REQ("hide-raw-pair", !contains(rows[1][@"summary"],@"Raw memory") && contains(detail(rows[1]),@"[64, 1, 128, 1]"));
@@ -72,6 +81,7 @@ int main(void) {
         changed[@"priority"]=@"conflict"; changed[@"prioritySkip"]=@0; changed[@"state"]=@"conflict";
         rows=project(nice,nil,nil,changed);
         REQ("priority-conflict", [rows[2][@"state"] isEqual:@"Changed; not overwritten"] && [rows[1][@"state"] isEqual:@"Rule readback matched"]);
+        REQ("compact-failure", [rows[2][@"compactState"] isEqual:@"Not applied"] && [rows[2][@"compactTone"] isEqual:@"warning"]);
         REQ("conflict-no-invention", contains(rows[2][@"summary"],@"Last read back: Not recorded"));
         changed=[base mutableCopy]; changed[@"state"]=@"conflict"; changed[@"memory"]=@"conflict";
         [changed removeObjectForKey:@"memoryObserved"]; rows=project(nice,nil,nil,changed);
@@ -86,6 +96,7 @@ int main(void) {
             }
         };
         rows=project(nice,nil,nil,sideReceipts);
+        REQ("compact-partly-confirmed", [rows[1][@"compactState"] isEqual:@"Partly confirmed"] && ![rows[1][@"compactTone"] isEqual:@"ok"]);
         REQ("side-receipt-observed", [rows[2][@"state"] isEqual:@"Changed; not overwritten"] &&
             contains(rows[2][@"summary"], @"Last read back: 21") && contains(detail(rows[2]), @"read-before-conflict"));
         changed=[base mutableCopy]; [changed removeObjectForKey:@"memory"]; [changed removeObjectForKey:@"priority"];
@@ -110,6 +121,7 @@ int main(void) {
         REQ("missing-field", contains(rows[1][@"summary"],@"Incomplete settings"));
         rows=project(nil,@{@"enabled":@NO,@"active":@64,@"inactive":@128},nil,nil);
         REQ("disabled-not-applied", contains(rows[1][@"summary"],@"Saved target (active / inactive): Off") && ![rows[1][@"tone"] isEqual:@"ok"]);
+        REQ("compact-disabled", [rows[1][@"compactState"] isEqual:@"Not enabled"] && ![rows[1][@"compactTone"] isEqual:@"ok"]);
         REQ("unknown-time", [rows[1][@"timestamp"] isEqual:@"Check time not recorded"]);
         changed=[base mutableCopy]; changed[@"multipleInstances"]=@YES;
         rows=project(nice,nil,nil,changed);

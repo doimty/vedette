@@ -26,3 +26,4 @@ python3 -B tests/test_rebuild_baseline.py
 python3 -B tests/test_formal_projection.py
 python3 -B tests/test_resource_writeback_contracts.py
 sudo python3 -B tests/test_resource_runtime_native.py --require-native
+sudo python3 -B tests/test_receipt_boot_native.py --require-native

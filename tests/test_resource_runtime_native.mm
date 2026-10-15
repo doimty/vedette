@@ -24,6 +24,7 @@ static VDTMemlimitPair kernelPair;
 static int32_t kernelPriority;
 static VDTProcessInstanceToken kernelToken={100,20};
 static BOOL alive=YES, supportedSystem=YES, failMemory=NO, failAfterWriteRead=NO, coercePriority=NO;
+static BOOL driftMemoryAfterObserve=NO, driftPriorityAfterObserve=NO;
 static const char *fixtureRelease="21.1.0";
 static unsigned writes, memoryWrites, priorityWrites, failCommit;
 static int fixtureWrite(VDTNiceStore *store,const char *name,const void *bytes,size_t length) {
@@ -52,14 +53,18 @@ static bool fakeToken(void *context,pid_t pid,VDTProcessInstanceToken *out) {
 }
 static bool getMemory(void *context,pid_t pid,VDTMemlimitPair *out) {
     (void)context; (void)pid; if (failAfterWriteRead && writes) { errno=EIO; return false; }
-    *out=kernelPair; return true;
+    *out=kernelPair;
+    if (driftMemoryAfterObserve) { kernelPair=(VDTMemlimitPair){444,1,555,1}; driftMemoryAfterObserve=NO; }
+    return true;
 }
 static bool setMemory(void *context,pid_t pid,const VDTMemlimitPair *pair) {
     (void)context; (void)pid; if (failMemory) { errno=EIO; return false; }
     ++writes; ++memoryWrites; kernelPair=*pair; return true;
 }
 static bool getPriority(void *context,pid_t pid,VDTJetsamObservation *out) {
-    (void)context; (void)pid; *out=(VDTJetsamObservation){kernelPriority}; return true;
+    (void)context; (void)pid; *out=(VDTJetsamObservation){kernelPriority};
+    if (driftPriorityAfterObserve) { kernelPriority=7; driftPriorityAfterObserve=NO; }
+    return true;
 }
 static bool setPriority(void *context,pid_t pid,int32_t band) {
     (void)context; (void)pid; ++writes; ++priorityWrites; kernelPriority=coercePriority?18:band; return true;
@@ -104,6 +109,7 @@ static void reset(void) {
     [NSFileManager.defaultManager removeItemAtPath:VDTResourceStateDirectory() error:nil]; restart();
     kernelPair=(VDTMemlimitPair){2048,0,2048,0}; kernelPriority=18; kernelToken=(VDTProcessInstanceToken){100,20};
     alive=YES; supportedSystem=YES; failMemory=NO; failAfterWriteRead=NO; coercePriority=NO;
+    driftMemoryAfterObserve=driftPriorityAfterObserve=NO;
     writes=memoryWrites=priorityWrites=failCommit=0; fixtureRelease="21.1.0";
 }
 int main(void) {
@@ -115,7 +121,7 @@ int main(void) {
         assert([NSFileManager.defaultManager createDirectoryAtPath:[testRoot stringByAppendingString:@"/var/tmp"]
             withIntermediateDirectories:YES attributes:nil error:nil]);
         NSDictionary *t=target(); VDTMemoryRule m=memory(64,128), changed=memory(96,192);
-        VDTJetsamRule p=priority(13), coerced=priority(19);
+        VDTJetsamRule p=priority(13), changedPriority=priority(17), coerced=priority(19);
         reset(); vdt_resource_reload(prefs(YES));
         assert(vdt_resource_apply(t,&m,&p) && writes==2 && kernelPair.active==64 && kernelPriority==13); // enabled rules apply without a separate opt-in
         reset(); vdt_resource_reload(@{@"enabled":@YES,@"resourceWriteEnabled":@NO});
@@ -129,6 +135,8 @@ int main(void) {
         // killed by the intended authority assertion, not a later commit case.
         reset(); vdt_resource_reload(prefs(YES)); failCommit=1;
         assert(!vdt_resource_apply(t,&m,NULL) && writes==0 && resourceStoreError==EIO);
+        reset(); vdt_resource_reload(prefs(YES)); failCommit=1;
+        assert(!vdt_resource_apply(t,NULL,&p) && writes==0 && priorityWrites==0 && resourceStoreError==EIO);
         reset(); vdt_resource_reload(prefs(YES));
         assert(vdt_resource_apply(t,&m,NULL) && writes==1 && kernelPair.active==64);
         assert(vdt_resource_apply(t,&changed,NULL) && writes==2 && kernelPair.active==96);
@@ -161,15 +169,66 @@ int main(void) {
         failAfterWriteRead=NO;
         for (NSString *key in resourceDue.allKeys) resourceDue[key]=@0;
         assert(vdt_resource_apply(t,NULL,NULL) && resourceRecords.count==0 && kernelPair.active==2048);
-        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
-        kernelPair=(VDTMemlimitPair){333,1,333,1};
-        assert(!vdt_resource_apply(t,NULL,NULL) && writes==1 && resourceRecords.count==1 && kernelPair.active==333);
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,&p));
+        kernelPair=(VDTMemlimitPair){333,1,333,1}; kernelPriority=5;
+        // Both the coordinator GET and the executor GET see independent drift.
+        driftMemoryAfterObserve=driftPriorityAfterObserve=YES;
+        assert(vdt_resource_apply(t,&m,&p) && memoryWrites==2 && priorityWrites==2 && kernelPair.active==64 && kernelPair.inactive==128 && kernelPriority==13);
+        assert(!driftMemoryAfterObserve && !driftPriorityAfterObserve);
+        kernelPair=(VDTMemlimitPair){777,1,888,1}; kernelPriority=6;
+        assert(vdt_resource_apply(t,&changed,&changedPriority) && memoryWrites==3 && priorityWrites==3 && kernelPair.active==96 && kernelPair.inactive==192 && kernelPriority==17);
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"original"] isEqual:@[@2048,@0,@2048,@0]]));
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"original"] isEqual:@18]);
+        restart(); vdt_resource_reload(prefs(YES));
+        assert(vdt_resource_apply(t,&changed,&changedPriority) && writes==6 && !resourceStoreError);
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"original"] isEqual:@[@2048,@0,@2048,@0]]));
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"original"] isEqual:@18]);
+        kernelPair=(VDTMemlimitPair){333,1,333,1}; kernelPriority=5;
+        assert(!vdt_resource_apply(t,NULL,NULL) && writes==6 && resourceRecords.count==1 && kernelPair.active==333 && kernelPriority==5);
+        assert(memoryWrites==3 && priorityWrites==3);
         NSString *conflictKey = VDTNiceRuleKey((VDTConfigType)[t[VDTConfigTypeKey] unsignedIntegerValue], t[VDTTargetNameKey]);
         NSDictionary *conflictRow = resourceRows[conflictKey];
         assert(conflictRow && [conflictRow[@"instanceCount"] unsignedIntegerValue] == 1);
         assert(([conflictRow[@"memory"] isEqual:@"conflict"] &&
             [conflictRow[@"memoryObserved"] isEqual:@[@333,@1,@333,@1]]));
         assert([conflictRow[@"memoryEvidence"] isEqual:@"read-before-conflict"] && conflictRow[@"memoryObservedAt"]);
+        assert([conflictRow[@"priority"] isEqual:@"conflict"] && [conflictRow[@"priorityObserved"] isEqual:@5]);
+        assert([conflictRow[@"priorityEvidence"] isEqual:@"read-before-conflict"] && conflictRow[@"priorityObservedAt"]);
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"original"] isEqual:@[@2048,@0,@2048,@0]]));
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"original"] isEqual:@18]);
+        // A later APPLY can recover a restore conflict; a subsequent restore
+        // still uses the pre-management values, never either drifted reading.
+        assert(vdt_resource_apply(t,&changed,&changedPriority) && writes==8 && kernelPair.active==96 && kernelPriority==17);
+        assert(vdt_resource_apply(t,NULL,NULL) && writes==10 && kernelPair.active==2048 && kernelPriority==18 && resourceRecords.count==0);
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,&p));
+        kernelPair=(VDTMemlimitPair){96,1,192,1}; kernelPriority=17;
+        assert(vdt_resource_apply(t,&changed,&changedPriority) && writes==2); // new target already observed, no SET
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"last"] isEqual:@[@96,@1,@192,@1]]));
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"last"] isEqual:@17]);
+        assert(vdt_resource_apply(t,NULL,NULL) && writes==4 && kernelPair.active==2048 && kernelPriority==18 && resourceRecords.count==0);
+        // Drift and a new rule do not bypass WAL or replace the first original.
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
+        kernelPair=(VDTMemlimitPair){333,1,333,1}; failCommit=1;
+        assert(!vdt_resource_apply(t,&changed,NULL) && writes==1 && memoryWrites==1 && resourceStoreError==EIO);
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"original"] isEqual:@[@2048,@0,@2048,@0]]));
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"last"] isEqual:@[@64,@1,@128,@1]]));
+        vdt_resource_reload(prefs(NO));
+        assert(!vdt_resource_apply(t,NULL,NULL) && writes==1 && kernelPair.active==333 && resourceRecords.count==1);
+        assert([resourceRecords[resourceInstance(t)][@"memory"][@"phase"] isEqual:@"conflict"]);
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,NULL,&p));
+        kernelPriority=5; failCommit=1;
+        assert(!vdt_resource_apply(t,NULL,&changedPriority) && writes==1 && priorityWrites==1 && resourceStoreError==EIO);
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"original"] isEqual:@18]);
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"last"] isEqual:@13]);
+        vdt_resource_reload(prefs(NO));
+        assert(!vdt_resource_apply(t,NULL,NULL) && writes==1 && kernelPriority==5 && resourceRecords.count==1);
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"phase"] isEqual:@"conflict"]);
+        reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
+        kernelPair=(VDTMemlimitPair){333,1,333,1}; failMemory=YES;
+        assert(!vdt_resource_apply(t,&changed,NULL) && writes==1);
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"last"] isEqual:@[@64,@1,@128,@1]]));
+        failMemory=NO; vdt_resource_reload(prefs(NO));
+        assert(!vdt_resource_apply(t,NULL,NULL) && writes==1 && kernelPair.active==333 && resourceRecords.count==1);
         reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         kernelToken=(VDTProcessInstanceToken){101,20};
         assert(vdt_resource_apply(t,NULL,NULL) && writes==1 && resourceRecords.count==0); // gone, zero write to reused PID
@@ -203,6 +262,19 @@ int main(void) {
         assert(!vdt_resource_apply(t,NULL,&coerced) && priorityWrites==1);
         restart(); vdt_resource_reload(prefs(YES));
         assert(!vdt_resource_apply(t,NULL,&coerced) && priorityWrites==1); // no repeated coercion writes
+        kernelPriority=5; restart(); vdt_resource_reload(prefs(YES));
+        assert(!vdt_resource_apply(t,NULL,&coerced) && priorityWrites==1 && kernelPriority==5);
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"phase"] isEqual:@"unverified"]);
+        assert([resourceRecords[resourceInstance(t)][@"priority"][@"original"] isEqual:@18]);
+        reset(); vdt_resource_reload(prefs(YES)); failAfterWriteRead=YES;
+        assert(!vdt_resource_apply(t,&m,NULL) && memoryWrites==1);
+        failAfterWriteRead=NO; kernelPair=(VDTMemlimitPair){333,1,333,1};
+        restart(); vdt_resource_reload(prefs(YES));
+        assert(!vdt_resource_apply(t,&m,NULL) && memoryWrites==1 && kernelPair.active==333);
+        assert([resourceRecords[resourceInstance(t)][@"memory"][@"phase"] isEqual:@"unverified"]);
+        assert(vdt_resource_apply(t,&changed,NULL) && memoryWrites==2 && kernelPair.active==96);
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"original"] isEqual:@[@2048,@0,@2048,@0]]));
+        assert(vdt_resource_apply(t,NULL,NULL) && memoryWrites==3 && kernelPair.active==2048 && resourceRecords.count==0);
         reset(); vdt_resource_reload(prefs(YES)); failMemory=YES;
         assert(!vdt_resource_apply(t,&m,&p) && priorityWrites==1 && memoryWrites==0 && resourceRecords.count==1);
         for (unsigned i=0;i<5;i++) {

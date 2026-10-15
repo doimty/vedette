@@ -49,7 +49,7 @@ typedef enum {
     VDTApplySkipIdentity,       // identity missing/mismatched: fail closed
     VDTApplySkipReadbackFailed, // pre-write read failed: fail closed
     VDTApplySkipBackendMissing, // backend lacks a required function
-    VDTApplySkipConflict        // current value drifted from the last owned observation
+    VDTApplySkipConflict        // RESTORE current value drifted from the last owned observation
 } VDTApplySkip;
 
 typedef enum {
@@ -86,8 +86,9 @@ typedef struct {
     bool hasPriorPriority;  // recorded pre-management effective priority
     int32_t priorPriority;
     // Optional ownership observations, not the requested policy values. Restore
-    // requires both prior and last; an already-managed SET with last must also
-    // compare its fresh GET to last. Zero-initialize for a first unmanaged SET.
+    // requires both prior and last and compares its fresh GET to last. APPLY
+    // may write after drift, but must keep any recorded prior unchanged.
+    // Zero-initialize for a first unmanaged SET.
     bool hasLastPair;
     VDTMemlimitPair lastPair;
     bool hasLastPriority;
@@ -151,8 +152,9 @@ bool VDTApplyProgramHasPriority(const VDTApplyProgram *program);
 
 // Executes the program. Every GET/SET is bracketed by instance-token checks;
 // identity failure latches off all subsequent writes. Successful writes that
-// cannot be verified remain AppliedUnverified/RestoreUnconfirmed. Restore and
-// managed SET compare the current value to last before writing (non-CAS).
+// cannot be verified remain AppliedUnverified/RestoreUnconfirmed. Only RESTORE
+// compares the current value to last before writing (non-CAS); APPLY still
+// requires a successful pre-write GET and matching identity.
 // Original snapshots survive skips/failures; false backend outputs are ignored.
 VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
     const VDTApplyTarget *target,

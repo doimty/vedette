@@ -10,7 +10,7 @@ index 9c030ba..6c6529f 100644
  tests/fixtures/appex-ui21-inverse.patch whitespace=-blank-at-eol
 +tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index 4c5466c..0db0394 100644
+index 4c5466c..abe78b4 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
 @@ -8,10 +8,11 @@ on:
@@ -72,7 +72,7 @@ index 4c5466c..0db0394 100644
        PACKAGE_ARCH: ${{ matrix.package_arch }}
        PACKAGE_PREFIX: ${{ matrix.prefix }}
 -      PACKAGE_VERSION: 1.1.13-1+rc1
-+      PACKAGE_VERSION: 1.1.14-3
++      PACKAGE_VERSION: 1.1.14-4
        FINALPACKAGE: 1
        PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
  
@@ -131,7 +131,7 @@ index ccc20f0..e92c40c 100644
  }
  #endif
 diff --git a/VDTNiceRuntime.mm b/VDTNiceRuntime.mm
-index 4e5b626..855af38 100644
+index 4e5b626..a368d00 100644
 --- a/VDTNiceRuntime.mm
 +++ b/VDTNiceRuntime.mm
 @@ -3,8 +3,11 @@
@@ -287,7 +287,7 @@ index 4e5b626..855af38 100644
      return setpriority(PRIO_PROCESS, (id_t)pid, value) == 0 ? 0 : (errno ?: EIO);
  }
  static int saveCallback(const VDTNiceRecord *record, void *raw) {
-@@ -161,12 +230,36 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -161,12 +230,39 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
      if (!data || data.length > VDT_NICE_STORE_LIMIT) return EFBIG;
      return VDTNiceStoreWrite(store, name, data.bytes, data.length);
  }
@@ -304,8 +304,11 @@ index 4e5b626..855af38 100644
 +            CFGetTypeID((__bridge CFTypeRef)stamp) == CFBooleanGetTypeID() ||
 +            !isfinite([stamp doubleValue]) || [stamp doubleValue] <= 0 ||
 +            [stamp doubleValue] >= 253402300800.0) return EFBIG;
-+        NSDictionary *fallback = @{@"version": @1, @"boot": receipt[@"boot"],
-+            @"rules": @{}, @"statusError": @(EFBIG), @"updatedAt": stamp};
++        NSMutableDictionary *fallback = [@{@"version": @1, @"boot": receipt[@"boot"],
++            @"rules": @{}, @"statusError": @(EFBIG), @"updatedAt": stamp} mutableCopy];
++        // Preserve the original receipt's identity; never stamp an old payload
++        // with a newly queried boot-session UUID while degrading it.
++        if (receipt[@"bootSession"]) fallback[@"bootSession"] = receipt[@"bootSession"];
 +        // No checkedAt/readback or removal-ack fields: this records a failed
 +        // receipt publication, not a kernel check or successful restoration.
 +        data = [NSPropertyListSerialization dataWithPropertyList:fallback
@@ -325,7 +328,7 @@ index 4e5b626..855af38 100644
      }
      return self;
  }
-@@ -191,27 +284,42 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -191,27 +287,42 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
          return;
      }
      if (error) { loadError = error; return; }
@@ -379,7 +382,7 @@ index 4e5b626..855af38 100644
  }
  - (void)checkRestoreRequest {
      BOOL wasPaused = paused;
-@@ -235,7 +343,7 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -235,7 +346,7 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
  - (void)reload:(NSDictionary *)prefs {
      rules = VDTNiceRulesFromPrefs(prefs);
      receiptDirty = YES;
@@ -388,7 +391,7 @@ index 4e5b626..855af38 100644
      VDTNiceStoreClose(&store); loaded = NO;
      [self load];
      if (rules.count > VDTNiceMaximumRecords) loadError = E2BIG;
-@@ -252,20 +360,56 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -252,20 +363,56 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
      if (!error) records = next;
      return error;
  }
@@ -449,7 +452,7 @@ index 4e5b626..855af38 100644
      if (r.captured) outcome[@"original"] = @(r.originalValue);
      outcomes[key] = outcome;
      receiptDirty = YES;
-@@ -275,8 +419,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -275,8 +422,11 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
          for (NSString *oldKey in [outcomes.allKeys copy]) {
              if (records[oldKey]) continue;
              [outcomes removeObjectForKey:oldKey];
@@ -461,7 +464,7 @@ index 4e5b626..855af38 100644
              if (outcomes.count <= VDTNiceMaximumRecords) break;
          }
      }
-@@ -286,30 +433,47 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -286,30 +436,47 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
      if (loadError || store.directoryFD < 0) return;
      for (NSString *key in [records.allKeys copy]) {
          NSDictionary *target = records[key][@"target"];
@@ -514,7 +517,7 @@ index 4e5b626..855af38 100644
      [self load];
      if (loadError) return NO;
      for (NSString *key in [records.allKeys copy]) [self runTarget:records[key][@"target"] enabled:NO desired:0];
-@@ -318,14 +482,17 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -318,14 +485,17 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
  }
  - (void)publish {
      if (!receiptDirty || store.directoryFD < 0 || !boot) return;
@@ -538,7 +541,7 @@ index 4e5b626..855af38 100644
      }
      NSMutableDictionary *groups = [NSMutableDictionary dictionary];
      for (NSString *key in outcomes) {
-@@ -336,24 +503,46 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -336,24 +506,46 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
          [group addObject:@{@"key": key, @"outcome": outcome}];
      }
      NSMutableDictionary *rows = [NSMutableDictionary dictionary];
@@ -588,7 +591,7 @@ index 4e5b626..855af38 100644
              }
          }
          NSUInteger restoring = 0;
-@@ -368,19 +557,21 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
+@@ -368,19 +560,21 @@ static int writePlist(VDTNiceStore *store, const char *name, NSDictionary *objec
          if (loadError) { state = boot ? @"state-unavailable" : @"boot-unavailable"; error = loadError; }
          row[@"state"] = state; row[@"error"] = @(error);
          row[@"targetCount"] = @(targetCount); row[@"appliedCount"] = @(appliedCount);
@@ -597,11 +600,13 @@ index 4e5b626..855af38 100644
 +        if (newestCheck > 0) { row[@"checkedAt"] = @(newestCheck); row[@"oldestCheckedAt"] = @(oldestCheck); }
          rows[key] = row;
      }
-     NSDictionary *receipt = @{@"version": @1, @"boot": boot, @"rules": rows,
+-    NSDictionary *receipt = @{@"version": @1, @"boot": boot, @"rules": rows,
++    NSDictionary *receipt = VDTNiceReceiptWithBootSession(@{@"version": @1, @"boot": boot, @"rules": rows,
          @"recordCount": @(records.count), @"pendingRestoreCount": @(totalPendingRestore),
          @"paused": @(paused), @"restoreNonce": restoreNonce ?: @"", @"storeError": @(loadError),
-         @"updatedAt": @(NSDate.date.timeIntervalSince1970)};
+-        @"updatedAt": @(NSDate.date.timeIntervalSince1970)};
 -    int error = writePlist(&store, VDT_NICE_STATUS, receipt);
++        @"updatedAt": @(NSDate.date.timeIntervalSince1970)});
 +    int error = writeStatusReceipt(&store, receipt);
      if (!error) {
          receiptDirty = NO;
@@ -613,17 +618,26 @@ index 4e5b626..855af38 100644
  }
  @end
  static VDTNiceCoordinator *coordinator(void) {
-@@ -392,4 +583,5 @@ void vdt_nice_reload(NSDictionary *prefs) { [coordinator() reload:prefs]; }
+@@ -392,4 +586,5 @@ void vdt_nice_reload(NSDictionary *prefs) { [coordinator() reload:prefs]; }
  void vdt_nice_reconcile(void) { [coordinator() reconcile]; }
  void vdt_nice_apply(NSDictionary *target) { [coordinator() apply:target]; }
  void vdt_nice_publish(void) { [coordinator() publish]; }
 +NSTimeInterval vdt_nice_next_retry_delay(void) { return [coordinator() nextRetryDelay]; }
  BOOL vdt_nice_restore_all(void) { return [coordinator() restoreAll]; }
 diff --git a/VDTNiceShared.h b/VDTNiceShared.h
-index 2cdd13d..16a7876 100644
+index 2cdd13d..dcf34ce 100644
 --- a/VDTNiceShared.h
 +++ b/VDTNiceShared.h
-@@ -23,16 +23,32 @@ NSString *VDTNiceBootToken(void);
+@@ -20,19 +20,41 @@ BOOL VDTNiceParseValue(id value, int *result);
+ NSString *VDTNiceRuleKey(VDTConfigType type, NSString *identifier);
+ NSString *VDTNiceStateDirectory(void);
+ NSString *VDTNiceBootToken(void);
++// Display receipts use the stable boot-session UUID when available. The legacy
++// timeval token remains unchanged for recovery journals and removal handshakes.
++// Old receipts without a session field still require an exact legacy match;
++// a present but invalid/unavailable session never falls back to that match.
++NSDictionary *VDTNiceReceiptWithBootSession(NSDictionary *receipt);
++BOOL VDTNiceReceiptBootMatches(NSDictionary *receipt);
  // First-entry-wins. Each rule contains type/identifier/value/valid/revision,
  // requestedEnabled (per-rule), enabled (folds global switch). CPU keys are not read.
  NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *prefs);
@@ -659,7 +673,7 @@ index 2cdd13d..16a7876 100644
  }
  #endif
 diff --git a/VDTNiceShared.mm b/VDTNiceShared.mm
-index f7c52fd..b19db19 100644
+index f7c52fd..ecbb707 100644
 --- a/VDTNiceShared.mm
 +++ b/VDTNiceShared.mm
 @@ -37,8 +37,9 @@ BOOL VDTNiceParseValue(id value, int *result) {
@@ -674,10 +688,38 @@ index f7c52fd..b19db19 100644
      return [NSString stringWithFormat:@"%lu:%@", (unsigned long)type, identifier];
  }
  NSString *VDTNiceStateDirectory(void) { return jbroot(@"/var/tmp/com.doimty.vedette.nice"); }
-@@ -48,18 +49,48 @@ NSString *VDTNiceBootToken(void) {
+@@ -48,18 +49,76 @@ NSString *VDTNiceBootToken(void) {
          boot.tv_sec <= 0 || boot.tv_usec < 0 || boot.tv_usec >= 1000000) return nil;
      return [NSString stringWithFormat:@"%lld:%ld", (long long)boot.tv_sec, (long)boot.tv_usec];
  }
++static NSString *niceReceiptBootSession(void) {
++    char value[37] = {}; size_t length = sizeof(value);
++    int saved = errno;
++    int error = sysctlbyname("kern.bootsessionuuid", value, &length, NULL, 0);
++    errno = saved;
++    if (error || length != sizeof(value) || value[sizeof(value) - 1] != '\0' || strlen(value) != 36) return nil;
++    NSString *raw = [[NSString alloc] initWithBytes:value length:36 encoding:NSASCIIStringEncoding];
++    NSUUID *session = raw ? [[NSUUID alloc] initWithUUIDString:raw] : nil;
++    return session.UUIDString;
++}
++NSDictionary *VDTNiceReceiptWithBootSession(NSDictionary *receipt) {
++    NSString *session = niceReceiptBootSession();
++    if (!session) return receipt; // Unsupported systems keep exact legacy matching.
++    NSMutableDictionary *result = [receipt mutableCopy];
++    result[@"bootSession"] = session;
++    return [result copy];
++}
++BOOL VDTNiceReceiptBootMatches(NSDictionary *receipt) {
++    if (![receipt isKindOfClass:NSDictionary.class]) return NO;
++    id session = receipt[@"bootSession"];
++    if (session) {
++        // Do not accept another boot, malformed data, or an inaccessible UUID
++        // just because the legacy wall-clock timestamp happens to match.
++        return [session isKindOfClass:NSString.class] && [session isEqual:niceReceiptBootSession()];
++    }
++    id legacy = receipt[@"boot"];
++    return [legacy isKindOfClass:NSString.class] && [legacy isEqual:VDTNiceBootToken()];
++}
 +static NSString *niceSection(VDTConfigType type) {
 +    switch (type) {
 +        case VDTConfigTypeApp: return @"appConfigs";
@@ -726,7 +768,7 @@ index f7c52fd..b19db19 100644
              NSString *key = VDTNiceRuleKey((VDTConfigType)type, identifier);
              if (!key || rules[key]) continue; // Includes disabled first entries.
              id flag = entry[VDT_NICE_ENABLED_KEY];
-@@ -75,12 +106,39 @@ NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *pr
+@@ -75,12 +134,39 @@ NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *pr
              }
              rules[key] = @{@"identifier": identifier, @"type": @(type), @"value": @(value),
                  @"requestedEnabled": @(requested), @"enabled": @(global && requested && valid),
@@ -767,7 +809,7 @@ index f7c52fd..b19db19 100644
  static BOOL preferenceError(NSError **error, int code, NSString *text) {
      if (error) *error = [NSError errorWithDomain:@"com.doimty.vedette.nice-preferences" code:code
          userInfo:@{NSLocalizedDescriptionKey: text}];
-@@ -126,18 +184,23 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type, NSString *k
+@@ -126,18 +212,23 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type, NSString *k
      NSDictionary *old = readWritablePrefs(error);
      if (!old) return NO;
      NSMutableDictionary *prefs = [old mutableCopy];
@@ -795,7 +837,7 @@ index f7c52fd..b19db19 100644
      NSMutableDictionary *entry = index == NSNotFound ? [@{idKey: identifier} mutableCopy] : [section[index] mutableCopy];
      entry[key] = isSwitch ? value : @(numeric);
      if (isSwitch && [value boolValue] && !entry[VDT_NICE_VALUE_KEY]) entry[VDT_NICE_VALUE_KEY] = @0;
-@@ -150,13 +213,39 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type, NSString *k
+@@ -150,13 +241,38 @@ BOOL VDTNiceSavePreference(NSString *identifier, VDTConfigType type, NSString *k
      notify_post([PREFS_CHANGED_NN UTF8String]);
      return YES;
  }
@@ -833,19 +875,19 @@ index f7c52fd..b19db19 100644
 -    NSDictionary *rule = key ? VDTNiceRulesFromPrefs(prefs)[key] : nil;
 -    if (key && !rule) rule = @{@"identifier": identifier, @"type": @(type), @"value": @0,
 -        @"valid": @YES, @"enabled": @NO, @"requestedEnabled": @NO, @"revision": @""};
-     NSString *boot = VDTNiceBootToken();
+-    NSString *boot = VDTNiceBootToken();
 -    if (!rule || !boot) return nil;
-+    if (!key || !boot) return nil;
++    if (!key) return nil;
      VDTNiceStore store;
      if (VDTNiceStoreOpen(VDTNiceStateDirectory().fileSystemRepresentation, 0, &store)) return nil;
      void *bytes = NULL; size_t length = 0;
-@@ -167,11 +256,30 @@ NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type, NS
+@@ -167,11 +283,30 @@ NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type, NS
      id raw = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
      if (![raw isKindOfClass:NSDictionary.class]) return nil;
      NSDictionary *receipt = raw;
 -    if (![receipt[@"version"] isEqual:@1] || ![receipt[@"boot"] isEqual:boot] ||
 -        ![receipt[@"rules"] isKindOfClass:NSDictionary.class]) return nil;
-+    if (![receipt[@"version"] isEqual:@1] || ![receipt[@"boot"] isEqual:boot]) return nil;
++    if (![receipt[@"version"] isEqual:@1] || !VDTNiceReceiptBootMatches(receipt)) return nil;
 +    id statusError = receipt[@"statusError"];
 +    if (statusError) {
 +        const char *encoding = [statusError isKindOfClass:NSNumber.class] ? [statusError objCType] : NULL;
@@ -1727,7 +1769,7 @@ index 7907eab..718b954 100644
                                           &notify_pid_token,
                                           dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
 diff --git a/ci/stage_release.py b/ci/stage_release.py
-index 0d1f328..8636ec7 100644
+index 0d1f328..30aea6c 100644
 --- a/ci/stage_release.py
 +++ b/ci/stage_release.py
 @@ -14,11 +14,11 @@ def stage_release(stage,scheme):
@@ -1737,21 +1779,21 @@ index 0d1f328..8636ec7 100644
      if not control.is_file() or control.is_symlink(): raise ValueError('missing/unsafe staged control')
      text=control.read_text();fields=dict(line.split(':',1) for line in text.splitlines() if ':' in line)
 -    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.13-1+rc1':
-+    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-3':
++    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-4':
          raise ValueError('wrong staged package/version')
      if fields.get('Architecture','').strip()!=ARCH[scheme]: raise ValueError('staged scheme/architecture mismatch')
      old='Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist'
      if text.count(old)!=1: raise ValueError('unexpected dependency declaration')
      if scheme=='rootless':
 diff --git a/control b/control
-index ffb89a4..6b8a664 100644
+index ffb89a4..cbe5a67 100644
 --- a/control
 +++ b/control
 @@ -1,10 +1,10 @@
  Package: com.doimty.vedette
  Name: Vedette
 -Version: 1.1.13-1+rc1
-+Version: 1.1.14-3
++Version: 1.1.14-4
  Architecture: iphoneos-arm
 -Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级
 +Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级，支持内存上限及回收优先级规则
@@ -2594,10 +2636,10 @@ index c420cd3..f43536e 100644
  VedettePrefs_INSTALL_PATH = /Library/PreferenceBundles
  VedettePrefs_CFLAGS = -fobjc-arc -I$(THEOS_PROJECT_DIR)
 diff --git a/vedetteprefs/Resources/en.lproj/Localizable.strings b/vedetteprefs/Resources/en.lproj/Localizable.strings
-index 2ef0acf..0979532 100644
+index 2ef0acf..367c899 100644
 --- a/vedetteprefs/Resources/en.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/en.lproj/Localizable.strings
-@@ -126,5 +126,120 @@
+@@ -126,5 +126,128 @@
  "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band.";
  "Invalid resource rule" = "Invalid resource rule";
  "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value." = "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value.";
@@ -2718,11 +2760,19 @@ index 2ef0acf..0979532 100644
 +"Nice receipt exceeds size limit" = "Nice receipt exceeds size limit";
 +"Nice receipt unavailable" = "Nice receipt unavailable";
 +"Receipt saved at" = "Receipt saved at";
++"Last apply result" = "Last apply result";
++"Applied" = "Applied";
++"Restored" = "Restored";
++"Not enabled" = "Not enabled";
++"Pending" = "Pending";
++"Not confirmed" = "Not confirmed";
++"Not applied" = "Not applied";
++"Partly confirmed" = "Partly confirmed";
 diff --git a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-index ed4be14..90c6398 100644
+index ed4be14..bf01c4b 100644
 --- a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-@@ -126,5 +126,120 @@
+@@ -126,5 +126,128 @@
  "Saved reclaim-priority rules and applied state stay separate: this build only saves. Bands are device-version specific; 0 = idle, -1 writes the default band." = "保存的回收优先级规则与生效状态分开显示：当前版本仅保存。档位因系统版本而异；0 = idle、-1 会实际写入默认档。";
  "Invalid resource rule" = "资源规则无效";
  "Enter a whole number from -1 to 2147483647 for memory, or a signed 32-bit raw priority band. Switches require a Boolean value." = "内存请输入 -1 至 2147483647 的整数，优先级档位请输入有符号 32 位 raw 整数。开关仅接受布尔值。";
@@ -2843,6 +2893,14 @@ index ed4be14..90c6398 100644
 +"Nice receipt exceeds size limit" = "回执存储超限";
 +"Nice receipt unavailable" = "回执不可用";
 +"Receipt saved at" = "回执保存时间";
++"Last apply result" = "上次应用结果";
++"Applied" = "已生效";
++"Restored" = "已恢复";
++"Not enabled" = "未启用";
++"Pending" = "待处理";
++"Not confirmed" = "待确认";
++"Not applied" = "未成功";
++"Partly confirmed" = "部分已确认";
 diff --git a/vedetteprefs/VDTExtensionListController.h b/vedetteprefs/VDTExtensionListController.h
 index 92fc862..d82e04d 100644
 --- a/vedetteprefs/VDTExtensionListController.h

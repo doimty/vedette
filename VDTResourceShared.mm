@@ -62,8 +62,8 @@ static NSDictionary *resourcePrefsForUpdate(void) {
     return [prefs isKindOfClass:NSDictionary.class] ? prefs : nil;
 }
 NSDictionary *VDTResourceMatchingStatus(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
-    NSString *key = VDTNiceRuleKey(type, identifier), *boot = VDTNiceBootToken();
-    if (!key || !boot) return nil;
+    NSString *key = VDTNiceRuleKey(type, identifier);
+    if (!key) return nil;
     VDTNiceStore store;
     if (VDTNiceStoreOpen(VDTResourceStateDirectory().fileSystemRepresentation, 0, &store)) return nil;
     void *bytes = NULL; size_t length = 0;
@@ -72,7 +72,7 @@ NSDictionary *VDTResourceMatchingStatus(NSString *identifier, VDTConfigType type
     NSData *data = [NSData dataWithBytesNoCopy:bytes length:length freeWhenDone:YES];
     id raw = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
     if (![raw isKindOfClass:NSDictionary.class] || ![raw[@"version"] isEqual:@1] ||
-        ![raw[@"boot"] isEqual:boot] || ![raw[@"configuration"] isEqual:VDTResourceConfiguration(prefs)]) return nil;
+        !VDTNiceReceiptBootMatches(raw) || ![raw[@"configuration"] isEqual:VDTResourceConfiguration(prefs)]) return nil;
     NSDictionary *receipt = raw;
     if ([receipt[@"storeError"] intValue]) return @{@"state": @"store-error", @"storeError": receipt[@"storeError"]};
     if (![receipt[@"rows"] isKindOfClass:NSDictionary.class]) return nil;

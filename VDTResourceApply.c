@@ -296,7 +296,8 @@ VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
             if (!report.priorPriority.hasValue) {
                 report.priorPriority = report.beforePriority;
             }
-            if (target->hasLastPriority && before.effectivePriority != target->lastPriority) {
+            // APPLY may replace a drifted value; only RESTORE needs ownership.
+            if (restore && target->hasLastPriority && before.effectivePriority != target->lastPriority) {
                 report.jetsamOutcome = VDTApplyOutcomeSkipped;
                 report.jetsamSkip = VDTApplySkipConflict;
                 continue;
@@ -373,7 +374,8 @@ VDTApplyReport VDTApplyExecute(const VDTApplyProgram *program,
             if (!report.priorMemlimit.hasValue) {
                 report.priorMemlimit = report.beforeMemlimit;
             }
-            if (target->hasLastPair && !pairEquals(before, target->lastPair)) {
+            // Keep the exact-pair drift guard for RESTORE, not APPLY.
+            if (restore && target->hasLastPair && !pairEquals(before, target->lastPair)) {
                 report.memoryOutcome = VDTApplyOutcomeSkipped;
                 report.memorySkip = VDTApplySkipConflict;
                 continue;

@@ -49,6 +49,34 @@ NSString *VDTNiceBootToken(void) {
         boot.tv_sec <= 0 || boot.tv_usec < 0 || boot.tv_usec >= 1000000) return nil;
     return [NSString stringWithFormat:@"%lld:%ld", (long long)boot.tv_sec, (long)boot.tv_usec];
 }
+static NSString *niceReceiptBootSession(void) {
+    char value[37] = {}; size_t length = sizeof(value);
+    int saved = errno;
+    int error = sysctlbyname("kern.bootsessionuuid", value, &length, NULL, 0);
+    errno = saved;
+    if (error || length != sizeof(value) || value[sizeof(value) - 1] != '\0' || strlen(value) != 36) return nil;
+    NSString *raw = [[NSString alloc] initWithBytes:value length:36 encoding:NSASCIIStringEncoding];
+    NSUUID *session = raw ? [[NSUUID alloc] initWithUUIDString:raw] : nil;
+    return session.UUIDString;
+}
+NSDictionary *VDTNiceReceiptWithBootSession(NSDictionary *receipt) {
+    NSString *session = niceReceiptBootSession();
+    if (!session) return receipt; // Unsupported systems keep exact legacy matching.
+    NSMutableDictionary *result = [receipt mutableCopy];
+    result[@"bootSession"] = session;
+    return [result copy];
+}
+BOOL VDTNiceReceiptBootMatches(NSDictionary *receipt) {
+    if (![receipt isKindOfClass:NSDictionary.class]) return NO;
+    id session = receipt[@"bootSession"];
+    if (session) {
+        // Do not accept another boot, malformed data, or an inaccessible UUID
+        // just because the legacy wall-clock timestamp happens to match.
+        return [session isKindOfClass:NSString.class] && [session isEqual:niceReceiptBootSession()];
+    }
+    id legacy = receipt[@"boot"];
+    return [legacy isKindOfClass:NSString.class] && [legacy isEqual:VDTNiceBootToken()];
+}
 static NSString *niceSection(VDTConfigType type) {
     switch (type) {
         case VDTConfigTypeApp: return @"appConfigs";
@@ -244,8 +272,7 @@ NSDictionary *VDTNiceMatchingStatus(NSString *identifier, VDTConfigType type, NS
 }
 NSDictionary *VDTNiceMatchingStatusWithHost(NSString *identifier, VDTConfigType type, NSString *host, NSDictionary *prefs) {
     NSString *key = VDTNiceRuleKey(type, identifier);
-    NSString *boot = VDTNiceBootToken();
-    if (!key || !boot) return nil;
+    if (!key) return nil;
     VDTNiceStore store;
     if (VDTNiceStoreOpen(VDTNiceStateDirectory().fileSystemRepresentation, 0, &store)) return nil;
     void *bytes = NULL; size_t length = 0;
@@ -256,7 +283,7 @@ NSDictionary *VDTNiceMatchingStatusWithHost(NSString *identifier, VDTConfigType 
     id raw = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
     if (![raw isKindOfClass:NSDictionary.class]) return nil;
     NSDictionary *receipt = raw;
-    if (![receipt[@"version"] isEqual:@1] || ![receipt[@"boot"] isEqual:boot]) return nil;
+    if (![receipt[@"version"] isEqual:@1] || !VDTNiceReceiptBootMatches(receipt)) return nil;
     id statusError = receipt[@"statusError"];
     if (statusError) {
         const char *encoding = [statusError isKindOfClass:NSNumber.class] ? [statusError objCType] : NULL;

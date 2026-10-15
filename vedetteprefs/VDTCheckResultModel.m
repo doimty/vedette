@@ -219,6 +219,22 @@ static NSDictionary *VDTCheckRow(NSString *title, NSDictionary *rule, NSDictiona
     NSString *state = VDTCheckText(localize, stateKey);
     NSString *tone = VDTCheckTone(stateKey);
     if ([stateKey isEqual:@"Readback matches; no write needed"] || [stateKey isEqual:@"Write readback confirmed"]) tone = @"ok";
+    // Short display only. Preserve the evidence/diagnostics model below; a
+    // missing result must never turn into success merely to shorten the UI.
+    NSString *compactState = @"Not confirmed", *compactTone = @"neutral";
+    if ([tone isEqual:@"ok"]) {
+        BOOL restored = [stateKey isEqual:@"Nice state restored"] || [stateKey isEqual:@"Recorded values restored"];
+        compactState = multiple ? @"Partly confirmed" : (restored ? @"Restored" : @"Applied");
+        compactTone = multiple ? @"neutral" : @"ok";
+    } else if ([tone isEqual:@"warning"] || [@[@"Read-only on this system", @"Process identity not verified",
+        @"Nice state protected", @"Resource rules are paused", @"Nice state paused"] containsObject:stateKey]) {
+        compactState = @"Not applied"; compactTone = @"warning";
+    } else if ([@[@"Nice state pending", @"Resource work pending", @"Restoration pending"] containsObject:stateKey]) {
+        compactState = @"Pending";
+    } else if ([stateKey isEqual:@"Nice state disabled"] || ((!receipt || [stateKey isEqual:@"No resource write requested"]) &&
+        (!rule || VDTCheckFalse(rule[nice ? @"requestedEnabled" : @"enabled"])))) {
+        compactState = @"Not enabled";
+    }
     NSString *timestamp = VDTCheckTime(receipt, nice, localize);
     NSString *scope = VDTCheckText(localize, @"Instance scope not recorded");
     if (multiple) scope = VDTCheckText(localize, nice ? @"Multiple instances; individual readbacks unavailable"
@@ -292,6 +308,7 @@ static NSDictionary *VDTCheckRow(NSString *title, NSDictionary *rule, NSDictiona
             hasObserved ? VDTCheckDate(receipt[[side stringByAppendingString:@"ReadStartedAt"]]) : nil, localize);
     }
     return @{@"title": VDTCheckText(localize, title), @"state": state, @"tone": tone,
+        @"compactState": VDTCheckText(localize, compactState), @"compactTone": compactTone,
         @"summary": [summary componentsJoinedByString:@"\n"], @"timestamp": timestamp, @"scope": scope,
         @"coreFields": core, @"diagnosticFields": diagnostics};
 }

@@ -1,4 +1,27 @@
-# 回执证据与状态缓存：1.1.14-3 构建候选
+# 资源回执与紧凑结果：1.1.14-4 构建候选
+
+## 组合修复提交与云编译（2026-10-15）
+
+用户明确“提交推送编译”。以 `1a5e270` 为基线，提交到新分支 `fix/resource-receipts-compact-ui-20261015`，版本升为 `1.1.14-4`：合并以下资源 APPLY 放行与 STATUS 稳定身份修复，并将结果区精简为 nice / 内存 / 回收优先级的名称加短结论，删除常显目标、读回、时间、范围、详情入口及冗余刷新行。仅已有确认读回可显示成功，保留未知、失败、关闭及多实例范围边界；nice 重试和既有只读更新保留。
+
+本批实际 Foundation 运行、编译后变异和两个方案链接由 GitHub Actions 验证；结果以对应 tested SHA 为准，不预先宣称通过。不包含安装、设备更改或 APT 发布。下文“本地未提交/未构建”是实现阶段的历史快照，不能当作本轮最终状态。
+
+## 资源 APPLY 取消冲突跳过（2026-10-15，本地增量）
+
+基线 `1a5e27009f9b6bb2a793f18e3f1891c965291eeb`，分支 `feat/check-evidence-layout-20261015`。用户明确“把冲突跳过取消掉”，范围仅内存/回收优先级资源 APPLY，不改 CPU/nice，也不改 boot、journal/request 身份或状态发布。
+
+- 协调器与 C 执行器都只在 RESTORE 拒绝外部漂移；APPLY 在同实例、成功 GET、耐久 WAL 等既有前提下继续写当前规则目标。RESTORE 仍要求 last/wanted（协调器）或 last（执行器）匹配，不把别人的后来值恢复掉。
+- 同一实例的首次 original 不随漂移、规则变更、重启或失败重新取样；成功后仍读回并检查身份。GET 失败、身份失配、WAL 失败仍不允许相应 SET。未确认的相同 wanted 即使再次漂移也不重复 SET；仅保留既有有限重试，不新增轮询、强写定时器或无限重试。
+- C 与 Foundation 定向夹具覆盖两种资源的 APPLY 漂移、协调器到执行器两次 GET 间漂移、改规则与 original 保持、RESTORE 冲突及两侧 WAL 失败。原生旧 `ignore-drift` 变异替换为恢复保护删除/重新阻挡 APPLY 两个定向变异；C 同步覆盖两侧恢复放宽、两侧 APPLY 回退和优先级 original 覆盖。其它变异及既有门禁保留（当前 C 22 个、协调器 12 个）。
+- 本轮本地仅定向 C smoke 与静态/Python 检查；旧 C 实现已编译成功后被新 APPLY 成功断言抓住，修复后 C smoke 通过。Apple/Foundation 编译与运行、变异实际执行、全量门禁及真机均未因此宣称通过；不 commit/push、不触发构建或设备操作。下文较早构建授权及验证目录是历史记录，不是本轮授权或本轮通过证据。
+
+## STATUS 稳定启动身份（2026-10-15，本地增量）
+
+设备只读快照显示：资源回执 `configuration` 与当前偏好精确相等，8 行结果存在且 `storeError=0`，但运行时缓存的 `boot=1792047648:697174` 与系统当前 `1792047648:798738` 不同，导致旧读取器在取行之前拒绝整份回执。不能把这种显示缺失等同于资源未执行，也不能仅靠此快照断定此前 nice 等待的唯一原因。
+
+新生成的 nice/资源 STATUS 使用 `kern.bootsessionuuid` 附加稳定 `bootSession`。有字段时严格核对完整 UUID；字段非法、不同或当前查询失败均拒绝，不退回旧时间戳。没有字段的旧回执仍严格匹配完整旧 `boot`，不使用按秒/微秒容差。规则版本与资源配置仍精确匹配；错误信封保留原会话身份，不产生检查读回或成功证据。
+
+仅修改显示缓存：`VDTNiceBootToken`、journal/request 和 nicectl 恢复确认仍冻结，不给无稳定启动证据的旧 journal 自动认领身份。因此管理器重启后的旧日志匹配与移除握手受 boottime 漂移影响的既有风险不属于本次已解决范围。新增真实 Foundation/Store/fake-sysctl 夹具及四个定向源码变异接入云端 `--require-native`；本地静态检查不算原生运行，未构建/装机。
 
 ## 回执布局与 nice 状态缓存云编译（2026-10-15）
 
@@ -37,10 +60,10 @@
 
 1. 保存目标实例、首次 original、last、待写 wanted/phase 后才 SET；保存失败零写。
 2. original 不被再次改值覆盖；SET 成功但读回或提交失败保留意图，不当成未发生。
-3. 同 boot 重启从 pending 重新观测；已达到 wanted 不重复 SET。未确认改道不反复抢写；发现外部漂移不覆盖。只允许与 last/wanted 匹配的当前值进入后续写。
+3. 同 boot 重启从 pending 重新观测；已达到 wanted 不重复 SET。APPLY 不因外部漂移拒写，但未确认的相同 wanted 不反复抢写；RESTORE 仍只允许与 last/wanted 匹配的当前值进入后续写，外部漂移不覆盖。
 4. 恢复也是先记录意图，确切读回原记录后才清该侧；部分失败保留另一侧。空 journal 最后提交失败可以重试，不陷入永久错误。
 5. journal 存储 `darwinMajor`，original/last/wanted 与传输共同使用对应代际值域：Darwin21 为 0..21，22+ 为 0..210；现代 180/210 档可保存、重启后加载并恢复。同 boot 错配或损坏记录闭锁，不同 boot 丢弃旧实例恢复授权。不同 token/ESRCH 才能清消亡记录，无效 BSD 读数不算死亡。记录上限 2048，达到上限只拒新目标，不破坏既有恢复。
-6. 初始动作+最多两次自动延期，成功/漂移/已确认改道不耗无效写预算。旧代次回调失效；没有无限强制覆写。
+6. 初始动作+最多两次自动延期；已达到目标、RESTORE 漂移和已确认改道不耗无效写预算，APPLY 漂移沿用既有写预算。旧代次回调失效；没有无限强制覆写。
 7. 移除使用 root 工具的 `resource-restore-for-removal`，以 boot+nonce、paused、storeError=0、recordCount=0 与实际空 journal 共同确认。失败保留文件，dpkg best-effort 继续；重装 `resource-resume` 解除移除暂停。
 
 恢复使用 GET 观测值，**不是** requested/default/assertion 原系统策略的无损快照；read-compare-write **不是 CAS**。RunningBoard、其他管理者的写入和极小 PID 复用窗口仍是设备验证事项。卸载失败可能需目标退出、重启或重装重试，不承诺卸载后所有活进程立即原样。

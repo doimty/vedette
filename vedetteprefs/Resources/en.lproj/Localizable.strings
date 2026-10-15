@@ -243,3 +243,11 @@
 "Nice receipt exceeds size limit" = "Nice receipt exceeds size limit";
 "Nice receipt unavailable" = "Nice receipt unavailable";
 "Receipt saved at" = "Receipt saved at";
+"Last apply result" = "Last apply result";
+"Applied" = "Applied";
+"Restored" = "Restored";
+"Not enabled" = "Not enabled";
+"Pending" = "Pending";
+"Not confirmed" = "Not confirmed";
+"Not applied" = "Not applied";
+"Partly confirmed" = "Partly confirmed";

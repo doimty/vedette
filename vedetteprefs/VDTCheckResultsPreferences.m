@@ -3,7 +3,6 @@
 #import "VDTCheckResultModel.h"
 #import "VDTCheckResultCell.h"
 #import "VDTCheckResultReader.h"
-#import "VDTCheckDetailsController.h"
 #import "VDTProcessConfiguration.h"
 #import "VDTNicePreferences.h"
 #import "VDTLocalization.h"
@@ -15,7 +14,6 @@
     __weak VDTProcessConfiguration *_owner;
     NSArray<PSSpecifier *> *_specifiers;
     NSArray<PSSpecifier *> *_resultRows;
-    PSSpecifier *_details;
     BOOL _buildingSpecifiers, _nicePending, _refreshScheduled;
     int _resourceToken;
     BOOL _resourceObserverRegistered;
@@ -66,7 +64,6 @@
     NSDictionary *context = [self checkContext];
     NSArray *models = VDTReadCheckResultModels(context, _nicePending,
         ^NSString *(NSString *key) { return VDTLoc(self.class, key); });
-    [_details setProperty:context forKey:@"vdtCheckContext"];
     for (NSUInteger index = 0; index < _resultRows.count; index++) {
         PSSpecifier *row = _resultRows[index];
         [row setProperty:models[index] forKey:@"vdtCheckModel"];
@@ -79,9 +76,8 @@
     _buildingSpecifiers = YES;
     if (!_specifiers) {
         NSMutableArray *rows = [NSMutableArray array];
-        PSSpecifier *group = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Recent check results")
+        PSSpecifier *group = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Last apply result")
             target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [group setProperty:VDTLoc(self.class, @"Historical receipt, not live monitoring. Refresh only reloads saved results.") forKey:@"footerText"];
         [rows addObject:group];
         NSMutableArray *results = [NSMutableArray array];
         for (NSUInteger index = 0; index < 3; index++) {
@@ -89,12 +85,6 @@
             [results addObject:result]; [rows addObject:result];
         }
         _resultRows = [results copy];
-        _details = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Check details")
-            target:nil set:nil get:nil detail:VDTCheckDetailsController.class cell:PSLinkCell edit:nil];
-        [rows addObject:_details];
-        PSSpecifier *refresh = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Refresh display")
-            target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-        [refresh setButtonAction:@selector(refreshDisplay)]; [rows addObject:refresh];
         [rows addObject:[PSSpecifier emptyGroupSpecifier]];
         PSSpecifier *retry = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Check / retry nice")
             target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];

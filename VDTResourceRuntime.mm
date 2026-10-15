@@ -293,15 +293,17 @@ static BOOL resourceExecuteSide(NSDictionary *target, NSMutableDictionary *recor
             [resourceAttempts removeObjectForKey:attemptKey];
             detail[name] = @"restored"; return resourcePersist();
         }
-        if (!atLast && !atWanted) {
+        if (restore && !atLast && !atWanted) {
             detail[[name stringByAppendingString:@"ExecutionSkip"]] = @(VDTApplySkipConflict);
             detail[[name stringByAppendingString:@"Evidence"]] = @"read-before-conflict";
             side[@"phase"] = @"conflict"; record[name] = side; resourceRecords[instance] = record;
             resourcePersist(); detail[name] = @"conflict"; return NO;
         }
-        // Reconcile a crash between SET and the final journal commit. Unknown
-        // coercions deliberately remain conflict instead of guessing ownership.
-        side[@"last"] = current;
+        // RESTORE reconciles a crash only at last/wanted, never an unknown
+        // coercion. APPLY may write after drift, but its pre-SET observation
+        // must not become owned last if WAL/SET fails. Keep the first original
+        // and the unverified same-wanted guard below unchanged.
+        if (atLast || atWanted) side[@"last"] = current;
     } else if (restore) { detail[name] = @"restore-pending"; return NO; }
     else side = [@{@"original": current, @"last": current, @"phase": @"verified"} mutableCopy];
     id wanted = restore ? side[@"original"] : (memory ? resourcePair(op->pair) : @(op->priorityBand));
@@ -314,7 +316,7 @@ static BOOL resourceExecuteSide(NSDictionary *target, NSMutableDictionary *recor
     }
     if ([current isEqual:wanted]) {
         if (restore) [record removeObjectForKey:name];
-        else { side[@"phase"] = @"verified"; [side removeObjectForKey:@"wanted"]; record[name] = side; }
+        else { side[@"last"] = current; side[@"phase"] = @"verified"; [side removeObjectForKey:@"wanted"]; record[name] = side; }
         if (record[@"memory"] || record[@"priority"]) resourceRecords[instance] = record;
         else [resourceRecords removeObjectForKey:instance];
         detail[name] = restore ? @"restored" : @"applied"; detail[[name stringByAppendingString:@"Observed"]] = current;
@@ -494,16 +496,18 @@ NSTimeInterval vdt_resource_next_retry_delay(void) {
 }
 void vdt_resource_publish(void) {
     if (!resourceBoot || !resourceConfiguration) return;
-    NSDictionary *receipt = @{@"version": @1, @"boot": resourceBoot, @"configuration": resourceConfiguration,
+    NSMutableDictionary *receipt = [VDTNiceReceiptWithBootSession(@{@"version": @1, @"boot": resourceBoot, @"configuration": resourceConfiguration,
         @"recordCount": @(resourceRecords.count), @"storeError": @(resourceStoreError ?: resourceControlError), @"paused": @(resourcePaused),
-        @"restoreNonce": resourceRestoreNonce ?: @"", @"rows": resourceRows ?: @{}};
+        @"restoreNonce": resourceRestoreNonce ?: @"", @"rows": resourceRows ?: @{}}) mutableCopy];
     NSData *data = [NSPropertyListSerialization dataWithPropertyList:receipt format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
     if (!data || data.length > VDT_NICE_STORE_LIMIT) {
         // Keep the status file readable and explicit; never silently publish a
         // truncated receipt or report a success that lost its evidence.
-        receipt = @{ @"version": @1, @"boot": resourceBoot, @"configuration": resourceConfiguration,
+        id bootSession = receipt[@"bootSession"];
+        receipt = [@{ @"version": @1, @"boot": resourceBoot, @"configuration": resourceConfiguration,
             @"recordCount": @(resourceRecords.count), @"storeError": @(EFBIG),
-            @"paused": @(resourcePaused), @"restoreNonce": resourceRestoreNonce ?: @"", @"rows": @{} };
+            @"paused": @(resourcePaused), @"restoreNonce": resourceRestoreNonce ?: @"", @"rows": @{} } mutableCopy];
+        if (bootSession) receipt[@"bootSession"] = bootSession;
         data = [NSPropertyListSerialization dataWithPropertyList:receipt
             format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
     }

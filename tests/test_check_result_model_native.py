@@ -33,9 +33,14 @@ def source_contracts():
     assert 'Nice execution status' not in nice and 'Check / retry nice' not in nice
     assert adapter.count('VDTLoc(self.class, @"Check / retry nice")') == 1
     assert 'index < 3' in adapter and 'VDTCheckResultSpecifier(@{})' in adapter
-    assert 'detail:VDTCheckDetailsController.class cell:PSLinkCell' in adapter
-    assert 'vdtCheckContext' in adapter
-    assert '[_details setProperty:context forKey:@"vdtCheckContext"]' in adapter
+    assert 'VDTCheckDetailsController' not in adapter and 'vdtCheckContext' not in adapter
+    assert '@"Check details"' not in adapter and '@"Refresh display"' not in adapter
+    assert 'footerText' not in adapter and '@"Last apply result"' in adapter
+    assert '[refresh setButtonAction:' not in adapter
+    assert 'compactState' in cell and 'compactTone' in cell
+    for removed in ('checkSummary', 'checkTime', 'checkScope', 'model[@"state"]', 'model[@"summary"]'):
+        assert removed not in cell, 'expanded result content returned: ' + removed
+    assert cell.count('[UILabel new]') == 2, 'compact row must contain only title and status'
     assert 'VDTCheckResultSpecifier(@{}, NO)' not in adapter
     assert 'VDTNiceMatchingStatusWithHost(' in reader and 'VDTResourceMatchingStatus(' in reader
     assert 'VDTCheckResultModels(' in reader
@@ -77,12 +82,15 @@ def source_contracts():
                  'Multiple instances; individual readbacks unavailable', 'Recorded instances: %@',
                  'Original: %@', 'errno: %@', 'Pending targets: %@', 'Selected PID: %@', 'Skip code: %@',
                  'Nice receipt exceeds size limit', 'Nice receipt unavailable', 'Receipt saved at'}
+    required |= {'Last apply result', 'Applied', 'Restored', 'Not enabled', 'Pending', 'Not confirmed', 'Not applied', 'Partly confirmed'}
     validate_keys(required, en, zh)
-    print('PASS check-result source wiring, CPU/nice freeze, localization (not UIKit)')
+    print('PASS check-result source wiring, compact rows, CPU/nice freeze, localization (not UIKit)')
 
 
 def mutants(source):
     changes = [
+        ('compact-unknown-as-success', 'NSString *compactState = @"Not confirmed", *compactTone = @"neutral";',
+         'NSString *compactState = @"Applied", *compactTone = @"ok";', 'compact-missing-not-success'),
         ('policy-is-success', 'case VDTApplySkipUnsupported: return @"Rule not applied";',
          'case VDTApplySkipUnsupported: return @"Rule readback matched";', 'skip-not-success'),
         ('unlimited-active-attrs', '[pair[1] longLongValue] == VDT_APPLY_UNLIMITED_ATTRS &&',

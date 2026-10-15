@@ -243,3 +243,11 @@
 "Nice receipt exceeds size limit" = "回执存储超限";
 "Nice receipt unavailable" = "回执不可用";
 "Receipt saved at" = "回执保存时间";
+"Last apply result" = "上次应用结果";
+"Applied" = "已生效";
+"Restored" = "已恢复";
+"Not enabled" = "未启用";
+"Pending" = "待处理";
+"Not confirmed" = "待确认";
+"Not applied" = "未成功";
+"Partly confirmed" = "部分已确认";

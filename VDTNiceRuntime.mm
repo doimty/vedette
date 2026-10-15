@@ -243,8 +243,11 @@ static int writeStatusReceipt(VDTNiceStore *store, NSDictionary *receipt) {
             CFGetTypeID((__bridge CFTypeRef)stamp) == CFBooleanGetTypeID() ||
             !isfinite([stamp doubleValue]) || [stamp doubleValue] <= 0 ||
             [stamp doubleValue] >= 253402300800.0) return EFBIG;
-        NSDictionary *fallback = @{@"version": @1, @"boot": receipt[@"boot"],
-            @"rules": @{}, @"statusError": @(EFBIG), @"updatedAt": stamp};
+        NSMutableDictionary *fallback = [@{@"version": @1, @"boot": receipt[@"boot"],
+            @"rules": @{}, @"statusError": @(EFBIG), @"updatedAt": stamp} mutableCopy];
+        // Preserve the original receipt's identity; never stamp an old payload
+        // with a newly queried boot-session UUID while degrading it.
+        if (receipt[@"bootSession"]) fallback[@"bootSession"] = receipt[@"bootSession"];
         // No checkedAt/readback or removal-ack fields: this records a failed
         // receipt publication, not a kernel check or successful restoration.
         data = [NSPropertyListSerialization dataWithPropertyList:fallback
@@ -561,10 +564,10 @@ static int writeStatusReceipt(VDTNiceStore *store, NSDictionary *receipt) {
         if (newestCheck > 0) { row[@"checkedAt"] = @(newestCheck); row[@"oldestCheckedAt"] = @(oldestCheck); }
         rows[key] = row;
     }
-    NSDictionary *receipt = @{@"version": @1, @"boot": boot, @"rules": rows,
+    NSDictionary *receipt = VDTNiceReceiptWithBootSession(@{@"version": @1, @"boot": boot, @"rules": rows,
         @"recordCount": @(records.count), @"pendingRestoreCount": @(totalPendingRestore),
         @"paused": @(paused), @"restoreNonce": restoreNonce ?: @"", @"storeError": @(loadError),
-        @"updatedAt": @(NSDate.date.timeIntervalSince1970)};
+        @"updatedAt": @(NSDate.date.timeIntervalSince1970)});
     int error = writeStatusReceipt(&store, receipt);
     if (!error) {
         receiptDirty = NO;

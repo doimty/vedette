@@ -370,6 +370,7 @@ int main(void) {
         NSDictionary *priorRow = VDTNiceMatchingStatus(@"test-worker", VDTConfigTypeDaemon, prefs(YES,5,@"degrade-a"));
         REQUIRE([priorRow[@"state"] isEqual:@"applied"] && [priorRow[@"observed"] isEqual:@5]);
         NSData *priorBytes = statusBytes();
+        id priorSession = statusFile(c)[@"bootSession"];
         REQUIRE(priorBytes.length > 0 && priorBytes.length < VDT_NICE_STORE_LIMIT);
         NSString *liveInstance = instanceKey(target());
         REQUIRE([c->outcomes[liveInstance][@"state"] isEqual:@"applied"]);
@@ -407,6 +408,8 @@ int main(void) {
         REQUIRE(degradedReceipt && degradedBytes.length < VDT_NICE_STORE_LIMIT && degradedBytes.length < 8192);
         REQUIRE(![degradedBytes isEqual:priorBytes]);
         REQUIRE([degradedReceipt[@"version"] isEqual:@1] && [degradedReceipt[@"boot"] isEqual:VDTNiceBootToken()]);
+        REQUIRE([(degradedReceipt[@"bootSession"] ?: NSNull.null) isEqual:(priorSession ?: NSNull.null)]);
+        REQUIRE(VDTNiceReceiptBootMatches(degradedReceipt));
         REQUIRE([degradedReceipt[@"statusError"] isEqual:@(EFBIG)] && [degradedReceipt[@"rules"] count] == 0);
         NSTimeInterval degradedAt = [degradedReceipt[@"updatedAt"] doubleValue];
         REQUIRE(degradedAt >= publishStart && degradedAt <= publishEnd);
@@ -455,11 +458,14 @@ int main(void) {
         // writeStatusReceipt keeps the boot and the publication time of the
         // receipt it could not store, and no success-only fields.
         NSDictionary *crafted = @{@"version": @1, @"boot": @"fixture-boot-before-degrade", @"rules": @{},
+            @"bootSession": @"00000000-0000-4000-8000-000000000001",
             @"updatedAt": @1234567.5, @"checkedAt": @999.0, @"recordCount": @3, @"paused": @NO,
             @"restoreNonce": @"fix", @"observed": @(-9), @"filler": [NSMutableData dataWithLength:3 * 1024 * 1024]};
         REQUIRE(writeStatusReceipt(&c->store, crafted) == 0);
         NSDictionary *envelope = statusFile(c);
         REQUIRE([envelope[@"version"] isEqual:@1] && [envelope[@"boot"] isEqual:@"fixture-boot-before-degrade"]);
+        REQUIRE([envelope[@"bootSession"] isEqual:crafted[@"bootSession"]]);
+        REQUIRE(!VDTNiceReceiptBootMatches(envelope));
         REQUIRE([envelope[@"statusError"] isEqual:@(EFBIG)] && [envelope[@"updatedAt"] isEqual:@1234567.5]);
         REQUIRE([envelope[@"rules"] isKindOfClass:NSDictionary.class] && [envelope[@"rules"] count] == 0);
         for (NSString *dropped in @[@"checkedAt", @"recordCount", @"paused", @"restoreNonce", @"observed", @"filler"])
