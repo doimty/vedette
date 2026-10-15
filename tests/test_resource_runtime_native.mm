@@ -165,8 +165,8 @@ int main(void) {
         kernelPair=(VDTMemlimitPair){333,1,333,1};
         assert(!vdt_resource_apply(t,NULL,NULL) && writes==1 && resourceRecords.count==1 && kernelPair.active==333);
         NSDictionary *conflictRow = resourceRows[resourceInstance(t)];
-        assert([conflictRow[@"memory"] isEqual:@"conflict"] &&
-            [conflictRow[@"memoryObserved"] isEqual:@[@333,@1,@333,@1]]);
+        assert(([conflictRow[@"memory"] isEqual:@"conflict"] &&
+            [conflictRow[@"memoryObserved"] isEqual:@[@333,@1,@333,@1]]));
         assert([conflictRow[@"memoryEvidence"] isEqual:@"read-before-conflict"] && conflictRow[@"memoryObservedAt"]);
         reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         kernelToken=(VDTProcessInstanceToken){101,20};
