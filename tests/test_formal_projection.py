@@ -11,7 +11,7 @@ class FormalProjection(unittest.TestCase):
     def test_two_fixed_ancestors_and_formal_upgrade(self):
         for revision in (FORMAL_BASE, '788f43bcb17a2c3890ed8bdeea3f1a97660e13c7'):
             subprocess.run(['git', 'merge-base', '--is-ancestor', revision, 'HEAD'], cwd=ROOT, check=True)
-        for previous in ('1.1.14-1', '1.1.13-4', '1.1.13-3', '1.1.13-2', '1.1.13-1+rc1', '1.1.12-3', '1.1.10-1+ui21'):
+        for previous in ('1.1.14-2', '1.1.14-1', '1.1.13-4', '1.1.13-3', '1.1.13-2', '1.1.13-1+rc1', '1.1.12-3', '1.1.10-1+ui21'):
             subprocess.run(['dpkg', '--compare-versions', FORMAL_VERSION, 'gt', previous], check=True)
 
     def test_literal_projection_all_layers(self):
