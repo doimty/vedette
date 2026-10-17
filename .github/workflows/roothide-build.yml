@@ -47,8 +47,10 @@ jobs:
 
       - name: Install roothide Theos
         run: |
-          git clone --recursive https://github.com/roothide/theos.git "$THEOS"
+          git clone --no-checkout https://github.com/roothide/theos.git "$THEOS"
+          git -C "$THEOS" fetch --depth 1 origin 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
           git -C "$THEOS" checkout --detach 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
+          git -C "$THEOS" submodule update --init --recursive
 
       - name: Install iPhoneOS16.5 SDK
         run: |

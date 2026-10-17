@@ -26,6 +26,7 @@ class ProcessPersistenceTests(unittest.TestCase):
         source = (ROOT / "Vedette.xm").read_text()
         manager = (ROOT / "VDTProcessManager.mm").read_text()
         header = (ROOT / "VDTProcessManager.h").read_text()
+        workflow = (ROOT / ".github/workflows/roothide-build.yml").read_text()
 
         self.assertIn('"com.udevs.vedette.process-table-changed"', common)
         self.assertIn("notify_post(PROCESS_TABLE_CHANGED_NN)", source)
@@ -45,6 +46,8 @@ class ProcessPersistenceTests(unittest.TestCase):
         self.assertIn("void VDTReconcileProcessRules", header)
         self.assertNotIn("received_new_proc(pid_t", manager)
         self.assertNotIn("pids_with_identifier_and_type", manager)
+        self.assertIn("git -C \"$THEOS\" fetch --depth 1 origin 88506b2c22e9e07dd4ed055f23c9e398a117a2c7", workflow)
+        self.assertIn("git -C \"$THEOS\" submodule update --init --recursive", workflow)
         reconcile = manager.split("void VDTReconcileProcessRules", 1)[1].split(
             "void VDTRestoreProcessesMatchingPrefs", 1
         )[0]
