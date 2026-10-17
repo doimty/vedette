@@ -9,6 +9,7 @@
 
 __BEGIN_DECLS
 int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
+int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize);
 __END_DECLS
 
 #endif

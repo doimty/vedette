@@ -9,6 +9,7 @@ on:
       - roothide-stable-marker2
       - roothide-no-rb-probe1
       - roothide-stable-probe3
+      - feature/process-list-reconciliation
     paths:
       - '.github/workflows/roothide-build.yml'
       - '**/*.h'
@@ -72,6 +73,7 @@ jobs:
           
           __BEGIN_DECLS
           int proc_pidpath(int pid, void * buffer, uint32_t buffersize);
+          int proc_pidinfo(int pid, int flavor, uint64_t arg, void * buffer, int buffersize);
           __END_DECLS
           
           #endif
@@ -87,6 +89,9 @@ jobs:
           cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/"
           cp -R /tmp/AltList/.theos/obj/AltList.framework "$THEOS/vendor/lib/iphone/roothide/"
           cp /tmp/AltList/*.h "$THEOS/vendor/include/AltList/"
+
+      - name: Run process reconciliation host contracts
+        run: python3 tests/test_process_persistence.py -v
 
       - name: Build package
         run: |

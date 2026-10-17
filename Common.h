@@ -33,7 +33,7 @@ static inline NSString *VDTPrefsPathTmp(void) {
 #define PREFS_PATH VDTPrefsPath()
 #define PREFS_PATH_TMP VDTPrefsPathTmp()
 
-#define NOTIFY_PID_NN "com.udevs.vedette.notify-pid"
+#define PROCESS_TABLE_CHANGED_NN "com.udevs.vedette.process-table-changed"
 #define PREFS_CHANGED_NN @"com.udevs.vedette.prefschanged"
 #define RESTORE_ALL_MONITORS_NN @"com.udevs.vedette.restore-all-monitors"
 
