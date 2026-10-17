@@ -16,7 +16,6 @@ extern "C" {
 void VDTSetPrefs(NSDictionary *newPrefs);
 NSDictionary *VDTGetPrefs(void);
 
-NSArray* pids_with_identifier_and_type(NSArray <NSString *>*identifiers, NSArray <NSNumber *> *types);
 void monitor_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages, NSArray <NSNumber *> *intervals);
 void throttle_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages);
 // Must be called on the serialized process-management queue.

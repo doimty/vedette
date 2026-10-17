@@ -226,56 +226,6 @@ static void VDTApplyProcessAction(pid_t pid, VDTCPUAction action,
     }
 }
 
-#pragma mark - PID lookup
-
-NSArray *pids_with_identifier_and_type(NSArray<NSString *> *identifiers,
-                                       NSArray<NSNumber *> *types){
-    if (!identifiers.count || identifiers.count != types.count) return @[];
-
-    NSMutableSet *daemonNames = [NSMutableSet set];
-    NSMutableSet *appBundleIDs = [NSMutableSet set];
-    for (NSUInteger index = 0; index < identifiers.count; index++){
-        id identifier = identifiers[index];
-        id type = types[index];
-        if (![identifier isKindOfClass:[NSString class]] || ![identifier length]
-            || ![type isKindOfClass:[NSNumber class]])
-            continue;
-        switch ([type unsignedLongValue]){
-            case VDTConfigTypeApp:
-                [appBundleIDs addObject:identifier];
-                break;
-            case VDTConfigTypeDaemon:
-                [daemonNames addObject:identifier];
-                break;
-            default:
-                break;
-        }
-    }
-
-    if (!daemonNames.count && !appBundleIDs.count) return @[];
-    size_t pidCount = 0;
-    pid_t *buffer = VDTCreatePIDSnapshot(&pidCount);
-    if (!buffer) return @[];
-
-    NSMutableArray *matchedPIDs = [NSMutableArray array];
-    for (size_t index = 0; index < pidCount; index++){
-        pid_t pid = buffer[index];
-        if (pid <= 0) continue;
-        NSString *processName = daemonNames.count ? name_from_pid(pid) : nil;
-        if (processName && [daemonNames containsObject:processName]){
-            [matchedPIDs addObject:@(pid)];
-            continue;
-        }
-        if (appBundleIDs.count){
-            NSString *bundleIdentifier = appproxy_from_pid(pid).bundleIdentifier;
-            if (bundleIdentifier && [appBundleIDs containsObject:bundleIdentifier])
-                [matchedPIDs addObject:@(pid)];
-        }
-    }
-    free(buffer);
-    return [matchedPIDs copy];
-}
-
 #pragma mark - Monitor / throttle
 
 void monitor_pids(NSArray <NSNumber *> *pids, NSArray <NSNumber *> *percentages, NSArray <NSNumber *> *intervals){

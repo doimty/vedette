@@ -44,6 +44,7 @@ class ProcessPersistenceTests(unittest.TestCase):
         self.assertIn("com.apple.Preferences", manager)
         self.assertIn("void VDTReconcileProcessRules", header)
         self.assertNotIn("received_new_proc(pid_t", manager)
+        self.assertNotIn("pids_with_identifier_and_type", manager)
         reconcile = manager.split("void VDTReconcileProcessRules", 1)[1].split(
             "void VDTRestoreProcessesMatchingPrefs", 1
         )[0]
