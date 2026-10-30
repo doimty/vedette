@@ -116,6 +116,10 @@ def mutants(source):
         ('summary-ignore-latest-batch', ' || ![batch isEqual:latest[@"batch"]]', '', 'summary-stale-latest'),
         ('drop-local-pending', 'else if (localPending) compactState = @"Checking…";',
          'else if (localPending) compactState = @"Confirmed";', 'nice-local-pending'),
+        ('diagnostic-target-expands', 'memory ? VDTCheckRawPair(executionTarget) : VDTCheckNumber(executionTarget)',
+         'memory ? (VDTCheckPair(executionTarget) ? [executionTarget description] : nil) : VDTCheckNumber(executionTarget)', 'target-pair-compact'),
+        ('partial-coverage-looks-complete', 'counts.applied == counts.total',
+         'counts.applied > 0', 'summary-partial-coverage'),
     ]
     for name, old, new, expected in changes:
         assert source.count(old) == 1, 'non-unique mutation: ' + name

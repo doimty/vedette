@@ -16,6 +16,14 @@
 "Enable Vedette" = "启用 Vedette";
 "Enable this rule" = "启用此规则";
 "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required." = "启用后将在进程列表中置顶。规则生效还需要开启总开关，并设置有效参数。";
+"Edit" = "修改";
+"Check result" = "检查结果";
+"Check summary" = "检查概况";
+"Check history" = "检查记录";
+"Evidence and process" = "进程与证据";
+"Execution and readback" = "执行与读回";
+"Coverage and diagnostics" = "覆盖与状态";
+"Confirmed %@/%@ identified instances." = "已确认 %@/%@ 个已识别实例。";
 "Edit settings" = "返回修改设置";
 "Enabled" = "启用";
 "Enabled Configurations" = "已启用";

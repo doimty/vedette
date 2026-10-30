@@ -144,7 +144,9 @@ def localization_keys(source):
     required |= {'nice', 'Memory', 'Reclaim priority', 'Recent check results', FOOTER,
                  'Confirmed', 'Confirmed (%@/%@)', 'Partly confirmed (%@/%@)',
                  'Selected instance confirmed', 'Checking…', 'Paused', 'No restoration needed',
-                 'No write requested', 'Saved target (active / inactive): %@', 'Saved target: %@'}
+                 'No write requested', 'Saved target (active / inactive): %@', 'Saved target: %@',
+                 'Edit', 'Check result', 'Check summary', 'Check history', 'Evidence and process',
+                 'Execution and readback', 'Coverage and diagnostics', 'Confirmed %@/%@ identified instances.'}
     return required
 
 

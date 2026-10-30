@@ -26,6 +26,9 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
 @interface VDTCheckResultCell ()
 @property(nonatomic, strong) UILabel *checkTitle;
 @property(nonatomic, strong) UILabel *checkState;
+@property(nonatomic, strong) UIImageView *statusIcon;
+@property(nonatomic, strong) UIView *statusSpacer;
+@property(nonatomic, strong) UIStackView *statusStack;
 @property(nonatomic, strong) UIStackView *heading;
 @end
 @implementation VDTCheckResultCell
@@ -47,7 +50,23 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
     self.checkTitle.textColor = UIColor.labelColor;
     [self.checkTitle setContentHuggingPriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
     [self.checkState setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
-    self.heading = [[UIStackView alloc] initWithArrangedSubviews:@[self.checkTitle, self.checkState]];
+    self.statusIcon = [UIImageView new];
+    self.statusIcon.contentMode = UIViewContentModeScaleAspectFit;
+    self.statusIcon.isAccessibilityElement = NO;
+    self.statusIcon.hidden = YES;
+    NSLayoutConstraint *iconWidth = [self.statusIcon.widthAnchor constraintEqualToConstant:16];
+    iconWidth.priority = 999;
+    iconWidth.active = YES;
+    [self.statusIcon.heightAnchor constraintEqualToConstant:16].active = YES;
+    self.statusSpacer = [UIView new];
+    self.statusSpacer.isAccessibilityElement = NO;
+    [self.statusSpacer setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [self.checkState setContentHuggingPriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
+    self.statusStack = [[UIStackView alloc] initWithArrangedSubviews:@[self.statusSpacer, self.statusIcon, self.checkState]];
+    self.statusStack.axis = UILayoutConstraintAxisHorizontal;
+    self.statusStack.alignment = UIStackViewAlignmentCenter;
+    self.statusStack.spacing = 6;
+    self.heading = [[UIStackView alloc] initWithArrangedSubviews:@[self.checkTitle, self.statusStack]];
     self.heading.spacing = 12;
     UIStackView *column = self.heading;
     column.translatesAutoresizingMaskIntoConstraints = NO;
@@ -67,12 +86,14 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
     CGFloat available = MAX(0, width - self.contentView.directionalLayoutMargins.leading
         - self.contentView.directionalLayoutMargins.trailing);
     CGFloat needed = [self.checkTitle sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width
-        + [self.checkState sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width + 12;
+        + [self.checkState sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width
+        + (self.statusIcon.hidden ? 6 : 28) + 12;
     BOOL large = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory)
         || (available > 0 && needed > available);
     self.heading.axis = large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
     self.heading.alignment = large ? UIStackViewAlignmentFill : UIStackViewAlignmentFirstBaseline;
     self.heading.spacing = large ? 5 : 12;
+    self.statusSpacer.hidden = large;
     BOOL rtl = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
     self.checkState.textAlignment = large ? NSTextAlignmentNatural : (rtl ? NSTextAlignmentLeft : NSTextAlignmentRight);
 }
@@ -101,13 +122,24 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
     if (![model isKindOfClass:NSDictionary.class]) model = @{};
     self.checkTitle.text = [model[@"title"] isKindOfClass:NSString.class] ? model[@"title"] : @"";
     self.checkState.text = [model[@"compactState"] isKindOfClass:NSString.class] ? model[@"compactState"] : @"";
-    self.checkState.textColor = VDTCheckStateColor(model[@"compactTone"]);
+    NSString *tone = [model[@"compactTone"] isKindOfClass:NSString.class] ? model[@"compactTone"] : @"neutral";
+    NSString *symbol = [tone isEqual:@"warning"] ? @"exclamationmark.triangle.fill" : nil;
+    self.statusIcon.image = symbol ? [UIImage systemImageNamed:symbol] : nil;
+    self.statusIcon.hidden = !self.statusIcon.image;
+    self.statusIcon.tintColor = VDTCheckStateColor(tone);
+    self.checkState.textColor = VDTCheckStateColor(tone);
     [self updateHeadingLayout];
     self.isAccessibilityElement = YES;
     self.accessibilityLabel = self.checkTitle.text;
     self.accessibilityValue = self.checkState.text;
     self.accessibilityHint = VDTLoc(self.class, @"Check details");
     self.accessibilityTraits = UIAccessibilityTraitButton;
+}
+- (void)prepareForReuse {
+    [super prepareForReuse];
+    self.checkTitle.text = @""; self.checkState.text = @"";
+    self.statusIcon.image = nil; self.statusIcon.hidden = YES;
+    self.accessibilityLabel = nil; self.accessibilityValue = nil;
 }
 - (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
     [super refreshCellContentsWithSpecifier:specifier];

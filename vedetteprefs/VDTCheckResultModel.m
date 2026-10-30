@@ -57,6 +57,10 @@ static NSArray *VDTCheckPair(id raw) {
         [raw[1] longLongValue] < 0 || [raw[3] longLongValue] < 0) return nil;
     return raw;
 }
+static NSString *VDTCheckRawPair(id raw) {
+    NSArray *pair = VDTCheckPair(raw);
+    return pair ? [NSString stringWithFormat:@"[%@, %@, %@, %@]", pair[0], pair[1], pair[2], pair[3]] : nil;
+}
 static NSString *VDTCheckMemoryReadback(id raw, VDTCheckLocalizer localize) {
     NSArray *pair = VDTCheckPair(raw);
     if (!pair) return VDTCheckText(localize, @"Not recorded");
@@ -409,6 +413,8 @@ static NSDictionary *VDTCheckRow(NSString *title, NSDictionary *rule, NSDictiona
     else if (resourceSummary.valid) {
         VDTResourceSummaryCounts counts = resourceSummary.counts;
         coverage = !counts.total ? VDTCheckText(localize, @"No identified instances in this check.")
+            : counts.applied == counts.total
+            ? [NSString stringWithFormat:VDTCheckText(localize, @"Confirmed %@/%@ identified instances."), @(counts.applied), @(counts.total)]
             : [NSString stringWithFormat:VDTCheckText(localize, @"Confirmed %@/%@; restored %@; not applied %@; pending %@; unknown %@; no action %@."),
                 @(VDTResourceSummaryConfirmedCount(counts)), @(counts.total), @(counts.restored), @(counts.failed),
                 @(counts.pending), @(counts.unknown), @(counts.disabled)];
@@ -485,11 +491,10 @@ static NSDictionary *VDTCheckRow(NSString *title, NSDictionary *rule, NSDictiona
         VDTCheckDiagnostic(diagnostics, @"count", @"Recorded instances", VDTCheckNumber(receipt[@"instanceCount"]), localize);
         id executionTarget = receipt[[side stringByAppendingString:@"Target"]];
         VDTCheckDiagnostic(diagnostics, @"checkedTarget", @"Operation target",
-            memory ? (VDTCheckPair(executionTarget) ? [executionTarget description] : nil) : VDTCheckNumber(executionTarget), localize);
+            memory ? VDTCheckRawPair(executionTarget) : VDTCheckNumber(executionTarget), localize);
         VDTCheckDiagnostic(diagnostics, @"action", @"Operation code", VDTCheckString(receipt[[side stringByAppendingString:@"Action"]]), localize);
-        NSArray *pair = memory ? VDTCheckPair(rawObserved) : nil;
-        VDTCheckDiagnostic(diagnostics, @"rawReadback", @"Raw readback", pair
-            ? [NSString stringWithFormat:@"[%@, %@, %@, %@]", pair[0], pair[1], pair[2], pair[3]] : VDTCheckNumber(rawObserved), localize);
+        VDTCheckDiagnostic(diagnostics, @"rawReadback", @"Raw readback", memory
+            ? VDTCheckRawPair(rawObserved) : VDTCheckNumber(rawObserved), localize);
         VDTCheckDiagnostic(diagnostics, @"readStart", @"Read window started at",
             hasObserved ? VDTCheckDate(receipt[[side stringByAppendingString:@"ReadStartedAt"]]) : nil, localize);
         BOOL hasCounts = resourceSummary.valid && !unavailable && !invalid;

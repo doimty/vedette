@@ -8,3 +8,4 @@ tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol,-space-before-
 
 # Preserve literal reviewed comfort delta context; production whitespace remains checked.
 tests/fixtures/comfort-1114-inverse.patch whitespace=-blank-at-eol,-space-before-tab
+tests/fixtures/visual-11146-inverse.patch whitespace=-blank-at-eol,-space-before-tab

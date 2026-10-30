@@ -2,12 +2,20 @@
 #import "VDTCheckDetailsController.h"
 #import "VDTCheckFieldCell.h"
 #import "VDTCheckResultReader.h"
+#import "VDTCheckPresentation.h"
 #import "VDTLocalization.h"
 #import "VDTStyle.h"
 
+static NSString *VDTCheckSectionTitle(Class owner, NSString *identifier) {
+    NSDictionary *keys = @{@"result": @"Check result", @"check": @"Check summary",
+        @"history": @"Check history", @"identity": @"Evidence and process",
+        @"execution": @"Execution and readback", @"coverage": @"Coverage and diagnostics"};
+    return VDTLoc(owner, keys[identifier] ?: @"Check details");
+}
+
 @interface VDTCheckDetailsController () {
     NSArray<PSSpecifier *> *_fieldRows;
-    PSSpecifier *_fieldGroup, *_diagnosticsRow;
+    PSSpecifier *_diagnosticsRow;
     BOOL _ignoresNicePending;
 }
 - (BOOL)showsDiagnostics;
@@ -39,7 +47,6 @@
     if (index < 0 || (NSUInteger)index >= models.count || [value doubleValue] != (double)index) return NSNotFound;
     return (NSUInteger)index; // An invalid link never falls back to another mechanism.
 }
-- (NSString *)fieldCollection { return [self showsDiagnostics] ? @"diagnosticFields" : @"coreFields"; }
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = [self showsDiagnostics] ? VDTLoc(self.class, @"Diagnostic details")
@@ -47,8 +54,16 @@
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.view.tintColor = VDTAccentColor();
     VDTStyleTable(self.table);
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:VDTLoc(self.class, @"Refresh display")
-        style:UIBarButtonItemStylePlain target:self action:@selector(refreshDisplay)];
+    UIBarButtonItem *refresh = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
+        target:self action:@selector(refreshDisplay)];
+    refresh.accessibilityLabel = VDTLoc(self.class, @"Refresh display");
+    if ([self showsDiagnostics]) self.navigationItem.rightBarButtonItem = refresh;
+    else {
+        UIBarButtonItem *edit = [[UIBarButtonItem alloc] initWithTitle:VDTLoc(self.class, @"Edit")
+            style:UIBarButtonItemStylePlain target:self action:@selector(editSettings)];
+        edit.accessibilityLabel = VDTLoc(self.class, @"Edit settings");
+        self.navigationItem.rightBarButtonItems = @[edit, refresh];
+    }
 }
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
@@ -57,7 +72,6 @@
 - (void)updateTitleForModel:(NSDictionary *)model {
     NSString *title = [model[@"title"] isKindOfClass:NSString.class] ? model[@"title"] : nil;
     if (!title.length) title = VDTLoc(self.class, @"Check details");
-    [_fieldGroup setName:title];
     self.title = [self showsDiagnostics] ? VDTLoc(self.class, @"Diagnostic details") : title;
 }
 - (NSArray *)specifiers {
@@ -66,24 +80,19 @@
         NSUInteger index = [self selectedIndexForModels:models];
         NSDictionary *model = index == NSNotFound ? nil : models[index];
         NSMutableArray *rows = [NSMutableArray array], *fields = [NSMutableArray array];
-        if (![self showsDiagnostics]) {
-            [rows addObject:[PSSpecifier emptyGroupSpecifier]];
-            PSSpecifier *edit = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Edit settings")
-                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
-            [edit setButtonAction:@selector(editSettings)];
-            [rows addObject:edit];
-        }
-        _fieldGroup = [PSSpecifier preferenceSpecifierNamed:model[@"title"] ?: VDTLoc(self.class, @"Check details")
-            target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
-        [_fieldGroup setProperty:VDTLoc(self.class, @"Historical receipt, not live monitoring. Refresh only reloads saved results.") forKey:@"footerText"];
-        [rows addObject:_fieldGroup];
-        // Only the selected mechanism's stable fields enter this screen. Raw
-        // diagnostics remain behind a second, native Preferences detail link.
-        for (NSDictionary *field in model[[self fieldCollection]]) {
-            PSSpecifier *row = VDTCheckFieldSpecifier(field);
-            [row setProperty:@(index) forKey:@"vdtCheckIndex"];
-            [row setProperty:field[@"id"] forKey:@"vdtCheckFieldID"];
-            [fields addObject:row]; [rows addObject:row];
+        for (NSDictionary *section in VDTCheckPresentationSections(model, [self showsDiagnostics])) {
+            NSString *sectionID = section[@"id"];
+            PSSpecifier *header = [PSSpecifier preferenceSpecifierNamed:VDTCheckSectionTitle(self.class, sectionID)
+                target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+            if ([sectionID isEqual:@"result"])
+                [header setProperty:VDTLoc(self.class, @"Historical receipt, not live monitoring. Refresh only reloads saved results.") forKey:@"footerText"];
+            [rows addObject:header];
+            for (NSDictionary *field in section[@"fields"]) {
+                PSSpecifier *row = VDTCheckFieldSpecifier(field);
+                [row setProperty:@(index) forKey:@"vdtCheckIndex"];
+                [row setProperty:field[@"id"] forKey:@"vdtCheckFieldID"];
+                [fields addObject:row]; [rows addObject:row];
+            }
         }
         if (![self showsDiagnostics] && index != NSNotFound) {
             _diagnosticsRow = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Diagnostic details")
@@ -112,12 +121,13 @@
     NSUInteger index = [self selectedIndexForModels:models];
     NSDictionary *model = index == NSNotFound ? nil : models[index];
     [self updateTitleForModel:model];
+    NSArray *visibleFields = VDTCheckPresentationFields(model, [self showsDiagnostics]);
     for (PSSpecifier *row in _fieldRows) {
         NSString *identifier = [row propertyForKey:@"vdtCheckFieldID"];
         NSDictionary *previous = [row propertyForKey:@"vdtCheckField"];
         NSDictionary *updated = @{@"id": identifier ?: @"", @"label": previous[@"label"] ?: @"",
             @"value": VDTLoc(self.class, @"Not recorded"), @"tone": @"plain"};
-        for (NSDictionary *field in model[[self fieldCollection]]) {
+        for (NSDictionary *field in visibleFields) {
             if (![field[@"id"] isEqual:identifier]) continue;
             updated = field;
             break;

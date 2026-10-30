@@ -150,16 +150,20 @@ def comfort_regions():
 def without_comfort_rules(path, source):
     """Subtract only literal comfort hunks, then require the exact fixed-base file.
 
-    Unsupported paths and aliases cannot acquire an exemption. The formal
-    integration guards this call, retaining its ORIGINAL checks on other paths.
-    Historic callers may pass the exact COMFORT_BASE blob, never an approximation.
+    Unsupported paths and aliases cannot acquire an exemption. Exact historical
+    COMFORT_BASE bytes pass through first; other visual-scope inputs must pass
+    the strict visual inverse before the original comfort checks run.
     """
     assert path in COMFORT_PATHS, 'unauthorized comfort source path: ' + str(path)
     data = _bytes(source)
-    regions = comfort_regions().get(path, ())
     base = comfort_baseline(path)
     if data == base:
         return source
+    from visual_delta import VISUAL_PATHS, without_visual_rules
+    if path in VISUAL_PATHS:
+        source = without_visual_rules(path, source)
+        data = _bytes(source)
+    regions = comfort_regions().get(path, ())
     pieces = []
     cursor = 0
     for previous, current in regions:

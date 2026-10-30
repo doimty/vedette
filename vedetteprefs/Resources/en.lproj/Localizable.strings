@@ -16,6 +16,14 @@
 "Enable Vedette" = "Enable Vedette";
 "Enable this rule" = "Enable this rule";
 "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required." = "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required.";
+"Edit" = "Edit";
+"Check result" = "Check result";
+"Check summary" = "Check summary";
+"Check history" = "Check history";
+"Evidence and process" = "Evidence and process";
+"Execution and readback" = "Execution and readback";
+"Coverage and diagnostics" = "Coverage and diagnostics";
+"Confirmed %@/%@ identified instances." = "Confirmed %@/%@ identified instances.";
 "Edit settings" = "Edit settings";
 "Enabled" = "Enabled";
 "Enabled Configurations" = "Enabled Configurations";

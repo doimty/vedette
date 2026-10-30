@@ -13,6 +13,7 @@ from comfort_delta import (ROOT, COMFORT_BASE, COMFORT_PATHS,
 from formal_delta import (FORMAL_BASE, FORMAL_VERSION, FORMAL_PATHS,
                           formal_baseline, formal_regions, without_formal_rules)
 from extension_projection import assert_release_freeze
+from visual_delta import VISUAL_BASE, VISUAL_PATHS, without_visual_rules
 
 EXPECTED_PATHS = frozenset({
     'VDTProcessManager.h', 'VDTProcessManager.mm',
@@ -51,6 +52,8 @@ class ComfortProjection(unittest.TestCase):
             self.assertTrue(hunks, path)
             base = comfort_baseline(path)
             actual = (ROOT / path).read_bytes()
+            if path in VISUAL_PATHS:
+                actual = without_visual_rules(path, actual)
             for previous, current in hunks:
                 with self.subTest(path=path):
                     self.assertTrue(previous and current)
@@ -95,6 +98,9 @@ class ComfortProjection(unittest.TestCase):
             with self.subTest(path=path):
                 expected = subprocess.check_output(['git', 'show', COMFORT_BASE + ':' + path], cwd=ROOT)
                 self.assertEqual((ROOT / path).read_bytes(), expected)
+        path = 'tests/fixtures/comfort-1114-inverse.patch'
+        expected = subprocess.check_output(['git', 'show', VISUAL_BASE + ':' + path], cwd=ROOT)
+        self.assertEqual((ROOT / path).read_bytes(), expected)
 
     def test_unknown_append_rejected_for_every_allowlisted_path(self):
         for path in COMFORT_PATHS:
@@ -108,6 +114,8 @@ class ComfortProjection(unittest.TestCase):
     def test_in_hunk_byte_mutations_and_duplicates_never_normalize(self):
         for path, hunks in comfort_regions().items():
             actual = (ROOT / path).read_bytes()
+            if path in VISUAL_PATHS:
+                actual = without_visual_rules(path, actual)
             for previous, current in hunks:
                 position = len(current) // 2
                 mutated = current[:position] + bytes([current[position] ^ 1]) + current[position + 1:]
@@ -167,9 +175,10 @@ class ComfortProjection(unittest.TestCase):
         path = '.gitattributes'
         base = comfort_baseline(path)
         actual = (ROOT / path).read_bytes()
-        self.assertIn(actual, (base, base + COMFORT_WHITESPACE_ADDITION))
+        historical = without_visual_rules(path, actual)
+        self.assertIn(historical, (base, base + COMFORT_WHITESPACE_ADDITION))
         self.assertEqual(without_comfort_rules(path, actual), base)
-        if actual != base:
+        if historical != base:
             for expanded in (b'*', b'*.mm', b'tests/*', b'tests/fixtures/*'):
                 changed = actual.replace(b'tests/fixtures/comfort-1114-inverse.patch', expanded, 1)
                 with self.subTest(expanded=expanded):

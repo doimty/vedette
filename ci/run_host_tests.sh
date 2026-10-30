@@ -8,6 +8,8 @@ python3 -B tests/test_pid_snapshot.py --require-compiler
 python3 -B tests/test_resource_summary.py --require-compiler
 python3 -B tests/test_resource_comfort.py
 python3 -B tests/test_check_result_navigation.py
+python3 -B tests/test_check_field_presentation.py --require-compiler
+python3 -B tests/test_check_presentation_native.py --require-native
 python3 -B tests/test_check_result_summary_model.py
 python3 tests/check_auto_monitor_path.py
 sh tests/run_list_order_tests.sh
@@ -30,6 +32,7 @@ python3 -B tests/test_check_result_model_native.py --require-native
 python3 -B tests/test_check_result_reader_native.py --require-native
 python3 -B tests/test_rebuild_baseline.py
 python3 -B tests/test_formal_projection.py
+python3 -B tests/test_visual_projection.py
 python3 -B tests/test_comfort_projection.py
 python3 -B tests/test_resource_writeback_contracts.py
 sudo python3 -B tests/test_resource_runtime_native.py --require-native

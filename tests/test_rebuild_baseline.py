@@ -9,9 +9,9 @@ from formal_delta import FORMAL_VERSION
 from test_resource_preferences_native import detail_contract, NICE_GUARD
 from ci_contract import workflow_test_source
 
-# The current candidate version is the comfort branch version; the FORMAL chain
+# The current candidate version is the visual branch version; the FORMAL chain
 # still projects control/CI back to its own fixed 1.1.14-4 bytes (asserted below).
-CANDIDATE_VERSION = '1.1.14-6'
+CANDIDATE_VERSION = '1.1.14-7'
 assert FORMAL_VERSION == '1.1.14-4'
 
 OLD_CANDIDATE = 'bb211c0dbbf21819d487c88f6030d9f071022025'
@@ -87,8 +87,12 @@ class RebuildBaseline(unittest.TestCase):
             changed=list(args);changed[0]=changed[0].replace(token,'removed',1)
             with self.subTest(token=token):
                 with self.assertRaises(AssertionError):build_contract(*changed)
-        bad=list(args);bad[2]=bad[2].replace(CANDIDATE_VERSION,'1.1.12-3',1)
-        with self.assertRaises(AssertionError):build_contract(*bad)
+        for path_index in (0, 1, 2):
+            for previous in ('1.1.14-5', '1.1.14-6', '1.1.12-3'):
+                bad=list(args);bad[path_index]=bad[path_index].replace(CANDIDATE_VERSION,previous,1)
+                self.assertNotEqual(bad[path_index],args[path_index])
+                with self.subTest(path_index=path_index,version=previous), self.assertRaises(AssertionError):
+                    build_contract(*bad)
 
     def test_literal_fixture_exception_cannot_expand_to_code(self):
         raw=(ROOT/'.gitattributes').read_bytes()

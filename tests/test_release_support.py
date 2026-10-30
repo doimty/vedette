@@ -24,7 +24,7 @@ def fixture(stage,scheme):
     arch='iphoneos-arm64' if scheme=='rootless' else 'iphoneos-arm64e'
     # Keep the released 1.1.12-3 staging assertions, not a new-version mock.
     text=released_bytes('control').decode().replace('Architecture: iphoneos-arm\n','Architecture: '+arch+'\n')+'\n'
-    (stage/'DEBIAN/control').write_text(text)
+    (stage/'DEBIAN/control').write_bytes(text.encode('utf-8'))
     for name in ('postinst','prerm','postrm'):shutil.copy2(ROOT/'layout/DEBIAN'/name,stage/'DEBIAN'/name)
 
 class ReleaseSupport(unittest.TestCase):
@@ -54,27 +54,35 @@ class ReleaseSupport(unittest.TestCase):
                 stage=Path(td)/scheme;fixture(stage,scheme)
                 control=stage/'DEBIAN/control'
                 released=control.read_bytes()
+                hooks={name:(stage/'DEBIAN'/name).read_bytes() for name in ('postinst','prerm','postrm')}
                 # The new strict function must reject the published old version
                 # before changing metadata or hooks; no dual-version wildcard.
                 with self.assertRaises(ValueError):candidate_stage_module.stage_release(stage,scheme)
                 self.assertEqual(control.read_bytes(),released)
-                for previous in (b'1.1.14-5', b'1.1.14-4', b'1.1.14-3', b'1.1.14-2', b'1.1.14-1', b'1.1.13-4', b'1.1.13-3', b'1.1.13-2', b'1.1.13-1+rc1'):
+                for previous in (b'1.1.14-6', b'1.1.14-5', b'1.1.14-4', b'1.1.14-3', b'1.1.14-2', b'1.1.14-1', b'1.1.13-4', b'1.1.13-3', b'1.1.13-2', b'1.1.13-1+rc1'):
                     stale = released.replace(b'Version: 1.1.12-3\n', b'Version: ' + previous + b'\n', 1)
                     control.write_bytes(stale)
                     with self.assertRaises(ValueError):candidate_stage_module.stage_release(stage,scheme)
                     self.assertEqual(control.read_bytes(),stale)
+                    self.assertEqual({name:(stage/'DEBIAN'/name).read_bytes() for name in hooks},hooks)
                 control.write_bytes(released)
-                candidate=released.replace(b'Version: 1.1.12-3\n',b'Version: 1.1.14-6\n',1)
+                candidate=released.replace(b'Version: 1.1.12-3\n',b'Version: 1.1.14-7\n',1)
                 self.assertNotEqual(candidate,released)
                 control.write_bytes(candidate)
                 candidate_stage_module.stage_release(stage,scheme)
-                self.assertIn(b'Version: 1.1.14-6\n',control.read_bytes())
-                self.assertEqual(b'roothide,' in control.read_bytes(),scheme=='roothide')
+                self.assertIn('Version: 1.1.14-7\n',control.read_text())
+                self.assertEqual('roothide,' in control.read_text(),scheme=='roothide')
                 for hook in ('postinst','prerm'):
                     folder='layout-rootless' if scheme=='rootless' else 'layout'
                     self.assertEqual((stage/'DEBIAN'/hook).read_bytes(),(ROOT/folder/'DEBIAN'/hook).read_bytes())
-        for version in ('1.1.14-5','1.1.14-4','1.1.14-3','1.1.14-2','1.1.14-1','1.1.13-4','1.1.13-3','1.1.13-2','1.1.13-1+rc1','1.1.12-3','1.1.10-1+ui21'):
-            subprocess.run(['dpkg','--compare-versions','1.1.14-6','gt',version],check=True)
+
+    def test_candidate_version_orders_after_old_versions(self):
+        if not shutil.which('dpkg'):
+            if os.environ.get('CI'):
+                self.fail('dpkg is required for Debian version ordering in CI')
+            self.skipTest('dpkg unavailable locally; CI checks Debian version ordering')
+        for version in ('1.1.14-6','1.1.14-5','1.1.14-4','1.1.14-3','1.1.14-2','1.1.14-1','1.1.13-4','1.1.13-3','1.1.13-2','1.1.13-1+rc1','1.1.12-3','1.1.10-1+ui21'):
+            subprocess.run(['dpkg','--compare-versions','1.1.14-7','gt',version],check=True)
 
     def test_mismatched_scheme_or_version_fails_before_replacing_control(self):
         with tempfile.TemporaryDirectory() as td:

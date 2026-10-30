@@ -146,6 +146,7 @@ int main(void) {
         REQ("summary-identified-scope", [rows[1][@"scope"] isEqual:@"Identified instances in this check only"] && !contains(rows[1][@"scope"],@"device"));
         REQ("summary-confirmed-counts", [fieldValue(rows[1],@"diagnosticFields",@"summaryConfirmed") isEqual:@"3"] &&
             [fieldValue(rows[1],@"diagnosticFields",@"summaryTotal") isEqual:@"3"] && [fieldValue(rows[1],@"diagnosticFields",@"summaryUnknown") isEqual:@"0"]);
+        REQ("summary-compact-coverage", [fieldValue(rows[1],@"coreFields",@"coverage") isEqual:@"Confirmed 3/3 identified instances."]);
         NSDictionary *singleSummary = summaryCounts(1,1,0,0,0,0,0);
         REQ("summary-single-confirmed", [project(nice,nil,nil,countedReceipt(base,singleSummary,nil))[1][@"compactState"] isEqual:@"Confirmed"]);
         NSDictionary *allRestored = summaryCounts(3,0,3,0,0,0,0);
@@ -158,6 +159,7 @@ int main(void) {
         batch=countedReceipt(failureSides,summaryCounts(3,2,0,1,0,0,0),allConfirmed);
         rows=project(nice,nil,nil,batch);
         REQ("summary-partial-failure", [rows[1][@"compactState"] isEqual:@"Partly confirmed (2/3)"] && [rows[1][@"compactTone"] isEqual:@"warning"]);
+        REQ("summary-partial-coverage", contains(fieldValue(rows[1],@"coreFields",@"coverage"), @"not applied 1"));
         REQ("summary-preserves-worst-reason", [rows[1][@"state"] isEqual:@"Changed; not overwritten"] &&
             [fieldValue(rows[1],@"diagnosticFields",@"errno") isEqual:[@(EACCES) stringValue]] && contains(detail(rows[1]),@"read-before-conflict"));
         REQ("summary-independent-sides", [rows[2][@"compactState"] isEqual:@"Confirmed (3/3)"] && [rows[2][@"state"] isEqual:@"Changed; not overwritten"]);
@@ -245,8 +247,14 @@ int main(void) {
         REQ("no-overall-fallback", [rows[1][@"state"] isEqual:@"Side result not recorded"] && [rows[2][@"state"] isEqual:@"Side result not recorded"]);
 
         changed=[base mutableCopy]; changed[@"memoryObserved"]=@[@(INT32_MAX),@0,@(INT32_MAX),@0];
+        changed[@"memoryTarget"]=@[@(INT32_MAX),@0,@(INT32_MAX),@0];
         rows=project(nice,@{@"enabled":@YES,@"active":@(-1),@"inactive":@(-1)},nil,changed);
         REQ("full-unlimited", contains(rows[1][@"summary"],@"Last read back: Unlimited / Unlimited"));
+        NSString *rawPair=@"[2147483647, 0, 2147483647, 0]";
+        REQ("target-pair-compact", [fieldValue(rows[1],@"diagnosticFields",@"checkedTarget") isEqual:rawPair] &&
+            [fieldValue(rows[1],@"diagnosticFields",@"rawReadback") isEqual:rawPair]);
+        changed[@"memoryTarget"]=@[@64,@1,@128]; rows=project(nice,nil,nil,changed);
+        REQ("malformed-target-not-recorded", [fieldValue(rows[1],@"diagnosticFields",@"checkedTarget") isEqual:@"Not recorded"]);
         for (NSArray *notUnlimited in @[@[@(INT32_MAX),@1,@(INT32_MAX),@0],@[@(INT32_MAX),@0,@(INT32_MAX),@1],
             @[@(INT32_MAX),@0,@64,@0],@[@64,@0,@(INT32_MAX),@0],@[@(-1),@0,@(-1),@0],@[@(INT32_MAX),@NO,@(INT32_MAX),@0]]) {
             changed[@"memoryObserved"]=notUnlimited; rows=project(nice,nil,nil,changed);

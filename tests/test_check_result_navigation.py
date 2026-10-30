@@ -93,12 +93,16 @@ def details_contracts(source):
     rows = function_source(source, '- (NSArray *)specifiers {')
     assert 'NSUInteger index = [self selectedIndexForModels:models];' in rows
     assert 'index == NSNotFound ? nil : models[index]' in rows
-    assert rows.count('for (') == 1 and 'for (NSDictionary *field in model[[self fieldCollection]])' in rows
+    assert 'VDTCheckPresentationSections(model, [self showsDiagnostics])' in rows
+    assert 'for (NSDictionary *field in section[@"fields"])' in rows
     assert 'first = 0' not in rows and 'models.count;' not in rows, 'details must not fan out to all mechanisms'
-    collection = function_source(source, '- (NSString *)fieldCollection {')
-    assert '[self showsDiagnostics] ? @"diagnosticFields" : @"coreFields"' in collection
-    assert 'if (![self showsDiagnostics]) {' in rows and '@"Edit settings"' in rows
-    assert 'cell:PSButtonCell edit:nil' in rows and '@selector(editSettings)' in rows
+    assert 'VDTCheckSectionTitle(self.class, sectionID)' in rows and 'cell:PSGroupCell' in rows
+    nav = function_source(source, '- (void)viewDidLoad {')
+    assert 'UIBarButtonSystemItemRefresh' in nav and '@selector(refreshDisplay)' in nav
+    assert 'refresh.accessibilityLabel = VDTLoc(self.class, @"Refresh display");' in nav
+    assert 'VDTLoc(self.class, @"Edit")' in nav and '@selector(editSettings)' in nav
+    assert 'edit.accessibilityLabel = VDTLoc(self.class, @"Edit settings");' in nav
+    assert 'self.navigationItem.rightBarButtonItems = @[edit, refresh];' in nav
     edit = function_source(source, '- (void)editSettings {')
     assert '[self.navigationController popViewControllerAnimated:YES];' in edit
     assert 'if (![self showsDiagnostics] && index != NSNotFound)' in rows
@@ -121,7 +125,8 @@ def details_contracts(source):
     assert '[_diagnosticsRow setProperty:[self.specifier propertyForKey:@"vdtCheckIndex"] forKey:@"vdtCheckIndex"];' in refresh
     assert 'NSUInteger index = [self selectedIndexForModels:models];' in refresh
     assert 'index == NSNotFound ? nil : models[index]' in refresh
-    for required in ('for (PSSpecifier *row in _fieldRows)', 'propertyForKey:@"vdtCheckFieldID"',
+    for required in ('VDTCheckPresentationFields(model, [self showsDiagnostics])',
+                     'for (PSSpecifier *row in _fieldRows)', 'propertyForKey:@"vdtCheckFieldID"',
                      '[field[@"id"] isEqual:identifier]', 'VDTLoc(self.class, @"Not recorded")',
                      '[row setProperty:updated forKey:@"vdtCheckField"]', '[self reloadSpecifier:row animated:NO]'):
         assert required in refresh, 'cached field refresh missing: ' + required
@@ -130,7 +135,7 @@ def details_contracts(source):
     assert 'return UITableViewAutomaticDimension;' in source
     assert 'return [super tableView:tableView heightForRowAtIndexPath:indexPath];' in source
     assert 'VDTStyleTable(self.table)' in source and 'VDTStyleCell(cell)' in source
-    assert 'initWithTitle:VDTLoc(self.class, @"Refresh display")' in source
+    assert 'UIBarButtonSystemItemRefresh' in source and '@"Refresh display"' in source
     assert '[self refreshDisplay];' in function_source(source, '- (void)viewWillAppear:')
 
 

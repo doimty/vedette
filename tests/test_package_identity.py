@@ -4,7 +4,7 @@ from pathlib import Path
 import plistlib,subprocess,unittest
 from extension_projection import projected_bytes
 from formal_delta import FORMAL_VERSION
-CANDIDATE_VERSION='1.1.14-6'
+CANDIDATE_VERSION='1.1.14-7'
 assert FORMAL_VERSION=='1.1.14-4'
 ROOT=Path(__file__).resolve().parents[1]
 BASE='4ac149755d093995ce2b14f7971d8299d4df41ce'
@@ -26,8 +26,11 @@ class OwnIdentifiers(unittest.TestCase):
     def test_package_and_bundle_ids(self):
         require_ids(parse((ROOT/'control').read_text()),plistlib.loads((ROOT/'vedetteprefs/Resources/Info.plist').read_bytes()))
     def test_old_identity_and_missing_replacement_rejected(self):
-        old=parse(subprocess.check_output(['git','show',BASE+':control'],cwd=ROOT,text=True))
         info=plistlib.loads((ROOT/'vedetteprefs/Resources/Info.plist').read_bytes())
+        for version in ('1.1.14-5', '1.1.14-6'):
+            broken=parse((ROOT/'control').read_text());broken['Version']=version
+            with self.subTest(version=version), self.assertRaises(AssertionError):require_ids(broken,info)
+        old=parse(subprocess.check_output(['git','show',BASE+':control'],cwd=ROOT,text=True))
         with self.assertRaises((AssertionError,KeyError)):require_ids(old,info)
         for field in ('Conflicts','Replaces'):
             broken=parse((ROOT/'control').read_text());del broken[field]
