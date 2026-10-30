@@ -29,17 +29,17 @@ on:
 jobs:
   validate:
     name: Host and native regressions (once)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - name: Select pinned Xcode 15.4
+      - name: Select pinned Xcode 16.4
         run: |
-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
-          test "$(xcodebuild -version | head -n 1)" = "Xcode 15.4"
-          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "17.5"
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          test "$(xcodebuild -version | head -n 1)" = "Xcode 16.4"
+          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "18.5"
       - name: Install host packaging test tool
         run: command -v dpkg-deb || brew install dpkg
       - name: Run host regression tests
@@ -57,7 +57,7 @@ jobs:
   package:
     needs: validate
     name: Package (${{ matrix.scheme }})
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
@@ -76,7 +76,7 @@ jobs:
       PACKAGE_PREFIX: ${{ matrix.prefix }}
       PACKAGE_VERSION: 1.1.14-9
       FINALPACKAGE: 1
-      PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
+      PREFIX: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
 
     steps:
       - name: Checkout
@@ -84,12 +84,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Select pinned Xcode 15.4
+      - name: Select pinned Xcode 16.4
         run: |
-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcode_version="$(xcodebuild -version)"
-          test "${xcode_version%%$'\n'*}" = "Xcode 15.4"
-          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "17.5"
+          test "${xcode_version%%$'\n'*}" = "Xcode 16.4"
+          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "18.5"
           printf '%s\n' "$xcode_version"
           xcrun clang --version
           xcrun ld -version_details
@@ -169,8 +169,8 @@ jobs:
           test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
           system_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
           test -d "$system_sdk"
-          make clean TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk"
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME" TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log
+          make clean TARGET=iphone:clang:18.5:15.0 SYSROOT="$system_sdk"
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME" TARGET=iphone:clang:18.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log
           python3 -B tests/canonicalize_nice_deb.py "packages/com.doimty.vedette_${PACKAGE_VERSION}_${PACKAGE_ARCH}.deb" "$THEOS_PACKAGE_SCHEME"
 
       - name: Verify package artifact
@@ -213,7 +213,7 @@ jobs:
             ! grep -q 'LC_DYLD_INFO_ONLY' /tmp/vedette-load-commands.txt
             grep -q 'LC_CODE_SIGNATURE' /tmp/vedette-load-commands.txt
             test "$(awk '$1 == "minos" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "15.0"
-            test "$(awk '$1 == "sdk" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "17.5"
+            test "$(awk '$1 == "sdk" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "18.5"
           done
           python3 -B tests/verify_preferences_resources.py "/tmp/vedette-package$PACKAGE_PREFIX"
           python3 -B tests/verify_release_layout.py "$deb" "$THEOS_PACKAGE_SCHEME"

@@ -10,10 +10,51 @@ index 73578b16f78ff88325a1c5d8664bb0bbd7ef5fd1..6d20f3e43359fc009d6b70d9c4121de0
  tests/fixtures/comfort-1114-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 +tests/fixtures/visual-11146-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index 44d5338a51806591f1c52b773d8df039c04e8c42..e9977b4ec15e057112dc1307adb2aa0306f5d9d1 100644
+index 44d5338a51806591f1c52b773d8df039c04e8c42..dff969fa8d21426cf7e899372124903865cd9361 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
-@@ -72,11 +72,11 @@
+@@ -27,21 +27,21 @@
+       - 'tests/**'
+ 
+ jobs:
+   validate:
+     name: Host and native regressions (once)
+-    runs-on: macos-14
++    runs-on: macos-15
+     steps:
+       - name: Checkout
+         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+         with:
+           fetch-depth: 0
+-      - name: Select pinned Xcode 15.4
+-        run: |
+-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+-          test "$(xcodebuild -version | head -n 1)" = "Xcode 15.4"
+-          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "17.5"
++      - name: Select pinned Xcode 16.4
++        run: |
++          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
++          test "$(xcodebuild -version | head -n 1)" = "Xcode 16.4"
++          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "18.5"
+       - name: Install host packaging test tool
+         run: command -v dpkg-deb || brew install dpkg
+       - name: Run host regression tests
+         run: |
+           set -o pipefail
+@@ -55,11 +55,11 @@
+           if-no-files-found: warn
+ 
+   package:
+     needs: validate
+     name: Package (${{ matrix.scheme }})
+-    runs-on: macos-14
++    runs-on: macos-15
+     strategy:
+       fail-fast: false
+       matrix:
+         include:
+           - scheme: roothide
+@@ -72,26 +72,26 @@
      env:
        THEOS: ${{ github.workspace }}/theos
        THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
@@ -22,10 +63,59 @@ index 44d5338a51806591f1c52b773d8df039c04e8c42..e9977b4ec15e057112dc1307adb2aa03
 -      PACKAGE_VERSION: 1.1.14-6
 +      PACKAGE_VERSION: 1.1.14-9
        FINALPACKAGE: 1
-       PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
+-      PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
++      PREFIX: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
  
      steps:
        - name: Checkout
+         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+         with:
+           fetch-depth: 0
+ 
+-      - name: Select pinned Xcode 15.4
+-        run: |
+-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
++      - name: Select pinned Xcode 16.4
++        run: |
++          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+           xcode_version="$(xcodebuild -version)"
+-          test "${xcode_version%%$'\n'*}" = "Xcode 15.4"
+-          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "17.5"
++          test "${xcode_version%%$'\n'*}" = "Xcode 16.4"
++          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "18.5"
+           printf '%s\n' "$xcode_version"
+           xcrun clang --version
+           xcrun ld -version_details
+           xcrun --sdk iphoneos --show-sdk-version
+ 
+@@ -167,12 +167,12 @@
+           set -o pipefail
+           export PATH="/opt/homebrew/opt/make/libexec/gnubin:$THEOS/bin:$PATH"
+           test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
+           system_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+           test -d "$system_sdk"
+-          make clean TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk"
+-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME" TARGET=iphone:clang:17.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log
++          make clean TARGET=iphone:clang:18.5:15.0 SYSROOT="$system_sdk"
++          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME" TARGET=iphone:clang:18.5:15.0 SYSROOT="$system_sdk" 2>&1 | tee /tmp/vedette-build.log
+           python3 -B tests/canonicalize_nice_deb.py "packages/com.doimty.vedette_${PACKAGE_VERSION}_${PACKAGE_ARCH}.deb" "$THEOS_PACKAGE_SCHEME"
+ 
+       - name: Verify package artifact
+         run: |
+           test -s /tmp/vedette-build.log
+@@ -211,11 +211,11 @@
+             otool -l "$binary" > /tmp/vedette-load-commands.txt
+             grep -q 'LC_DYLD_CHAINED_FIXUPS' /tmp/vedette-load-commands.txt
+             ! grep -q 'LC_DYLD_INFO_ONLY' /tmp/vedette-load-commands.txt
+             grep -q 'LC_CODE_SIGNATURE' /tmp/vedette-load-commands.txt
+             test "$(awk '$1 == "minos" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "15.0"
+-            test "$(awk '$1 == "sdk" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "17.5"
++            test "$(awk '$1 == "sdk" { print $2 }' /tmp/vedette-load-commands.txt | sort -u)" = "18.5"
+           done
+           python3 -B tests/verify_preferences_resources.py "/tmp/vedette-package$PACKAGE_PREFIX"
+           python3 -B tests/verify_release_layout.py "$deb" "$THEOS_PACKAGE_SCHEME"
+           dpkg-deb -e "$deb" /tmp/vedette-control
+           for script in /tmp/vedette-control/preinst /tmp/vedette-control/postinst /tmp/vedette-control/prerm /tmp/vedette-control/postrm; do
 diff --git a/Makefile.tests b/Makefile.tests
 index dadfa64234643b9fbf7b65137965864b0cfa93b2..f15f08b6f71a08d5b27ef830b635e4ef8a41f745 100644
 --- a/Makefile.tests
