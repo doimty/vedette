@@ -8,6 +8,19 @@
 #import "VDTLocalization.h"
 #import "VDTStyle.h"
 
+// Cheap change token for the saved configuration. A rewrite replaces the file,
+// so mtime+size advance; an unchanged file must not rebuild the whole list.
+static NSString *VDTApplicationListPrefsToken(void) {
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:PREFS_PATH error:nil];
+    if (!attributes) return @"";
+    return [NSString stringWithFormat:@"%@:%@", attributes[NSFileModificationDate],
+        attributes[NSFileSize]];
+}
+
+@interface VDTApplicationListSubcontrollerController ()
+@property (nonatomic, copy) NSString *vdtLastPrefsToken;
+@end
+
 @implementation VDTApplicationListSubcontrollerController
 
 - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
@@ -29,9 +42,13 @@
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // Rebuild ordering from disk after a detail change, without resetting the
-    // search controller/query or enumerating installed apps again.
-    [self reloadSpecifiers];
+    // Rebuild ordering after a detail change, but only when the saved
+    // configuration actually changed since the previous build.
+    NSString *token = VDTApplicationListPrefsToken();
+    if (!self.vdtLastPrefsToken || ![self.vdtLastPrefsToken isEqual:token]) {
+        self.vdtLastPrefsToken = token;
+        [self reloadSpecifiers];
+    }
 }
 
 - (void)prepareForPopulatingSections {

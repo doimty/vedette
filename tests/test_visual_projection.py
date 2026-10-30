@@ -19,6 +19,7 @@ from verify_release_layout import VERSION as VERIFIED_VERSION
 EXPECTED_PATHS = frozenset({
     'vedetteprefs/VDTCheckDetailsController.m', 'vedetteprefs/VDTCheckFieldCell.m',
     'vedetteprefs/VDTCheckResultCell.m', 'vedetteprefs/VDTCheckResultModel.m',
+    'vedetteprefs/VDTApplicationListSubcontrollerController.m',
     'vedetteprefs/Resources/en.lproj/Localizable.strings',
     'vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings',
     'control', '.github/workflows/roothide-build.yml', 'ci/stage_release.py',
@@ -38,11 +39,11 @@ def fixture(body=b' anchor\n-old\n+new\n', header=b'@@ -1,2 +1,2 @@\n', path=SYN
 
 class VisualProjection(unittest.TestCase):
     def test_candidate_version_is_consistent_across_package_gates(self):
-        self.assertEqual(VERIFIED_VERSION, '1.1.14-8')
+        self.assertEqual(VERIFIED_VERSION, '1.1.14-9')
         fields = {
-            'control': b'Version: 1.1.14-8\n',
-            '.github/workflows/roothide-build.yml': b'      PACKAGE_VERSION: 1.1.14-8\n',
-            'ci/stage_release.py': b"fields.get('Version','').strip()!='1.1.14-8'",
+            'control': b'Version: 1.1.14-9\n',
+            '.github/workflows/roothide-build.yml': b'      PACKAGE_VERSION: 1.1.14-9\n',
+            'ci/stage_release.py': b"fields.get('Version','').strip()!='1.1.14-9'",
         }
         for path, expected in fields.items():
             with self.subTest(path=path):
@@ -52,7 +53,7 @@ class VisualProjection(unittest.TestCase):
         self.assertEqual(VISUAL_BASE, '7cef39b6058f699e2c5bd7f17a1562f37a6aeb4c')
         subprocess.run(['git', 'merge-base', '--is-ancestor', VISUAL_BASE, 'HEAD'], cwd=ROOT, check=True)
         self.assertEqual(VISUAL_PATHS, EXPECTED_PATHS)
-        self.assertEqual(len(VISUAL_PATHS), 12)
+        self.assertEqual(len(VISUAL_PATHS), 13)
         regions = visual_regions()
         self.assertLessEqual(set(regions), EXPECTED_PATHS)
         changed = {path for path in VISUAL_PATHS if (ROOT / path).read_bytes() != visual_baseline(path)}

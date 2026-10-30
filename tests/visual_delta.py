@@ -19,6 +19,7 @@ VISUAL_PATHS = frozenset({
     'vedetteprefs/VDTCheckFieldCell.m',
     'vedetteprefs/VDTCheckResultCell.m',
     'vedetteprefs/VDTCheckResultModel.m',
+    'vedetteprefs/VDTApplicationListSubcontrollerController.m',
     'vedetteprefs/Resources/en.lproj/Localizable.strings',
     'vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings',
     'control', '.github/workflows/roothide-build.yml', 'ci/stage_release.py',

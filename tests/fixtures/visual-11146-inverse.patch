@@ -10,7 +10,7 @@ index 73578b16f78ff88325a1c5d8664bb0bbd7ef5fd1..6d20f3e43359fc009d6b70d9c4121de0
  tests/fixtures/comfort-1114-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 +tests/fixtures/visual-11146-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index 44d5338a51806591f1c52b773d8df039c04e8c42..d2c03f1833b8f4b5fd845b904fd59f8db0e3da6f 100644
+index 44d5338a51806591f1c52b773d8df039c04e8c42..e9977b4ec15e057112dc1307adb2aa0306f5d9d1 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
 @@ -72,11 +72,11 @@
@@ -20,17 +20,29 @@ index 44d5338a51806591f1c52b773d8df039c04e8c42..d2c03f1833b8f4b5fd845b904fd59f8d
        PACKAGE_ARCH: ${{ matrix.package_arch }}
        PACKAGE_PREFIX: ${{ matrix.prefix }}
 -      PACKAGE_VERSION: 1.1.14-6
-+      PACKAGE_VERSION: 1.1.14-8
++      PACKAGE_VERSION: 1.1.14-9
        FINALPACKAGE: 1
        PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
  
      steps:
        - name: Checkout
 diff --git a/Makefile.tests b/Makefile.tests
-index dadfa64234643b9fbf7b65137965864b0cfa93b2..d1a23945555c151209cd13b476c6794bcd6846ac 100644
+index dadfa64234643b9fbf7b65137965864b0cfa93b2..f15f08b6f71a08d5b27ef830b635e4ef8a41f745 100644
 --- a/Makefile.tests
 +++ b/Makefile.tests
-@@ -67,11 +67,14 @@
+@@ -22,10 +22,11 @@
+ 	@python3 -B tests/test_package_identity.py
+ 	@sh tests/run_list_order_tests.sh
+ 	@python3 -B tests/test_list_catalog.py
+ 	@python3 -B tests/test_list_catalog_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
+ 	@python3 -B tests/test_list_reentry.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
++	@python3 -B tests/test_list_reuse.py
+ 
+ 
+ test-nice:
+ 	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
+ 	  $(CC) $(CFLAGS) -I. VDTNicePolicy.c tests/test_nice_policy.c -o "$$bin"; "$$bin"
+@@ -67,11 +68,14 @@
  test-resource-comfort:
  	@python3 -B tests/test_pid_snapshot.py --require-compiler
  	@python3 -B tests/test_resource_summary.py --require-compiler
@@ -46,7 +58,7 @@ index dadfa64234643b9fbf7b65137965864b0cfa93b2..d1a23945555c151209cd13b476c6794b
  
  test: test-cpu test-ui test-nice test-extensions test-rebuild test-resource-write test-resource-comfort
 diff --git a/ci/run_host_tests.sh b/ci/run_host_tests.sh
-index f22f4a74cf0c12b849b2369a67063f1a9224dc41..0749d88a3dd3e0f2c37addb3154596cf0ea9f8a8 100644
+index f22f4a74cf0c12b849b2369a67063f1a9224dc41..1228c174c08cfcd785b237662c7c7074524fec09 100644
 --- a/ci/run_host_tests.sh
 +++ b/ci/run_host_tests.sh
 @@ -6,10 +6,12 @@
@@ -62,7 +74,14 @@ index f22f4a74cf0c12b849b2369a67063f1a9224dc41..0749d88a3dd3e0f2c37addb3154596cf
  sh tests/run_list_order_tests.sh
  for suite in test_preferences_ui test_ios15_cell_lifecycle test_ui21_baseline test_process_action_ui21 test_section_text test_efficiency_contracts test_diagnostic_preprocess; do
    python3 -B "tests/$suite.py"
-@@ -28,9 +30,10 @@
+@@ -22,15 +24,17 @@
+ sudo python3 -B tests/test_extension_nice_native.py --require-native
+ sudo python3 -B tests/test_independent_rules_native.py --require-native
+ python3 -B tests/test_list_catalog.py
+ python3 -B tests/test_list_catalog_native.py --require-native
+ python3 -B tests/test_list_reentry.py --require-native
++python3 -B tests/test_list_reuse.py
+ for suite in test_memory_policy test_resource_apply test_resource_manager test_resource_ui21; do python3 -B "tests/$suite.py"; done
  python3 -B tests/test_resource_preferences_native.py --require-native
  python3 -B tests/test_check_result_model_native.py --require-native
  python3 -B tests/test_check_result_reader_native.py --require-native
@@ -74,7 +93,7 @@ index f22f4a74cf0c12b849b2369a67063f1a9224dc41..0749d88a3dd3e0f2c37addb3154596cf
  sudo python3 -B tests/test_resource_runtime_native.py --require-native
  sudo python3 -B tests/test_receipt_boot_native.py --require-native
 diff --git a/ci/stage_release.py b/ci/stage_release.py
-index c5b777de66e743a59aa0932335d5b89e445e90ee..821e41931c04b5fb96ce56c98d8cfd4729bfa0dc 100644
+index c5b777de66e743a59aa0932335d5b89e445e90ee..31d66c17d807f3bce83f6a66c3048a2b79c43bd6 100644
 --- a/ci/stage_release.py
 +++ b/ci/stage_release.py
 @@ -14,11 +14,11 @@
@@ -84,21 +103,21 @@ index c5b777de66e743a59aa0932335d5b89e445e90ee..821e41931c04b5fb96ce56c98d8cfd47
      if not control.is_file() or control.is_symlink(): raise ValueError('missing/unsafe staged control')
      text=control.read_text();fields=dict(line.split(':',1) for line in text.splitlines() if ':' in line)
 -    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-6':
-+    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-8':
++    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-9':
          raise ValueError('wrong staged package/version')
      if fields.get('Architecture','').strip()!=ARCH[scheme]: raise ValueError('staged scheme/architecture mismatch')
      old='Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist'
      if text.count(old)!=1: raise ValueError('unexpected dependency declaration')
      if scheme=='rootless':
 diff --git a/control b/control
-index 34520972409137d6efe5ce162e55e6abf9db9f85..a828a19a81912c7f0803e2f9c3f4b967cfad2f21 100644
+index 34520972409137d6efe5ce162e55e6abf9db9f85..aed3796100f0fe13cbb175adf087c9b4acd27685 100644
 --- a/control
 +++ b/control
 @@ -1,8 +1,8 @@
  Package: com.doimty.vedette
  Name: Vedette
 -Version: 1.1.14-6
-+Version: 1.1.14-8
++Version: 1.1.14-9
  Architecture: iphoneos-arm
  Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级，支持内存上限及回收优先级规则
  Conflicts: com.udevs.vedette
@@ -585,3 +604,52 @@ index 4ede54a7a8ff0ce8da0b810b160bc618e6cef09f..f72376803f989702ba3ddb73000a8960
          BOOL hasCounts = resourceSummary.valid && !unavailable && !invalid;
          VDTResourceSummaryCounts counts = resourceSummary.counts;
          VDTCheckDiagnostic(diagnostics, @"summaryTotal", @"Identified instances", hasCounts ? @(counts.total).stringValue : nil, localize);
+diff --git a/vedetteprefs/VDTApplicationListSubcontrollerController.m b/vedetteprefs/VDTApplicationListSubcontrollerController.m
+index 7e560a8e34b6d12a99d059fe9b4e57c907f78b08..ca581cb6aeeb9f94bf5bdf54d4a7b208b8a00c0c 100644
+--- a/vedetteprefs/VDTApplicationListSubcontrollerController.m
++++ b/vedetteprefs/VDTApplicationListSubcontrollerController.m
+@@ -5,10 +5,23 @@
+ 
+ #import "VDTApplicationListSubcontrollerController.h"
+ #import "VDTListPresentation.h"
+ #import "VDTLocalization.h"
+ #import "VDTStyle.h"
++
++// Cheap change token for the saved configuration. A rewrite replaces the file,
++// so mtime+size advance; an unchanged file must not rebuild the whole list.
++static NSString *VDTApplicationListPrefsToken(void) {
++    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:PREFS_PATH error:nil];
++    if (!attributes) return @"";
++    return [NSString stringWithFormat:@"%@:%@", attributes[NSFileModificationDate],
++        attributes[NSFileSize]];
++}
++
++@interface VDTApplicationListSubcontrollerController ()
++@property (nonatomic, copy) NSString *vdtLastPrefsToken;
++@end
+ 
+ @implementation VDTApplicationListSubcontrollerController
+ 
+ - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
+ 
+@@ -27,13 +40,17 @@
+     return cell;
+ }
+ 
+ - (void)viewWillAppear:(BOOL)animated {
+     [super viewWillAppear:animated];
+-    // Rebuild ordering from disk after a detail change, without resetting the
+-    // search controller/query or enumerating installed apps again.
+-    [self reloadSpecifiers];
++    // Rebuild ordering after a detail change, but only when the saved
++    // configuration actually changed since the previous build.
++    NSString *token = VDTApplicationListPrefsToken();
++    if (!self.vdtLastPrefsToken || ![self.vdtLastPrefsToken isEqual:token]) {
++        self.vdtLastPrefsToken = token;
++        [self reloadSpecifiers];
++    }
+ }
+ 
+ - (void)prepareForPopulatingSections {
+     [super prepareForPopulatingSections];
+     // AltList 9db09f9 indexes one flat alphabetic list, not enabled/other groups.

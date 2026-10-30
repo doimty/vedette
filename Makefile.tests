@@ -24,6 +24,7 @@ test-ui:
 	@python3 -B tests/test_list_catalog.py
 	@python3 -B tests/test_list_catalog_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
 	@python3 -B tests/test_list_reentry.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
+	@python3 -B tests/test_list_reuse.py
 
 
 test-nice:

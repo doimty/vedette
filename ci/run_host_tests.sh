@@ -26,6 +26,7 @@ sudo python3 -B tests/test_independent_rules_native.py --require-native
 python3 -B tests/test_list_catalog.py
 python3 -B tests/test_list_catalog_native.py --require-native
 python3 -B tests/test_list_reentry.py --require-native
+python3 -B tests/test_list_reuse.py
 for suite in test_memory_policy test_resource_apply test_resource_manager test_resource_ui21; do python3 -B "tests/$suite.py"; done
 python3 -B tests/test_resource_preferences_native.py --require-native
 python3 -B tests/test_check_result_model_native.py --require-native

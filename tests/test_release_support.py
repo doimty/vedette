@@ -66,11 +66,11 @@ class ReleaseSupport(unittest.TestCase):
                     self.assertEqual(control.read_bytes(),stale)
                     self.assertEqual({name:(stage/'DEBIAN'/name).read_bytes() for name in hooks},hooks)
                 control.write_bytes(released)
-                candidate=released.replace(b'Version: 1.1.12-3\n',b'Version: 1.1.14-8\n',1)
+                candidate=released.replace(b'Version: 1.1.12-3\n',b'Version: 1.1.14-9\n',1)
                 self.assertNotEqual(candidate,released)
                 control.write_bytes(candidate)
                 candidate_stage_module.stage_release(stage,scheme)
-                self.assertIn('Version: 1.1.14-8\n',control.read_text())
+                self.assertIn('Version: 1.1.14-9\n',control.read_text())
                 self.assertEqual('roothide,' in control.read_text(),scheme=='roothide')
                 for hook in ('postinst','prerm'):
                     folder='layout-rootless' if scheme=='rootless' else 'layout'
@@ -82,7 +82,7 @@ class ReleaseSupport(unittest.TestCase):
                 self.fail('dpkg is required for Debian version ordering in CI')
             self.skipTest('dpkg unavailable locally; CI checks Debian version ordering')
         for version in ('1.1.14-6','1.1.14-5','1.1.14-4','1.1.14-3','1.1.14-2','1.1.14-1','1.1.13-4','1.1.13-3','1.1.13-2','1.1.13-1+rc1','1.1.12-3','1.1.10-1+ui21'):
-            subprocess.run(['dpkg','--compare-versions','1.1.14-8','gt',version],check=True)
+            subprocess.run(['dpkg','--compare-versions','1.1.14-9','gt',version],check=True)
 
     def test_mismatched_scheme_or_version_fails_before_replacing_control(self):
         with tempfile.TemporaryDirectory() as td:
