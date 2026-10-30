@@ -246,7 +246,7 @@ int main(void) {
 
         NSDictionary *future = futureModel(memory);
         checkProjection(future, NO, YES);
-        REQ("unknown-long-number-unchanged", [valueForID(VDTCheckPresentationFields(future, NO), @"futureCore") isEqual:@"9999999999999999999999999999999999999999999999999999999999999999"]);
+        REQ("unknown-long-number-unchanged", [valueForID(VDTCheckPresentationFields(future, YES), @"futureCore") isEqual:@"9999999999999999999999999999999999999999999999999999999999999999"]);
         REQ("unknown-warning-unchanged", [valueForID(VDTCheckPresentationFields(future, YES), @"futureDetail") isEqual:@"warning: do not infer success"]);
 
         NSMutableDictionary *updated = [mixed mutableCopy];
