@@ -69,7 +69,8 @@ def inspect(path, scheme='roothide'):
                 (ids if cmd==0xd else rpaths if cmd==0x8000001c else deps).append(name)
             if cmd==0x32:
                 platform,minimum,sdk,tools=struct.unpack_from('<4I',block,8)
-                assert platform==2 and minimum==0xf0000 and sdk==0x110500
+                # Deployment target stays 15.0; the build SDK follows the runner.
+                assert platform==2 and minimum==0xf0000 and sdk in (0x110500, 0x120500)
                 versions.append({'minimum':version(minimum),'sdk':version(sdk),'platform':platform})
             if cmd==0x1d:
                 start,sz=struct.unpack_from('<II',block,8); assert start+sz<=len(b)
