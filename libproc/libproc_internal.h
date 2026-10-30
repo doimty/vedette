@@ -36,7 +36,11 @@ struct vdt_proc_bsdinfo {
     uint64_t pbi_start_tvusec;
 };
 
-#if defined(__cplusplus)
+#if defined(__cplusplus) && __cplusplus < 201103L
+// The production/native fixtures also support GNU C++98. Keep the same hard
+// ABI assertion without requiring the C++11 static_assert keyword.
+typedef char vdt_proc_bsdinfo_abi_must_be_136[(sizeof(struct vdt_proc_bsdinfo) == 136) ? 1 : -1];
+#elif defined(__cplusplus)
 static_assert(sizeof(struct vdt_proc_bsdinfo) == 136, "unexpected proc_bsdinfo ABI");
 #else
 _Static_assert(sizeof(struct vdt_proc_bsdinfo) == 136, "unexpected proc_bsdinfo ABI");

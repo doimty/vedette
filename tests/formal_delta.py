@@ -90,6 +90,9 @@ def formal_regions():
 
 
 def without_formal_rules(path, source):
+    from comfort_delta import COMFORT_PATHS, without_comfort_rules
+    if path in COMFORT_PATHS:
+        source = without_comfort_rules(path, source)
     is_bytes = isinstance(source, bytes)
     regions = formal_regions().get(path)
     if regions is None:

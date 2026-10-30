@@ -92,12 +92,16 @@ def runtime_contract(runtime):
     has(runtime,
         'static NSArray<NSDictionary *> *normalized_resource_rules_snapshot;',
         'current_normalized_resource_rules_sync(void){',
-        'vdt_resource_rules_from_prefs(VDTGetPrefs())',
-        'vdt_resolve_targets(configs, current_normalized_resource_rules_sync());',
+        # Resource rules use the STRICT snapshot reader, never the legacy
+        # getPrefs() convenience that collapses unreadable files to @{}.
+        'vdt_resource_rules_from_prefs(VDTResourceReadPreferences())',
+        'vdt_resolve_targets_checked(configs, current_normalized_resource_rules_sync(), &scanComplete, &scanError);',
         'vdt_targets_for_pid(pid, configs, current_normalized_resource_rules_sync());',
-        'NSArray<NSDictionary *> *resourceRules = vdt_resource_rules_from_prefs(newPrefs);',
+        'NSDictionary *resourcePrefs = VDTResourceReadPreferences();',
+        'NSArray<NSDictionary *> *resourceRules = vdt_resource_rules_from_prefs(resourcePrefs);',
         'normalized_resource_rules_snapshot = [resourceRules copy];',
-        'vdt_resolve_targets(configs, resourceRules);',
+        'vdt_resource_reload(resourcePrefs);',
+        'vdt_resolve_targets_checked(configs, resourceRules, &scanComplete, &scanError);',
         'vdt_resolve_targets(restoreConfigs, vdt_resource_rules_from_prefs(getTempPrefs()))',
         '[restoreTarget removeObjectForKey:VDTTargetMemoryRuleKey];',
         '[restoreTarget removeObjectForKey:VDTTargetJetsamRuleKey];',
@@ -105,12 +109,17 @@ def runtime_contract(runtime):
         'vdt_nice_apply(target);')
     independent = function_source(runtime, 'static void apply_resource_targets_sync')
     has(independent, '\n    for (NSDictionary *target in targets) vdt_apply_resource_target(target);\n',
-        'vdt_resource_reconcile(targets);', 'vdt_resource_publish();', 'schedule_resource_retry_sync();')
-    has(runtime, 'vdt_resource_reload(newPrefs);', 'invalidate_resource_retry_sync();',
-        'apply_resource_targets_sync(targets, YES);', 'apply_resource_targets_sync(targets, NO);')
+        'vdt_resource_reconcile(targets);', 'vdt_resource_publish();', 'schedule_resource_retry_sync();',
+        'vdt_resource_begin_check(targets, enumerationComplete, scanError);')
+    has(runtime, 'invalidate_resource_retry_sync();',
+        'apply_resource_targets_sync(targets, YES, scanComplete, scanError);',
+        'apply_resource_targets_sync(targets, NO, NO, 0);')
     retry = function_source(runtime, 'static void niceRefreshCallback')
     assert 'vdt_resolve_targets' not in retry and 'vdt_resource_rules_from_prefs' not in retry, 'nice retry cannot own CPU/resource resolution'
-    for stale in ('vdt_resolve_targets(configs);', 'vdt_targets_for_pid(pid, configs);'):
+    # Legacy empty-default reads/scans must not return: a failed preference read
+    # or an incomplete PID snapshot is not rule deletion authority.
+    for stale in ('vdt_resolve_targets(configs);', 'vdt_targets_for_pid(pid, configs);',
+                  'vdt_resource_rules_from_prefs(VDTGetPrefs())', 'vdt_resource_reload(newPrefs);'):
         assert stale not in runtime, 'stale pre-resource call remains: ' + stale
 
 
@@ -133,8 +142,16 @@ class ResourceManagerIntegration(unittest.TestCase):
 
     def test_stale_resolve_call_is_rejected(self):
         mutated = self.runtime.replace(
-            'vdt_resolve_targets(configs, current_normalized_resource_rules_sync());',
+            'vdt_resolve_targets_checked(configs, current_normalized_resource_rules_sync(), &scanComplete, &scanError);',
             'vdt_resolve_targets(configs);', 1)
+        self.assertNotEqual(mutated, self.runtime)
+        with self.assertRaises(AssertionError):
+            runtime_contract(mutated)
+
+    def test_legacy_empty_default_preferences_read_is_rejected(self):
+        mutated = self.runtime.replace(
+            'vdt_resource_rules_from_prefs(VDTResourceReadPreferences())',
+            'vdt_resource_rules_from_prefs(VDTGetPrefs())', 1)
         self.assertNotEqual(mutated, self.runtime)
         with self.assertRaises(AssertionError):
             runtime_contract(mutated)

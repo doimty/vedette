@@ -5,6 +5,8 @@
 #import "VDTNiceShared.h"
 #import "VDTNiceStore.h"
 #import "VDTBundleIdentity.h"
+#include "VDTResourceSummary.h"
+#include "VDTSpringBoardIdentity.h"
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -17,6 +19,12 @@ static NSMutableDictionary *resourceRecords, *resourceRows, *resourceAttempts, *
 static NSDictionary *resourceConfiguration;
 static NSString *resourceBoot, *resourceRestoreNonce;
 static BOOL resourceLoaded, resourceWrites, resourcePaused;
+static NSDictionary *resourceCurrentPrefs;
+static NSDictionary *resourcePreviousRows;
+static BOOL resourceGlobalConfigurationValid, resourceEnumerationComplete;
+static uint32_t resourceCheckBatch;
+static int resourceScanError;
+static NSNumber *resourceLastCheckAttempt;
 static int resourceStoreError, resourceControlError;
 static int32_t resourceDarwin;
 static int32_t resourceDarwinMajor(void);
@@ -47,6 +55,14 @@ static NSDictionary *resourceBound(id raw) {
     for (NSString *key in @[VDTTargetPidKey, VDTConfigTypeKey, VDTTargetNameKey, VDTTargetStartSecondsKey,
         VDTTargetStartMicrosecondsKey, VDTTargetExecutablePathKey, VDTTargetProcCommKey])
         if (target[key]) bound[key] = target[key];
+    id resourceType = target[VDTTargetResourceTypeKey], resourceName = target[VDTTargetResourceNameKey];
+    if (resourceType || resourceName) {
+        if (!resourceInteger(resourceType, VDTConfigTypeApp, VDTConfigTypeExtension) ||
+            !resourceText(resourceName, 1024) || !VDTNiceRuleKey((VDTConfigType)[resourceType unsignedIntegerValue], resourceName)) return nil;
+        if ([resourceType unsignedIntegerValue] == VDTConfigTypeExtension &&
+            (!path || !VDTNearestBundlePath(path, @"appex"))) return nil;
+        bound[VDTConfigTypeKey] = resourceType; bound[VDTTargetNameKey] = resourceName;
+    }
     return bound;
 }
 static NSString *resourceInstance(NSDictionary *target) {
@@ -183,6 +199,43 @@ static NSDictionary *resourceSideReceipt(NSDictionary *row, NSString *side) {
     }
     return value;
 }
+static NSDictionary *resourceSummary(NSDictionary *instances, NSString *side) {
+    VDTResourceSummaryCounts counts = {};
+    BOOL memory = [side isEqual:@"memory"];
+    for (NSDictionary *row in instances.allValues) {
+        if (![row[@"checkBatch"] isEqual:@(resourceCheckBatch)]) continue;
+        ++counts.total;
+        NSString *state = row[side];
+        if ([row[@"state"] isEqual:@"store-error"] || [row[@"state"] isEqual:@"configuration-invalid"]) {
+            ++counts.failed; continue;
+        }
+        if ([state isEqual:@"applied"] || [state isEqual:@"restored"]) {
+            NSString *evidence = row[[side stringByAppendingString:@"Evidence"]];
+            BOOL valid = resourceValueValid(row[[side stringByAppendingString:@"Observed"]], memory) &&
+                ([evidence isEqual:@"written-verified"] || [evidence isEqual:@"matched-without-set"] ||
+                 ([state isEqual:@"restored"] && [evidence isEqual:@"read-before-execution"]));
+            if (!valid) ++counts.unknown;
+            else if ([state isEqual:@"restored"]) ++counts.restored;
+            else ++counts.applied;
+            continue;
+        }
+        if ([@[@"conflict", @"read-failed", @"unverified", @"store-error"] containsObject:state ?: @""]) {
+            ++counts.failed; continue;
+        }
+        if ([@[@"pending", @"restore-pending"] containsObject:state ?: @""]) { ++counts.pending; continue; }
+        NSNumber *rawSkip = row[[side stringByAppendingString:@"ExecutionSkip"]] ?:
+            row[[side stringByAppendingString:@"PlanSkip"]] ?: row[[side stringByAppendingString:@"Skip"]];
+        NSInteger skip = rawSkip ? rawSkip.integerValue : VDTApplySkipNone;
+        if (skip == VDTApplySkipNoWrite) ++counts.disabled;
+        else if (skip == VDTApplySkipRestorePending) ++counts.pending;
+        else if (skip != VDTApplySkipNone || [row[@"state"] isEqual:@"unsupported"]) ++counts.failed;
+        else ++counts.unknown;
+    }
+    return @{@"version": @1, @"batch": @(resourceCheckBatch), @"scope": @"identified-targets",
+        @"enumerationComplete": @(resourceEnumerationComplete), @"total": @(counts.total),
+        @"applied": @(counts.applied), @"restored": @(counts.restored), @"failed": @(counts.failed),
+        @"pending": @(counts.pending), @"unknown": @(counts.unknown), @"disabled": @(counts.disabled)};
+}
 static void resourceRow(NSDictionary *target, NSString *state, NSDictionary *detail) {
     NSString *key = VDTNiceRuleKey((VDTConfigType)[target[VDTConfigTypeKey] unsignedIntegerValue], target[VDTTargetNameKey]);
     if (!key) return;
@@ -191,6 +244,7 @@ static void resourceRow(NSDictionary *target, NSString *state, NSDictionary *det
         @"type": target[VDTConfigTypeKey], @"identifier": target[VDTTargetNameKey],
         @"startSeconds": target[VDTTargetStartSecondsKey], @"startMicroseconds": target[VDTTargetStartMicrosecondsKey]} mutableCopy];
     if (detail) [row addEntriesFromDictionary:detail];
+    if (resourceCheckBatch) row[@"checkBatch"] = @(resourceCheckBatch);
     // Same-instance recovery replaces its own error. Successful sibling
     // instances cannot conceal an unresolved error from another lifetime.
     if (!resourceRowsByInstance) resourceRowsByInstance = [NSMutableDictionary dictionary];
@@ -224,6 +278,11 @@ static void resourceRow(NSDictionary *target, NSString *state, NSDictionary *det
         sides[side] = resourceSideReceipt(worst ?: row, side);
     }
     if (instances.count > 1) aggregate[@"sideReceipts"] = sides;
+    if (resourceCheckBatch) {
+        aggregate[@"checkBatch"] = @(resourceCheckBatch);
+        aggregate[@"summaries"] = @{@"memory": resourceSummary(instances, @"memory"),
+            @"priority": resourceSummary(instances, @"priority")};
+    }
     resourceRows[key] = aggregate;
 }
 static void resourceForgetRetries(NSString *instance) {
@@ -235,6 +294,19 @@ static void resourceForgetRetries(NSString *instance) {
 }
 static NSString *resourceAttemptKey(NSString *instance, NSString *side, VDTOpKind kind) {
     return [NSString stringWithFormat:@"%@:%@:%d", instance, side, (int)kind];
+}
+static void resourceSuspendUnobservedDue(NSString *instance, VDTResourceRestoreSelection selection) {
+    // Keep durable recovery and attempt budgets. Do not leave an obsolete APPLY
+    // deadline spinning when no currently resolved target can execute it.
+    NSString *prefix = [instance stringByAppendingString:@":"];
+    NSString *memoryRestore = resourceAttemptKey(instance, @"memory", VDTOpKindRestoreMemory);
+    NSString *priorityRestore = resourceAttemptKey(instance, @"priority", VDTOpKindRestorePriority);
+    for (NSString *key in resourceDue.allKeys) {
+        if (![key hasPrefix:prefix]) continue;
+        if (selection.memory && [key isEqual:memoryRestore]) continue;
+        if (selection.priority && [key isEqual:priorityRestore]) continue;
+        [resourceDue removeObjectForKey:key];
+    }
 }
 static void resourceRetry(NSString *key, int error) {
     NSUInteger count = [resourceAttempts[key] unsignedIntegerValue];
@@ -287,7 +359,7 @@ static BOOL resourceExecuteSide(NSDictionary *target, NSMutableDictionary *recor
     if (side) {
         BOOL atLast = [current isEqual:side[@"last"]];
         BOOL atWanted = side[@"wanted"] && [current isEqual:side[@"wanted"]];
-        if ([side[@"phase"] isEqual:@"restore-pending"] && atWanted) {
+        if (restore && [side[@"phase"] isEqual:@"restore-pending"] && atWanted) {
             [record removeObjectForKey:name]; resourceRecords[instance] = record;
             if (!record[@"memory"] && !record[@"priority"]) [resourceRecords removeObjectForKey:instance];
             [resourceAttempts removeObjectForKey:attemptKey];
@@ -398,9 +470,119 @@ static int32_t resourceDarwinMajor(void) {
     errno = 0; char *end = NULL; long major = strtol(release, &end, 10);
     return !errno && major > 0 && major <= INT32_MAX && end && *end == '.' ? (int32_t)major : 0;
 }
+static BOOL resourceSectionValid(NSString *section) {
+    id rows = resourceCurrentPrefs[section];
+    if (!rows) return YES;
+    if (![rows isKindOfClass:NSArray.class] || [rows count] > 4096) return NO;
+    for (id raw in rows) {
+        if (![raw isKindOfClass:NSDictionary.class]) return NO;
+        BOOL identified = NO;
+        NSArray *keys = @[@"bundleIdentifier", @"daemonName", @"extensionIdentifier"];
+        const VDTConfigType types[] = {VDTConfigTypeApp, VDTConfigTypeDaemon, VDTConfigTypeExtension};
+        for (NSUInteger index = 0; index < keys.count; ++index) {
+            id identifier = raw[keys[index]];
+            if (!identifier) continue;
+            if (!resourceText(identifier, 4096) || !VDTNiceRuleKey(types[index], identifier)) return NO;
+            identified = YES;
+        }
+        if (!identified) return NO;
+    }
+    return YES;
+}
+static NSDictionary *resourceSavedRule(NSString *section, NSString *identifier, VDTConfigType type) {
+    NSString *key = type == VDTConfigTypeApp ? @"bundleIdentifier" :
+        type == VDTConfigTypeDaemon ? @"daemonName" : @"extensionIdentifier";
+    for (NSDictionary *row in resourceCurrentPrefs[section])
+        if ([row[key] isEqual:identifier]) return row;
+    return nil;
+}
+static VDTPolicyInteger resourceIntentInteger(id value) {
+    if (!value) return (VDTPolicyInteger){VDTPolicyInputNull, 0};
+    if (!resourceInteger(value, INT32_MIN, INT32_MAX)) return (VDTPolicyInteger){VDTPolicyInputInvalid, 0};
+    return (VDTPolicyInteger){VDTPolicyInputInteger, [value longLongValue]};
+}
+static VDTResourceCurrentIntent resourceCurrentIntent(NSDictionary *target, NSString *section) {
+    // A failed/truncated PID list and a failed identity lookup say nothing about
+    // rule removal. Inspect the saved intent separately, failing closed if its
+    // identifier namespace or extension inheritance cannot be proved.
+    if (!resourceGlobalConfigurationValid || !resourceSectionValid(section)) return VDTResourceIntentUnknown;
+    VDTConfigType type = (VDTConfigType)[target[VDTConfigTypeKey] unsignedIntegerValue];
+    NSString *identifier = target[VDTTargetNameKey];
+    NSString *executable = target[VDTTargetExecutablePathKey];
+    // Old journals may carry the inherited CPU App identity for an extension.
+    // Without newly validated canonical resource metadata, absence in that App
+    // namespace is UNKNOWN, not permission to undo an enabled extension rule.
+    if (VDTNearestBundlePath(executable, @"appex") && type != VDTConfigTypeExtension) return VDTResourceIntentUnknown;
+    NSDictionary *rule = nil;
+    if (VDTSpringBoardPathMatches(executable.UTF8String)) {
+        rule = resourceSavedRule(section, @VDT_SPRINGBOARD_RULE_NAME, VDTConfigTypeDaemon);
+        if (!rule && type != VDTConfigTypeApp) {
+            NSString *app = VDTNearestBundlePath(executable, @"app");
+            NSDictionary *info = app ? [NSDictionary dictionaryWithContentsOfFile:[app stringByAppendingPathComponent:@"Info.plist"]] : nil;
+            NSString *host = info[@"CFBundleIdentifier"];
+            if (!VDTNiceRuleKey(VDTConfigTypeApp, host)) return VDTResourceIntentUnknown;
+            rule = resourceSavedRule(section, host, VDTConfigTypeApp);
+        }
+    }
+    if (!rule && !(VDTSpringBoardPathMatches(executable.UTF8String) && type != VDTConfigTypeApp))
+        rule = resourceSavedRule(section, identifier, type);
+    if (!rule && type == VDTConfigTypeExtension) {
+        NSString *path = target[VDTTargetExecutablePathKey];
+        NSDictionary *extension = VDTReadExtensionBundleInfo(VDTNearestBundlePath(path, @"appex"), path);
+        if (![extension[@"extensionIdentifier"] isEqual:identifier]) return VDTResourceIntentUnknown;
+        NSString *container = extension[@"containingAppPath"];
+        if (!container) return VDTResourceIntentUnknown;
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[container stringByAppendingPathComponent:@"Info.plist"]];
+        NSString *host = info[@"CFBundleIdentifier"];
+        if (!VDTNiceRuleKey(VDTConfigTypeApp, host)) return VDTResourceIntentUnknown;
+        rule = resourceSavedRule(section, host, VDTConfigTypeApp);
+    }
+    if (!rule) return VDTResourceIntentRevoke;
+    id enabled = rule[@"enabled"];
+    if (enabled && (![enabled isKindOfClass:NSNumber.class] ||
+        CFGetTypeID((__bridge CFTypeRef)enabled) != CFBooleanGetTypeID())) return VDTResourceIntentUnknown;
+    if (![enabled boolValue]) return VDTResourceIntentRevoke;
+    if ([section isEqual:@"memoryRules"]) {
+        VDTMemoryRuleInput input = {VDTPolicyRecordEnabled, resourceIntentInteger(rule[@"schema"]),
+            resourceIntentInteger(rule[@"active"]), resourceIntentInteger(rule[@"inactive"])};
+        VDTMemoryRule parsed = VDTParseMemoryRule(&input);
+        if (parsed.parseStatus != VDTPolicyParseOK) return VDTResourceIntentUnknown;
+        VDTMemoryPlan plan = VDTPlanMemoryRule(&parsed, resourceDarwin, YES);
+        if (plan.status == VDTPolicyPlanRestoreRequired) return VDTResourceIntentRevoke; // enabled 0 / 0
+        if (plan.status == VDTPolicyPlanReady || (parsed.active.mode == VDTMemoryModeUnlimited &&
+            parsed.inactive.mode == VDTMemoryModeUnlimited)) return VDTResourceIntentKeep;
+        return VDTResourceIntentUnknown;
+    }
+    VDTJetsamRuleInput input = {}; input.state = VDTPolicyRecordEnabled;
+    input.schema = resourceIntentInteger(rule[@"schema"]); input.mode = VDTJetsamModeRaw;
+    input.rawBand = resourceIntentInteger(rule[@"priority"]);
+    input.rawSourceDarwinMajor = resourceIntentInteger(rule[@"sourceDarwinMajor"]);
+    VDTJetsamRule parsed = VDTParseJetsamRule(&input);
+    if (parsed.parseStatus != VDTPolicyParseOK) return VDTResourceIntentUnknown;
+    VDTJetsamPlan plan = VDTPlanJetsamRule(&parsed, resourceDarwin, YES);
+    if (plan.status == VDTPolicyPlanRestoreRequired) return VDTResourceIntentRevoke;
+    return plan.status == VDTPolicyPlanReady ? VDTResourceIntentKeep : VDTResourceIntentUnknown;
+}
+void vdt_resource_begin_check(NSArray<NSDictionary *> *targets, BOOL enumerationComplete, int scanError) {
+    // Display-only generation. It is never used as journal/restoration authority.
+    resourcePreviousRows = [resourceRows copy];
+    resourceRows = [NSMutableDictionary dictionary];
+    resourceRowsByInstance = [NSMutableDictionary dictionary];
+    resourceCheckBatch = resourceCheckBatch == UINT32_MAX ? 1 : resourceCheckBatch + 1;
+    resourceEnumerationComplete = enumerationComplete;
+    resourceScanError = scanError;
+    resourceLastCheckAttempt = resourceReceiptTime();
+    if (![targets isKindOfClass:NSArray.class]) { resourceEnumerationComplete = NO; resourceScanError = EINVAL; }
+}
 void vdt_resource_reload(NSDictionary *prefs) {
     if (!resourceRows) resourceRows = [NSMutableDictionary dictionary]; else [resourceRows removeAllObjects];
     resourceRowsByInstance = [NSMutableDictionary dictionary];
+    resourcePreviousRows = nil; resourceCheckBatch = 0; resourceLastCheckAttempt = nil;
+    resourceEnumerationComplete = NO; resourceScanError = 0;
+    resourceCurrentPrefs = [prefs isKindOfClass:NSDictionary.class] ? [prefs copy] : nil;
+    id globalEnabled = resourceCurrentPrefs[@"enabled"];
+    resourceGlobalConfigurationValid = resourceCurrentPrefs && (!globalEnabled ||
+        ([globalEnabled isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)globalEnabled) == CFBooleanGetTypeID()));
     resourceAttempts = [NSMutableDictionary dictionary]; resourceDue = [NSMutableDictionary dictionary];
     resourceConfiguration = VDTResourceConfiguration(prefs); resourceWrites = VDTResourceWriteEnabled(prefs);
     resourceLoad();
@@ -414,11 +596,15 @@ void vdt_resource_reload(NSDictionary *prefs) {
     }
     else { resourcePaused = YES; resourceRestoreNonce = request[@"nonce"]; }
 }
-BOOL vdt_resource_apply(NSDictionary *rawTarget, const VDTMemoryRule *memory, const VDTJetsamRule *jetsam) {
+static BOOL resourceApply(NSDictionary *rawTarget, const VDTMemoryRule *memory, const VDTJetsamRule *jetsam, BOOL restoreMissing) {
     NSDictionary *target = resourceBound(rawTarget);
     if (!target) return NO;
     resourceLoad();
     if (!resourceLoaded || resourceStoreError || resourceControlError) { resourceRow(target, @"store-error", nil); return NO; }
+    if (!resourceGlobalConfigurationValid && !resourcePaused) {
+        resourceRow(target, @"configuration-invalid", @{@"memorySkip": @(VDTApplySkipUnsupported),
+            @"prioritySkip": @(VDTApplySkipUnsupported)}); return NO;
+    }
     NSString *instance = resourceInstance(target);
     if (!resourceRecords[instance] && resourceRecords.count >= 2048) {
         // The writer and loader share one record limit. Reaching capacity must
@@ -426,6 +612,9 @@ BOOL vdt_resource_apply(NSDictionary *rawTarget, const VDTMemoryRule *memory, co
         resourceRow(target, @"pending", @{@"recordLimit": @YES}); return NO;
     }
     NSMutableDictionary *record = [resourceRecords[instance] mutableCopy] ?: [@{@"target": target} mutableCopy];
+    // A freshly resolved resource identity can correct a legacy CPU namespace
+    // for this SAME pid/start/path key, without recapturing either original.
+    record[@"target"] = target;
     if (resourceGone(target)) {
         [resourceRecords removeObjectForKey:instance]; resourceForgetRetries(instance);
         resourceRow(target, @"gone", nil); return resourcePersist();
@@ -444,8 +633,13 @@ BOOL vdt_resource_apply(NSDictionary *rawTarget, const VDTMemoryRule *memory, co
         effectiveMemory = VDTMemoryRule(); effectivePriority = VDTJetsamRule();
         effectiveMemory.state = VDTPolicyRecordDisabled; effectivePriority.state = VDTPolicyRecordDisabled;
     }
+    BOOL revokeAll = !resourceWrites || resourcePaused;
+    BOOL revokeMissingMemory = !memory && restoreMissing && resourceCurrentIntent(target, @"memoryRules") == VDTResourceIntentRevoke;
+    BOOL revokeMissingPriority = !jetsam && restoreMissing && resourceCurrentIntent(target, @"jetsamRules") == VDTResourceIntentRevoke;
     VDTApplyProgram program = VDTApplyBuildProgram([target[VDTTargetPidKey] intValue],
-        &effectiveMemory, &effectivePriority, darwinMajor, record[@"memory"] != nil, record[@"priority"] != nil, capabilities);
+        (memory || revokeMissingMemory || revokeAll) ? &effectiveMemory : NULL,
+        (jetsam || revokeMissingPriority || revokeAll) ? &effectivePriority : NULL,
+        darwinMajor, record[@"memory"] != nil, record[@"priority"] != nil, capabilities);
     NSMutableDictionary *detail = [@{@"memorySkip": @(program.memorySkip), @"prioritySkip": @(program.jetsamSkip),
         @"memoryPlanSkip": @(program.memorySkip), @"priorityPlanSkip": @(program.jetsamSkip)} mutableCopy];
     if (!program.opCount) {
@@ -472,16 +666,40 @@ BOOL vdt_resource_apply(NSDictionary *rawTarget, const VDTMemoryRule *memory, co
     }
     resourceRow(target, state, detail); return settled;
 }
+BOOL vdt_resource_apply(NSDictionary *target, const VDTMemoryRule *memory, const VDTJetsamRule *jetsam) {
+    return resourceApply(target, memory, jetsam, YES);
+}
 void vdt_resource_reconcile(NSArray<NSDictionary *> *targets) {
-    // Caller supplies a freshly resolved full snapshot. No PID cache here can
-    // prove identity, and missing rules retire only their own resource records.
-    NSMutableSet *live = [NSMutableSet set];
+    NSMutableSet *observed = [NSMutableSet set];
     for (NSDictionary *target in targets) {
         NSDictionary *bound = resourceBound(target);
-        if (bound) [live addObject:resourceInstance(bound)];
+        if (bound) [observed addObject:resourceInstance(bound)];
     }
-    for (NSString *instance in [resourceRecords.allKeys copy])
-        if (![live containsObject:instance]) vdt_resource_apply(resourceRecords[instance][@"target"], NULL, NULL);
+    for (NSString *instance in [resourceRecords.allKeys copy]) {
+        if ([observed containsObject:instance]) continue; // ordinary apply handles this exact lifetime
+        NSDictionary *record = resourceRecords[instance];
+        NSDictionary *retiredTarget = resourceBound(record[@"target"]);
+        if (!retiredTarget) continue;
+        BOOL exited = resourceGone(retiredTarget);
+        if (exited) {
+            [resourceRecords removeObjectForKey:instance]; resourceForgetRetries(instance);
+            resourceRow(retiredTarget, @"gone", nil); resourcePersist(); continue;
+        }
+        // Missing from even a complete PID enumeration is not rule-revocation
+        // evidence: bundle/path resolution may have failed. Restore ONLY the
+        // owned resource whose validated saved intent was actually revoked.
+        BOOL globalRevocation = resourcePaused || (resourceGlobalConfigurationValid && !resourceWrites);
+        VDTResourceRestoreSelection selection = VDTResourceSelectRestores(globalRevocation,
+            record[@"memory"] != nil, record[@"priority"] != nil,
+            resourceCurrentIntent(retiredTarget, @"memoryRules"),
+            resourceCurrentIntent(retiredTarget, @"jetsamRules"));
+        resourceSuspendUnobservedDue(instance, selection);
+        if (!selection.memory && !selection.priority) continue;
+        VDTMemoryRule memory = {}; memory.state = VDTPolicyRecordDisabled;
+        VDTJetsamRule priority = {}; priority.state = VDTPolicyRecordDisabled;
+        resourceApply(retiredTarget, selection.memory ? &memory : NULL,
+            selection.priority ? &priority : NULL, NO);
+    }
 }
 BOOL vdt_resource_restore_all(void) {
     if (!resourcePaused || !resourceRestoreNonce) return NO;
@@ -496,9 +714,21 @@ NSTimeInterval vdt_resource_next_retry_delay(void) {
 }
 void vdt_resource_publish(void) {
     if (!resourceBoot || !resourceConfiguration) return;
+    // Keep the last actual readback available in details when a later scan
+    // cannot identify this target. It must not borrow the new check's time/counts.
+    for (NSString *key in resourcePreviousRows) {
+        if (resourceRows[key]) continue;
+        NSMutableDictionary *historical = [resourcePreviousRows[key] mutableCopy];
+        historical[@"historicalOnly"] = @YES; [historical removeObjectForKey:@"summaries"];
+        resourceRows[key] = historical;
+    }
     NSMutableDictionary *receipt = [VDTNiceReceiptWithBootSession(@{@"version": @1, @"boot": resourceBoot, @"configuration": resourceConfiguration,
         @"recordCount": @(resourceRecords.count), @"storeError": @(resourceStoreError ?: resourceControlError), @"paused": @(resourcePaused),
+        @"configurationValid": @(resourceGlobalConfigurationValid),
         @"restoreNonce": resourceRestoreNonce ?: @"", @"rows": resourceRows ?: @{}}) mutableCopy];
+    if (resourceLastCheckAttempt) receipt[@"latestCheck"] = @{@"version": @1, @"batch": @(resourceCheckBatch),
+        @"enumerationComplete": @(resourceEnumerationComplete), @"error": @(resourceScanError),
+        @"attemptedAt": resourceLastCheckAttempt};
     NSData *data = [NSPropertyListSerialization dataWithPropertyList:receipt format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
     if (!data || data.length > VDT_NICE_STORE_LIMIT) {
         // Keep the status file readable and explicit; never silently publish a

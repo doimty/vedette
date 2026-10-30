@@ -33,6 +33,9 @@ extern NSString * const VDTTargetStartSecondsKey;
 extern NSString * const VDTTargetStartMicrosecondsKey;
 extern NSString * const VDTTargetMemoryRuleKey;
 extern NSString * const VDTTargetJetsamRuleKey;
+// Canonical resource namespace, independent of the CPU target type/name.
+extern NSString * const VDTTargetResourceTypeKey;
+extern NSString * const VDTTargetResourceNameKey;
 extern NSString * const VDTTargetContainingAppIdentifierKey;
 extern NSString * const VDTTargetNiceSourceTypeKey;
 extern NSString * const VDTTargetNiceSourceIdentifierKey;
@@ -62,6 +65,16 @@ NSArray<NSDictionary *>* vdt_resource_rules_from_prefs(NSDictionary *prefs);
 // currently alive. Resource rules travel alongside the CPU configs so a
 // memory-only or jetsam-only rule still resolves to its validated instance;
 // each target carries its own percentage/interval/policy plus resource intents.
+// The checked API reports PID enumeration ONLY: YES does not prove that every
+// process identity/metadata lookup succeeded, nor make target absence authority
+// to revoke an owned resource setting. A complete empty PID read is YES/error 0;
+// failure or truncation is NO/positive errno and returns no partial targets.
+// Outputs are optional and initialized to NO/0 on every path. No-rule fast
+// paths skip enumeration and retain NO/0 (not an enumeration failure).
+NSArray<NSDictionary *>* vdt_resolve_targets_checked(NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules, BOOL *outScanComplete, int *outScanError);
+
+// Compatibility wrapper: discards scan status, so an empty result alone cannot
+// distinguish an enumeration failure from no matching targets.
 NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules);
 
 // Same resolution for a single PID. Returns an empty array when the process is

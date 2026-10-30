@@ -21,6 +21,8 @@ MODEL = PREFS / 'VDTCheckResultModel.m'
 def source_contracts():
     from test_resource_preferences_native import function_source
     from test_preferences_ui import read_strings, validate_keys
+    from test_check_result_navigation import source_contracts as navigation_source_contracts
+    from test_check_result_summary_model import source_contracts as summary_source_contracts
     owner = (PREFS / 'VDTProcessConfiguration.m').read_text()
     adapter = (PREFS / 'VDTCheckResultsPreferences.m').read_text()
     reader = (PREFS / 'VDTCheckResultReader.m').read_text()
@@ -33,9 +35,10 @@ def source_contracts():
     assert 'Nice execution status' not in nice and 'Check / retry nice' not in nice
     assert adapter.count('VDTLoc(self.class, @"Check / retry nice")') == 1
     assert 'index < 3' in adapter and 'VDTCheckResultSpecifier(@{})' in adapter
-    assert 'VDTCheckDetailsController' not in adapter and 'vdtCheckContext' not in adapter
-    assert '@"Check details"' not in adapter and '@"Refresh display"' not in adapter
-    assert 'footerText' not in adapter and '@"Last apply result"' in adapter
+    # Reuse the focused selected-link/detail/footer/cached-row contracts rather
+    # than forbidding the comfortable native navigation they now implement.
+    navigation_source_contracts()
+    summary_source_contracts()
     assert '[refresh setButtonAction:' not in adapter
     assert 'compactState' in cell and 'compactTone' in cell
     for removed in ('checkSummary', 'checkTime', 'checkScope', 'model[@"state"]', 'model[@"summary"]'):
@@ -50,7 +53,7 @@ def source_contracts():
     assert 'setPendingStatusAndReload' in nice and 'vdtMarkNiceCheckPending' in nice and 'vdtNiceCheckDidRefresh' in nice
     assert 'notify_cancel(_resourceToken)' in adapter and '__weak VDTCheckResultsPreferences' in adapter
     for forbidden in ('notify_post(', 'memorystatus_control(', 'setpriority(', 'VDTResourceSetWriteEnabled', '_specifiers = nil'):
-        assert forbidden not in adapter + model, 'read-only display violated: ' + forbidden
+        assert forbidden not in adapter + model + reader, 'read-only display violated: ' + forbidden
     for prefix in ('- (void)refreshDisplay', '- (void)reloadModels'):
         assert 'requestRetry' not in function_source(adapter, prefix)
     assert '[[_owner vdtNicePreferences] requestRetry]' in function_source(adapter, '- (void)requestNiceRetry')
@@ -84,13 +87,13 @@ def source_contracts():
                  'Nice receipt exceeds size limit', 'Nice receipt unavailable', 'Receipt saved at'}
     required |= {'Last apply result', 'Applied', 'Restored', 'Not enabled', 'Pending', 'Not confirmed', 'Not applied', 'Partly confirmed'}
     validate_keys(required, en, zh)
-    print('PASS check-result source wiring, compact rows, CPU/nice freeze, localization (not UIKit)')
+    print('PASS check-result source wiring, summary/reader/localization, selected navigation, compact rows, CPU/nice freeze (source only; not UIKit/Foundation)')
 
 
 def mutants(source):
     changes = [
         ('compact-unknown-as-success', 'NSString *compactState = @"Not confirmed", *compactTone = @"neutral";',
-         'NSString *compactState = @"Applied", *compactTone = @"ok";', 'compact-missing-not-success'),
+         'NSString *compactState = @"Confirmed", *compactTone = @"ok";', 'compact-missing-not-success'),
         ('policy-is-success', 'case VDTApplySkipUnsupported: return @"Rule not applied";',
          'case VDTApplySkipUnsupported: return @"Rule readback matched";', 'skip-not-success'),
         ('unlimited-active-attrs', '[pair[1] longLongValue] == VDT_APPLY_UNLIMITED_ATTRS &&',
@@ -107,6 +110,12 @@ def mutants(source):
          '? @"Nice state applied" : @"Nice receipt unavailable";', 'nice-status-limit'),
         ('receipt-save-time-as-check', '(receipt[@"oldestCheckedAt"] ?: receipt[@"checkedAt"])',
          '(receipt[@"oldestCheckedAt"] ?: receipt[@"checkedAt"] ?: receipt[@"receiptUpdatedAt"])', 'nice-status-no-check-time'),
+        ('summary-confirmed-as-partial', 'VDTCheckText(localize, @"Confirmed (%@/%@)")',
+         'VDTCheckText(localize, @"Partly confirmed (%@/%@)")', 'summary-all-confirmed'),
+        ('summary-ignore-row-batch', ' || ![batch isEqual:rowBatch]', '', 'summary-stale-row'),
+        ('summary-ignore-latest-batch', ' || ![batch isEqual:latest[@"batch"]]', '', 'summary-stale-latest'),
+        ('drop-local-pending', 'else if (localPending) compactState = @"Checking…";',
+         'else if (localPending) compactState = @"Confirmed";', 'nice-local-pending'),
     ]
     for name, old, new, expected in changes:
         assert source.count(old) == 1, 'non-unique mutation: ' + name
@@ -116,7 +125,13 @@ def mutants(source):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--require-native', action='store_true')
+    p.add_argument('--source-only', action='store_true', help='Run source contracts only, never a native pass')
     args = p.parse_args()
+    if args.source_only:
+        if args.require_native:
+            p.error('--source-only cannot satisfy --require-native')
+        source_contracts()
+        return 0
     if platform.system() != 'Darwin':
         print('SKIP check-result native gate: requires Darwin Foundation; no local build performed')
         return 1 if args.require_native else 77

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Formal projection contracts and unknown-change rejection; no native claims."""
+import shutil
 import subprocess
 import unittest
 from formal_delta import (ROOT, FORMAL_BASE, FORMAL_VERSION, FORMAL_PATHS,
                           formal_baseline, formal_regions, without_formal_rules)
+from comfort_delta import COMFORT_PATHS, without_comfort_rules
 from extension_projection import assert_release_freeze, projected_bytes, baseline_bytes
 
 
@@ -12,6 +14,8 @@ class FormalProjection(unittest.TestCase):
         for revision in (FORMAL_BASE, '788f43bcb17a2c3890ed8bdeea3f1a97660e13c7'):
             subprocess.run(['git', 'merge-base', '--is-ancestor', revision, 'HEAD'], cwd=ROOT, check=True)
         for previous in ('1.1.14-3', '1.1.14-2', '1.1.14-1', '1.1.13-4', '1.1.13-3', '1.1.13-2', '1.1.13-1+rc1', '1.1.12-3', '1.1.10-1+ui21'):
+            if not shutil.which('dpkg'):
+                self.skipTest('dpkg unavailable locally; CI installs/uses it for version ordering')
             subprocess.run(['dpkg', '--compare-versions', FORMAL_VERSION, 'gt', previous], check=True)
 
     def test_literal_projection_all_layers(self):
@@ -35,6 +39,10 @@ class FormalProjection(unittest.TestCase):
     def test_changed_reviewed_regions_rejected(self):
         for path, hunks in formal_regions().items():
             actual = (ROOT / path).read_text()
+            # Comfort is a reviewed, exact inverse layer; apply it first so the
+            # ORIGINAL formal region assertions still see the fixed 2a3108c text.
+            if path in COMFORT_PATHS:
+                actual = without_comfort_rules(path, actual)
             for previous, current in hunks:
                 self.assertEqual(actual.count(current), 1)
                 changed = actual.replace(current, current + 'unknown-region-change', 1)

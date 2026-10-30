@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Source contracts + compiled fixed-transport negatives; NOT Foundation/device."""
 from pathlib import Path
-import re, subprocess, tempfile, unittest
+import os, re, shlex, subprocess, tempfile, unittest
 from formal_delta import formal_baseline, without_formal_rules
 ROOT=Path(__file__).resolve().parents[1]
 class Writeback(unittest.TestCase):
@@ -76,7 +76,8 @@ class Writeback(unittest.TestCase):
     if old:
      self.assertEqual(text.count(old),1,label);text=text.replace(old,new,1)
     path=d/'io.c';path.write_text(text);out=d/'test'
-    c=subprocess.run(['cc','-std=c11','-O2','-Wall','-Wextra','-Werror','-I',str(ROOT),str(path),
+    cc=shlex.split(os.environ.get('CC','cc'))
+    c=subprocess.run(cc+['-std=c11','-O2','-Wall','-Wextra','-Werror','-I',str(ROOT),str(path),
       str(ROOT/'VDTProcessIdentity.c'),str(ROOT/'VDTMemoryPolicy.c'),str(ROOT/'VDTJetsamPolicy.c'),
       str(ROOT/'tests/test_resource_system_io.c'),'-o',str(out)],capture_output=True,text=True)
     self.assertEqual(c.returncode,0,'COMPILE FAILURE, not killed: '+label+'\n'+c.stderr)

@@ -87,7 +87,7 @@ static NSArray<NSDictionary *> *current_normalized_configs_sync(void){
 
 static NSArray<NSDictionary *> *current_normalized_resource_rules_sync(void){
     if (!normalized_resource_rules_snapshot){
-        normalized_resource_rules_snapshot = [vdt_resource_rules_from_prefs(VDTGetPrefs()) copy];
+        normalized_resource_rules_snapshot = [vdt_resource_rules_from_prefs(VDTResourceReadPreferences()) copy];
     }
     return normalized_resource_rules_snapshot;
 }
@@ -245,6 +245,7 @@ static NSUInteger resource_retry_generation;
 static void invalidate_resource_retry_sync(void){
     ++resource_retry_generation;
     resource_retry_scheduled = NO;
+    resource_retry_targets = nil; // never replay target intents from an earlier configuration
 }
 static void schedule_resource_retry_sync(void){
     NSTimeInterval delay = vdt_resource_next_retry_delay();
@@ -255,13 +256,15 @@ static void schedule_resource_retry_sync(void){
                    vedette_serial_queue(), ^{
         if (generation != resource_retry_generation) return;
         resource_retry_scheduled = NO;
+        vdt_resource_begin_check(resource_retry_targets ?: @[], NO, 0);
         vdt_resource_reconcile(resource_retry_targets ?: @[]);
         for (NSDictionary *target in resource_retry_targets) vdt_apply_resource_target(target);
         vdt_resource_publish();
         schedule_resource_retry_sync();
     });
 }
-static void apply_resource_targets_sync(NSArray<NSDictionary *> *targets, BOOL fullSnapshot){
+static void apply_resource_targets_sync(NSArray<NSDictionary *> *targets, BOOL fullSnapshot, BOOL enumerationComplete, int scanError){
+    if (fullSnapshot || targets.count || scanError) vdt_resource_begin_check(targets, enumerationComplete, scanError);
     if (fullSnapshot) {
         resource_retry_targets = [targets copy];
         vdt_resource_reconcile(targets);
@@ -282,7 +285,8 @@ static void apply_resource_targets_sync(NSArray<NSDictionary *> *targets, BOOL f
 
 static void reconcile_unreported_processes_sync(){
     NSArray<NSDictionary *> *configs = current_normalized_configs_sync();
-    NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, current_normalized_resource_rules_sync());
+    BOOL scanComplete = NO; int scanError = 0;
+    NSArray<NSDictionary *> *targets = vdt_resolve_targets_checked(configs, current_normalized_resource_rules_sync(), &scanComplete, &scanError);
     NSMutableSet<NSString *> *liveInstances = [NSMutableSet set];
 
     retire_targets_without_active_config(configs);
@@ -297,7 +301,7 @@ static void reconcile_unreported_processes_sync(){
     // Forget exited instances so a reused PID with a new start-time token is
     // independently eligible on the next launch signal.
     [tracked_process_instances() intersectSet:liveInstances];
-    apply_resource_targets_sync(targets, YES);
+    apply_resource_targets_sync(targets, YES, scanComplete, scanError);
     vdt_nice_publish();
 }
 
@@ -329,7 +333,7 @@ static void handle_reported_pid_sync(pid_t pid){
     } else if (targets.count) {
         apply_launch_target_if_needed(targets.firstObject);
     }
-    apply_resource_targets_sync(targets, NO);
+    apply_resource_targets_sync(targets, NO, NO, 0);
     schedule_launch_catch_up_sync();
 }
 
@@ -337,7 +341,8 @@ static void handle_reported_pid_sync(pid_t pid){
 static void reloadPrefsSync(){
     NSDictionary *newPrefs = getPrefs();
     NSArray<NSDictionary *> *configs = vdt_configs_from_prefs(newPrefs);
-    NSArray<NSDictionary *> *resourceRules = vdt_resource_rules_from_prefs(newPrefs);
+    NSDictionary *resourcePrefs = VDTResourceReadPreferences();
+    NSArray<NSDictionary *> *resourceRules = vdt_resource_rules_from_prefs(resourcePrefs);
     VDTSetPrefs(newPrefs);
     normalized_configs_snapshot = [configs copy];
     normalized_resource_rules_snapshot = [resourceRules copy];
@@ -345,9 +350,10 @@ static void reloadPrefsSync(){
     invalidate_nice_retry_sync();
     vdt_nice_reload(newPrefs);
     invalidate_resource_retry_sync();
-    vdt_resource_reload(newPrefs);
+    vdt_resource_reload(resourcePrefs);
 
-    NSArray<NSDictionary *> *targets = vdt_resolve_targets(configs, resourceRules);
+    BOOL scanComplete = NO; int scanError = 0;
+    NSArray<NSDictionary *> *targets = vdt_resolve_targets_checked(configs, resourceRules, &scanComplete, &scanError);
     HBLogDebug(@"Vedette configs: %@", configs);
     HBLogDebug(@"Vedette targets: %@", targets);
 
@@ -370,7 +376,7 @@ static void reloadPrefsSync(){
         }
         if (success) [tracked_process_instances() addObject:instanceKey];
     }
-    apply_resource_targets_sync(targets, YES);
+    apply_resource_targets_sync(targets, YES, scanComplete, scanError);
     vdt_nice_publish();
 }
 
@@ -408,9 +414,12 @@ static void restoreAllMonitors(){
         [tracked_process_instances() removeAllObjects];
         [managed_process_targets() removeAllObjects];
         invalidate_resource_retry_sync();
-        vdt_resource_reload(prefs);
-        apply_resource_targets_sync(vdt_resolve_targets(vdt_configs_from_prefs(prefs),
-            vdt_resource_rules_from_prefs(prefs)), YES);
+        NSDictionary *resourcePrefs = VDTResourceReadPreferences();
+        vdt_resource_reload(resourcePrefs);
+        BOOL scanComplete = NO; int scanError = 0;
+        NSArray *resourceTargets = vdt_resolve_targets_checked(vdt_configs_from_prefs(prefs),
+            vdt_resource_rules_from_prefs(resourcePrefs), &scanComplete, &scanError);
+        apply_resource_targets_sync(resourceTargets, YES, scanComplete, scanError);
 
         [[NSFileManager defaultManager] removeItemAtPath:PREFS_PATH_TMP error:nil];
     });
@@ -472,7 +481,7 @@ static void resourceRemovalCallback(CFNotificationCenterRef center, void *observ
     (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
     dispatch_async(vedette_serial_queue(), ^{
         invalidate_resource_retry_sync();
-        vdt_resource_reload(getPrefs());
+        vdt_resource_reload(VDTResourceReadPreferences());
         vdt_resource_restore_all();
         vdt_resource_publish();
         schedule_resource_retry_sync();

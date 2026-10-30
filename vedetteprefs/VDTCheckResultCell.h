@@ -4,6 +4,7 @@
 #import <Preferences/PSSpecifier.h>
 #import <Preferences/PSListController.h>
 
+// Native detail link; the adapter supplies current vdtCheckContext/vdtCheckIndex.
 PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model);
 UIColor *VDTCheckStateColor(NSString *tone);
 @interface VDTCheckResultCell : PSTableCell

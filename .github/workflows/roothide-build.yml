@@ -11,6 +11,7 @@ on:
       - roothide-stable-probe3
       - fix/proc-identity-guard
       - release/1.1.13
+      - fix/resource-comfort-20261030
     paths:
       - '.github/workflows/roothide-build.yml'
       - '**/*.h'
@@ -73,7 +74,7 @@ jobs:
       THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
       PACKAGE_ARCH: ${{ matrix.package_arch }}
       PACKAGE_PREFIX: ${{ matrix.prefix }}
-      PACKAGE_VERSION: 1.1.14-4
+      PACKAGE_VERSION: 1.1.14-5
       FINALPACKAGE: 1
       PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
 

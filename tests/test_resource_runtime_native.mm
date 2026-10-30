@@ -18,6 +18,7 @@ NSString *const VDTConfigPercentageKey=@"percentage", *const VDTConfigIntervalKe
 NSString *const VDTTargetPidKey=@"pid", *const VDTTargetNameKey=@"name", *const VDTTargetExecutablePathKey=@"executablePath", *const VDTTargetProcCommKey=@"procComm";
 NSString *const VDTTargetStartSecondsKey=@"startSeconds", *const VDTTargetStartMicrosecondsKey=@"startMicroseconds";
 NSString *const VDTTargetMemoryRuleKey=@"memoryRule", *const VDTTargetJetsamRuleKey=@"jetsamRule";
+NSString *const VDTTargetResourceTypeKey=@"resourceType", *const VDTTargetResourceNameKey=@"resourceName";
 static NSString *testRoot;
 NSString *VDTTestJbroot(NSString *path) { return [testRoot stringByAppendingString:path]; }
 static VDTMemlimitPair kernelPair;
@@ -27,6 +28,7 @@ static BOOL alive=YES, supportedSystem=YES, failMemory=NO, failAfterWriteRead=NO
 static BOOL driftMemoryAfterObserve=NO, driftPriorityAfterObserve=NO;
 static const char *fixtureRelease="21.1.0";
 static unsigned writes, memoryWrites, priorityWrites, failCommit;
+static unsigned memoryReadCalls, failMemoryReadCall;
 static int fixtureWrite(VDTNiceStore *store,const char *name,const void *bytes,size_t length) {
     if (!strcmp(name,VDT_NICE_JOURNAL) && failCommit && --failCommit==0) return EIO;
     return VDTNiceStoreWrite(store,name,bytes,length);
@@ -52,7 +54,9 @@ static bool fakeToken(void *context,pid_t pid,VDTProcessInstanceToken *out) {
     if (!vdt_target_is_current(c->target)) return false; *out=kernelToken; return true;
 }
 static bool getMemory(void *context,pid_t pid,VDTMemlimitPair *out) {
-    (void)context; (void)pid; if (failAfterWriteRead && writes) { errno=EIO; return false; }
+    (void)context; (void)pid;
+    if (++memoryReadCalls == failMemoryReadCall && failMemoryReadCall) { errno=EIO; return false; }
+    if (failAfterWriteRead && writes) { errno=EIO; return false; }
     *out=kernelPair;
     if (driftMemoryAfterObserve) { kernelPair=(VDTMemlimitPair){444,1,555,1}; driftMemoryAfterObserve=NO; }
     return true;
@@ -91,6 +95,13 @@ static NSDictionary *target(void) {
         VDTTargetStartSecondsKey:@100,VDTTargetStartMicrosecondsKey:@20};
 }
 static NSDictionary *prefs(BOOL enabled) { return @{@"enabled":@(enabled)}; }
+static NSDictionary *configuredPrefs(int32_t active, int32_t inactive) {
+    return @{@"enabled": @YES,
+        @"memoryRules": @[@{@"daemonName": @"fixture-daemon", @"schema": @1, @"enabled": @YES,
+            @"active": @(active), @"inactive": @(inactive)}],
+        @"jetsamRules": @[@{@"daemonName": @"fixture-daemon", @"schema": @1, @"enabled": @YES,
+            @"priority": @13, @"sourceDarwinMajor": @21}]};
+}
 static VDTMemoryRule memory(int32_t a,int32_t i) {
     VDTMemoryRuleInput input={VDTPolicyRecordEnabled,{VDTPolicyInputInteger,1},{VDTPolicyInputInteger,a},{VDTPolicyInputInteger,i}};
     return VDTParseMemoryRule(&input);
@@ -110,7 +121,7 @@ static void reset(void) {
     kernelPair=(VDTMemlimitPair){2048,0,2048,0}; kernelPriority=18; kernelToken=(VDTProcessInstanceToken){100,20};
     alive=YES; supportedSystem=YES; failMemory=NO; failAfterWriteRead=NO; coercePriority=NO;
     driftMemoryAfterObserve=driftPriorityAfterObserve=NO;
-    writes=memoryWrites=priorityWrites=failCommit=0; fixtureRelease="21.1.0";
+    writes=memoryWrites=priorityWrites=failCommit=0; memoryReadCalls=failMemoryReadCall=0; fixtureRelease="21.1.0";
 }
 int main(void) {
     @autoreleasepool {
@@ -284,6 +295,100 @@ int main(void) {
         assert(priorityWrites==1); // successful side never forced by failing sibling
         reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,&p));
         vdt_resource_reconcile(@[]); assert(resourceRecords.count==0 && kernelPair.active==2048 && kernelPriority==18);
+        // Unknown observations never revoke still-enabled saved intent, even
+        // when enumeration succeeded but per-PID metadata could not resolve.
+        reset(); vdt_resource_reload(configuredPrefs(64,128)); assert(vdt_resource_apply(t,&m,&p));
+        unsigned comfortWrites=writes;
+        vdt_resource_begin_check(@[],NO,EIO); vdt_resource_reconcile(@[]);
+        assert(writes==comfortWrites && resourceRecords.count==1 && kernelPair.active==64 && kernelPriority==13);
+        vdt_resource_begin_check(@[],YES,0); vdt_resource_reconcile(@[]);
+        assert(writes==comfortWrites && resourceRecords.count==1 && kernelPair.active==64);
+        // Explicit 0/0 revokes only memory. The still-enabled priority must not
+        // be restored merely because no PID was resolved in this scan.
+        vdt_resource_reload(configuredPrefs(0,0)); vdt_resource_begin_check(@[],NO,EIO);
+        vdt_resource_reconcile(@[]);
+        assert(kernelPair.active==2048 && kernelPriority==13 && memoryWrites==2 && priorityWrites==1);
+        assert(!resourceRecords[resourceInstance(t)][@"memory"] && resourceRecords[resourceInstance(t)][@"priority"]);
+        // A malformed section on an observed CPU target is not deletion either.
+        reset(); vdt_resource_reload(configuredPrefs(64,128)); assert(vdt_resource_apply(t,&m,&p));
+        NSDictionary *validJetsam=configuredPrefs(64,128);
+        vdt_resource_reload(@{@"enabled":@YES,@"memoryRules":@"not-an-array",@"jetsamRules":validJetsam[@"jetsamRules"]});
+        vdt_resource_begin_check(@[t],YES,0); vdt_resource_reconcile(@[t]);
+        comfortWrites=writes; assert(vdt_resource_apply(t,NULL,&p));
+        assert(writes==comfortWrites && kernelPair.active==64 && resourceRecords[resourceInstance(t)][@"memory"]);
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"original"] isEqual:@[@2048,@0,@2048,@0]]));
+        // Missing/corrupt saved snapshots retain recovery, not a fabricated {}.
+        vdt_resource_reload(nil); vdt_resource_begin_check(@[],NO,EIO); vdt_resource_reconcile(@[]);
+        assert(writes==comfortWrites && resourceRecords.count==1);
+        assert(!vdt_resource_apply(t,NULL,NULL) && writes==comfortWrites && resourceRecords.count==1);
+        // Resource namespace is independent of inherited CPU App identity.
+        reset();
+        NSDictionary *extensionPrefs=@{@"enabled":@YES,@"memoryRules":@[@{@"extensionIdentifier":@"fixture.extension",
+            @"schema":@1,@"enabled":@YES,@"active":@64,@"inactive":@128}]};
+        vdt_resource_reload(extensionPrefs);
+        NSMutableDictionary *extensionTarget=[t mutableCopy];
+        extensionTarget[VDTConfigTypeKey]=@(VDTConfigTypeApp); extensionTarget[VDTTargetNameKey]=@"fixture.host";
+        extensionTarget[VDTTargetExecutablePathKey]=@"/Applications/Host.app/PlugIns/Fixture.appex/Fixture";
+        extensionTarget[VDTTargetResourceTypeKey]=@(VDTConfigTypeExtension);
+        extensionTarget[VDTTargetResourceNameKey]=@"fixture.extension";
+        assert(vdt_resource_apply(extensionTarget,&m,NULL));
+        NSString *extensionInstance=resourceInstance(resourceBound(extensionTarget));
+        assert([resourceRecords[extensionInstance][@"target"][VDTConfigTypeKey] isEqual:@(VDTConfigTypeExtension)]);
+        assert([resourceRecords[extensionInstance][@"target"][VDTTargetNameKey] isEqual:@"fixture.extension"]);
+        comfortWrites=writes; vdt_resource_reconcile(@[]);
+        assert(writes==comfortWrites && kernelPair.active==64 && resourceRecords.count==1);
+        NSMutableDictionary *legacyTarget=[extensionTarget mutableCopy];
+        [legacyTarget removeObjectForKey:VDTTargetResourceTypeKey]; [legacyTarget removeObjectForKey:VDTTargetResourceNameKey];
+        NSMutableDictionary *legacyRecord=[resourceRecords[extensionInstance] mutableCopy];
+        legacyRecord[@"target"]=resourceBound(legacyTarget); resourceRecords[extensionInstance]=legacyRecord;
+        vdt_resource_reconcile(@[]); // legacy CPU namespace ambiguity is UNKNOWN
+        assert(writes==comfortWrites && resourceRecords.count==1 && kernelPair.active==64);
+        assert(vdt_resource_apply(extensionTarget,&m,NULL));
+        assert(([resourceRecords[extensionInstance][@"memory"][@"original"] isEqual:@[@2048,@0,@2048,@0]]));
+        // Re-enable after a restore SET reached original but its GET failed:
+        // APPLY must continue in this call, not return an old "restored" result.
+        reset(); vdt_resource_reload(configuredPrefs(64,128)); assert(vdt_resource_apply(t,&m,NULL));
+        vdt_resource_reload(configuredPrefs(0,0)); memoryReadCalls=0; failMemoryReadCall=3;
+        assert(!vdt_resource_apply(t,NULL,NULL) && kernelPair.active==2048 && memoryWrites==2);
+        assert([resourceRecords[resourceInstance(t)][@"memory"][@"phase"] isEqual:@"restore-pending"]);
+        failMemoryReadCall=0; vdt_resource_reload(configuredPrefs(64,128));
+        assert(vdt_resource_apply(t,&m,NULL) && kernelPair.active==64 && memoryWrites==3);
+        assert(([resourceRecords[resourceInstance(t)][@"memory"][@"original"] isEqual:@[@2048,@0,@2048,@0]]));
+        // Receipt aggregation is per check batch and per resource, not a
+        // Boolean multiple-instances downgrade. This fixture has fake receipts.
+        reset(); vdt_resource_reload(configuredPrefs(64,128));
+        NSMutableDictionary *t2=[t mutableCopy], *t3=[t mutableCopy]; t2[VDTTargetPidKey]=@43; t3[VDTTargetPidKey]=@44;
+        NSDictionary *good=@{@"memory":@"applied",@"memoryObserved":@[@64,@1,@128,@1],@"memoryEvidence":@"written-verified",
+            @"priority":@"applied",@"priorityObserved":@13,@"priorityEvidence":@"written-verified"};
+        vdt_resource_begin_check(@[t,t2,t3],YES,0);
+        for (NSDictionary *item in @[t,t2,t3]) resourceRow(resourceBound(item),@"applied",good);
+        NSString *rowKey=VDTNiceRuleKey(VDTConfigTypeDaemon,@"fixture-daemon");
+        NSDictionary *aggregate=resourceRows[rowKey];
+        assert([aggregate[@"summaries"][@"memory"][@"total"] isEqual:@3]);
+        assert([aggregate[@"summaries"][@"memory"][@"applied"] isEqual:@3]);
+        NSMutableDictionary *mixed=[good mutableCopy]; mixed[@"memory"]=@"read-failed";
+        [mixed removeObjectForKey:@"memoryObserved"]; resourceRow(resourceBound(t3),@"partial",mixed);
+        aggregate=resourceRows[rowKey];
+        assert([aggregate[@"summaries"][@"memory"][@"applied"] isEqual:@2]);
+        assert([aggregate[@"summaries"][@"memory"][@"failed"] isEqual:@1]);
+        assert([aggregate[@"summaries"][@"priority"][@"applied"] isEqual:@3]);
+        NSNumber *oldCheck=aggregate[@"checkedAt"];
+        vdt_resource_begin_check(@[],NO,EIO); vdt_resource_publish();
+        NSDictionary *historical=VDTResourceMatchingStatus(@"fixture-daemon",VDTConfigTypeDaemon,configuredPrefs(64,128));
+        assert([historical[@"historicalOnly"] isEqual:@YES] && !historical[@"summaries"]);
+        assert([historical[@"checkedAt"] isEqual:oldCheck] && [historical[@"latestCheck"][@"error"] isEqual:@(EIO)]);
+        vdt_resource_begin_check(@[t],YES,0); resourceRow(resourceBound(t),@"applied",good);
+        assert([resourceRows[rowKey][@"summaries"][@"memory"][@"total"] isEqual:@1]);
+        // The strict file reader uses only this harness's mapped temp path.
+        assert([PREFS_PATH hasPrefix:testRoot]);
+        assert([NSFileManager.defaultManager createDirectoryAtPath:PREFS_PATH.stringByDeletingLastPathComponent
+            withIntermediateDirectories:YES attributes:nil error:nil]);
+        assert([configuredPrefs(64,128) writeToFile:PREFS_PATH atomically:YES]);
+        assert([VDTResourceReadPreferences() isEqual:configuredPrefs(64,128)]);
+        assert([[@"not a plist" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:PREFS_PATH atomically:YES]);
+        assert(!VDTResourceReadPreferences());
+        assert([NSFileManager.defaultManager removeItemAtPath:PREFS_PATH error:nil]);
+        assert(!VDTResourceReadPreferences());
         reset(); vdt_resource_reload(prefs(YES)); assert(vdt_resource_apply(t,&m,NULL));
         NSString *boot=resourceBoot; resourceBoot=@"foreign-boot"; assert(resourcePersist()); restart();
         vdt_resource_reload(prefs(NO)); assert(resourceRecords.count==0 && writes==1); // no cross-boot restore

@@ -4,6 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tests/run_process_identity_tests.sh
+python3 -B tests/test_pid_snapshot.py --require-compiler
+python3 -B tests/test_resource_summary.py --require-compiler
+python3 -B tests/test_resource_comfort.py
+python3 -B tests/test_check_result_navigation.py
+python3 -B tests/test_check_result_summary_model.py
 python3 tests/check_auto_monitor_path.py
 sh tests/run_list_order_tests.sh
 for suite in test_preferences_ui test_ios15_cell_lifecycle test_ui21_baseline test_process_action_ui21 test_section_text test_efficiency_contracts test_diagnostic_preprocess; do
@@ -24,6 +29,7 @@ python3 -B tests/test_resource_preferences_native.py --require-native
 python3 -B tests/test_check_result_model_native.py --require-native
 python3 -B tests/test_rebuild_baseline.py
 python3 -B tests/test_formal_projection.py
+python3 -B tests/test_comfort_projection.py
 python3 -B tests/test_resource_writeback_contracts.py
 sudo python3 -B tests/test_resource_runtime_native.py --require-native
 sudo python3 -B tests/test_receipt_boot_native.py --require-native

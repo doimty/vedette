@@ -2,7 +2,7 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror
 
-.PHONY: test-cpu test-ui test-nice test-extensions test-rebuild test
+.PHONY: test-cpu test-ui test-nice test-extensions test-rebuild test-resource-comfort test
 
 test-cpu:
 	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
@@ -64,4 +64,13 @@ test-resource-write:
 	@python3 -B tests/test_resource_writeback_contracts.py
 
 
-test: test-cpu test-ui test-nice test-extensions test-rebuild test-resource-write
+test-resource-comfort:
+	@python3 -B tests/test_pid_snapshot.py --require-compiler
+	@python3 -B tests/test_resource_summary.py --require-compiler
+	@python3 -B tests/test_resource_comfort.py
+	@python3 -B tests/test_check_result_navigation.py
+	@python3 -B tests/test_check_result_summary_model.py
+	@python3 -B tests/test_comfort_projection.py
+
+
+test: test-cpu test-ui test-nice test-extensions test-rebuild test-resource-write test-resource-comfort

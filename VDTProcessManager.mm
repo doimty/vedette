@@ -15,6 +15,7 @@
 #import "VDTResourceApply.h"
 #import "VDTResourceRuntime.h"
 #import "VDTNiceShared.h"
+#import "VDTPIDSnapshot.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -193,6 +194,8 @@ NSString * const VDTTargetStartSecondsKey = @"startSeconds";
 NSString * const VDTTargetStartMicrosecondsKey = @"startMicroseconds";
 NSString * const VDTTargetMemoryRuleKey = @"memoryRule";
 NSString * const VDTTargetJetsamRuleKey = @"jetsamRule";
+NSString * const VDTTargetResourceTypeKey = @"resourceType";
+NSString * const VDTTargetResourceNameKey = @"resourceName";
 NSString * const VDTTargetContainingAppIdentifierKey = @"containingAppIdentifier";
 NSString * const VDTTargetNiceSourceTypeKey = @"niceSourceType";
 NSString * const VDTTargetNiceSourceIdentifierKey = @"niceSourceIdentifier";
@@ -730,10 +733,38 @@ static NSDictionary *target_for_pid(pid_t pid,
     }
     if (memoryRule) target[VDTTargetMemoryRuleKey] = memoryRule;
     if (jetsamRule) target[VDTTargetJetsamRuleKey] = jetsamRule;
+    // Resource identity can differ from an inherited CPU source. Keep the CPU
+    // type/name intact and publish only the separately validated namespace.
+    if (resourceIdentityType && resourceIdentityName) {
+        target[VDTTargetResourceTypeKey] = resourceIdentityType;
+        target[VDTTargetResourceNameKey] = resourceIdentityName;
+    }
     return target;
 }
 
-NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules){
+static int pid_snapshot_list(int *buffer, int capacityBytes, int *outError, void *context){
+    (void)context;
+    errno = 0;
+    int bytes = proc_listpids(PROC_ALL_PIDS, 0, buffer, capacityBytes);
+    // libproc uses zero for failure as well as an empty read. Capture errno
+    // immediately; a zero result without an error is a valid empty snapshot.
+    *outError = bytes <= 0 ? errno : 0;
+    return bytes;
+}
+
+static void *pid_snapshot_allocate(size_t bytes, void *context){
+    (void)context;
+    return malloc(bytes);
+}
+
+static void pid_snapshot_deallocate(void *buffer, void *context){
+    (void)context;
+    free(buffer);
+}
+
+NSArray<NSDictionary *>* vdt_resolve_targets_checked(NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules, BOOL *outScanComplete, int *outScanError){
+    if (outScanComplete) *outScanComplete = NO;
+    if (outScanError) *outScanError = 0;
     if (configs.count == 0 && resourceRules.count == 0) return @[];
 
     NSMutableDictionary<NSString *, NSDictionary *> *appConfigsById = [NSMutableDictionary dictionary];
@@ -744,31 +775,26 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs, N
     if (appConfigsById.count == 0 && extensionConfigsById.count == 0 && daemonConfigs.count == 0 &&
         resource_maps_empty(resourceMaps)) return @[];
 
-    // proc_listpids reports a byte count, not an element count.
-    int listBytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-    if (listBytes <= 0) return @[];
+    VDTPIDSnapshotOperations operations = {
+        .listPIDs = pid_snapshot_list,
+        .allocate = pid_snapshot_allocate,
+        .deallocate = pid_snapshot_deallocate,
+        .context = NULL
+    };
+    VDTPIDSnapshot snapshot = VDTCopyPIDSnapshot(&operations);
+    if (outScanComplete) *outScanComplete = snapshot.complete ? YES : NO;
+    if (outScanError) *outScanError = snapshot.error;
+    if (!snapshot.complete) return @[];
 
-    int *buffer = (int *)malloc((size_t)listBytes);
-    if (!buffer) return @[];
-
-    int writtenBytes = proc_listpids(PROC_ALL_PIDS, 0, buffer, listBytes);
-    if (writtenBytes <= 0) {
-        free(buffer);
-        return @[];
-    }
-    if (writtenBytes > listBytes) writtenBytes = listBytes;
-
-    int pidCount = writtenBytes / (int)sizeof(int);
+    size_t pidCount = snapshot.count;
     NSMutableArray<NSDictionary *> *targets = [NSMutableArray array];
-
-    for (int idx = 0; idx < pidCount; idx++) {
-        pid_t pid = (pid_t)buffer[idx];
+    for (size_t idx = 0; idx < pidCount; idx++) {
+        pid_t pid = (pid_t)snapshot.pids[idx];
         if (pid <= 0) continue;
         NSDictionary *target = target_for_pid(pid, appConfigsById, extensionConfigsById, daemonConfigs, resourceMaps);
         if (target) [targets addObject:target];
     }
-
-    free(buffer);
+    if (snapshot.pids) operations.deallocate(snapshot.pids, operations.context);
 
     VDTProbeRecord(@"runningboardd.resolveTargets", @{
         @"configCount": @(configs.count),
@@ -778,6 +804,10 @@ NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs, N
     });
 
     return targets;
+}
+
+NSArray<NSDictionary *>* vdt_resolve_targets(NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules){
+    return vdt_resolve_targets_checked(configs, resourceRules, NULL, NULL);
 }
 
 NSArray<NSDictionary *>* vdt_targets_for_pid(pid_t pid, NSArray<NSDictionary *> *configs, NSArray<NSDictionary *> *resourceRules){

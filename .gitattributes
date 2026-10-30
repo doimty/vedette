@@ -5,3 +5,6 @@
 # whitespace; do not rewrite those bytes or relax checks on production files.
 tests/fixtures/appex-ui21-inverse.patch whitespace=-blank-at-eol
 tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol,-space-before-tab
+
+# Preserve literal reviewed comfort delta context; production whitespace remains checked.
+tests/fixtures/comfort-1114-inverse.patch whitespace=-blank-at-eol,-space-before-tab

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Vedette contributors. SPDX-License-Identifier: GPL-3.0-only
 #import "VDTCheckResultCell.h"
+#import "VDTCheckDetailsController.h"
 #import "VDTStyle.h"
 #import "VDTLocalization.h"
 
@@ -14,8 +15,9 @@ UIColor *VDTCheckStateColor(NSString *tone) {
     return UIColor.secondaryLabelColor;
 }
 PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
-    PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil
-        detail:nil cell:PSStaticTextCell edit:nil];
+    NSString *title = [model[@"title"] isKindOfClass:NSString.class] ? model[@"title"] : @"";
+    PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:title target:nil set:nil get:nil
+        detail:VDTCheckDetailsController.class cell:PSLinkCell edit:nil];
     [row setProperty:VDTCheckResultCell.class forKey:@"cellClass"];
     [row setProperty:@YES forKey:@"vdtCheckResult"];
     [row setProperty:[model copy] forKey:@"vdtCheckModel"];
@@ -30,7 +32,9 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)identifier specifier:(PSSpecifier *)specifier {
     self = [super initWithStyle:style reuseIdentifier:identifier specifier:specifier];
     if (!self) return nil;
-    self.selectionStyle = UITableViewCellSelectionStyleNone;
+    self.selectionStyle = UITableViewCellSelectionStyleDefault;
+    self.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    self.contentView.preservesSuperviewLayoutMargins = YES;
     self.textLabel.hidden = YES;
     self.detailTextLabel.hidden = YES;
     self.checkTitle = [UILabel new]; self.checkState = [UILabel new];
@@ -48,9 +52,10 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
     UIStackView *column = self.heading;
     column.translatesAutoresizingMaskIntoConstraints = NO;
     [self.contentView addSubview:column];
+    UILayoutGuide *margins = self.contentView.layoutMarginsGuide;
     [NSLayoutConstraint activateConstraints:@[
-        [column.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
-        [column.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+        [column.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+        [column.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
         [column.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:11],
         [column.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-11]
     ]];
@@ -59,13 +64,15 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
     return self;
 }
 - (void)updateHeadingForWidth:(CGFloat)width {
-    CGFloat available = MAX(0, width - 32);
+    CGFloat available = MAX(0, width - self.contentView.directionalLayoutMargins.leading
+        - self.contentView.directionalLayoutMargins.trailing);
     CGFloat needed = [self.checkTitle sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width
-        + [self.checkState sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width + self.heading.spacing;
+        + [self.checkState sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width + 12;
     BOOL large = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory)
         || (available > 0 && needed > available);
     self.heading.axis = large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
     self.heading.alignment = large ? UIStackViewAlignmentFill : UIStackViewAlignmentFirstBaseline;
+    self.heading.spacing = large ? 5 : 12;
     BOOL rtl = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
     self.checkState.textAlignment = large ? NSTextAlignmentNatural : (rtl ? NSTextAlignmentLeft : NSTextAlignmentRight);
 }
@@ -76,22 +83,31 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
 }
 - (CGSize)systemLayoutSizeFittingSize:(CGSize)size withHorizontalFittingPriority:(UILayoutPriority)horizontal
     verticalFittingPriority:(UILayoutPriority)vertical {
-    [self updateHeadingForWidth:size.width];
+    // UIKit reserves space for its native disclosure accessory. Use that
+    // measured reservation when estimating whether the heading must wrap.
+    CGFloat accessoryWidth = self.contentView.bounds.size.width > 0
+        ? MAX(0, self.bounds.size.width - self.contentView.bounds.size.width) : 0;
+    [self updateHeadingForWidth:MAX(0, size.width - accessoryWidth)];
     return [super systemLayoutSizeFittingSize:size withHorizontalFittingPriority:horizontal verticalFittingPriority:vertical];
 }
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
     [super traitCollectionDidChange:previous];
+    for (UILabel *label in @[self.checkTitle, self.checkState])
+        label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     [self updateHeadingLayout];
 }
 - (void)updateCheck:(PSSpecifier *)specifier {
     NSDictionary *model = [specifier propertyForKey:@"vdtCheckModel"];
     if (![model isKindOfClass:NSDictionary.class]) model = @{};
-    self.checkTitle.text = model[@"title"];
-    self.checkState.text = model[@"compactState"];
+    self.checkTitle.text = [model[@"title"] isKindOfClass:NSString.class] ? model[@"title"] : @"";
+    self.checkState.text = [model[@"compactState"] isKindOfClass:NSString.class] ? model[@"compactState"] : @"";
     self.checkState.textColor = VDTCheckStateColor(model[@"compactTone"]);
     [self updateHeadingLayout];
     self.isAccessibilityElement = YES;
-    self.accessibilityLabel = [@[self.checkTitle.text ?: @"", self.checkState.text ?: @""] componentsJoinedByString:@", "];
+    self.accessibilityLabel = self.checkTitle.text;
+    self.accessibilityValue = self.checkState.text;
+    self.accessibilityHint = VDTLoc(self.class, @"Check details");
+    self.accessibilityTraits = UIAccessibilityTraitButton;
 }
 - (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
     [super refreshCellContentsWithSpecifier:specifier];

@@ -61,6 +61,17 @@ static NSDictionary *resourcePrefsForUpdate(void) {
     id prefs = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
     return [prefs isKindOfClass:NSDictionary.class] ? prefs : nil;
 }
+NSDictionary *VDTResourceReadPreferences(void) {
+    // Unlike the legacy CPU convenience reader, a failed/missing plist is not
+    // an empty configuration and cannot authorize resource restoration.
+    NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:PREFS_PATH error:nil];
+    if (![attributes[NSFileType] isEqual:NSFileTypeRegular] ||
+        [attributes[NSFileSize] unsignedLongLongValue] > VDT_NICE_STORE_LIMIT) return nil;
+    NSData *data = [NSData dataWithContentsOfFile:PREFS_PATH options:NSDataReadingMappedIfSafe error:nil];
+    if (!data || data.length > VDT_NICE_STORE_LIMIT) return nil;
+    id raw = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
+    return [raw isKindOfClass:NSDictionary.class] ? [raw copy] : nil;
+}
 NSDictionary *VDTResourceMatchingStatus(NSString *identifier, VDTConfigType type, NSDictionary *prefs) {
     NSString *key = VDTNiceRuleKey(type, identifier);
     if (!key) return nil;
@@ -75,11 +86,17 @@ NSDictionary *VDTResourceMatchingStatus(NSString *identifier, VDTConfigType type
         !VDTNiceReceiptBootMatches(raw) || ![raw[@"configuration"] isEqual:VDTResourceConfiguration(prefs)]) return nil;
     NSDictionary *receipt = raw;
     if ([receipt[@"storeError"] intValue]) return @{@"state": @"store-error", @"storeError": receipt[@"storeError"]};
+    if (receipt[@"configurationValid"] && !resourceBoolean(receipt[@"configurationValid"], NO))
+        return @{@"state": @"configuration-unavailable", @"configurationValid": @NO, @"checkedAt": @0};
     if (![receipt[@"rows"] isKindOfClass:NSDictionary.class]) return nil;
     id row = receipt[@"rows"][key];
+    if (!row && receipt[@"latestCheck"]) row = @{@"state": @"not-observed", @"checkedAt": @0};
     if (![row isKindOfClass:NSDictionary.class] || ![row[@"state"] isKindOfClass:NSString.class] ||
         ![row[@"checkedAt"] isKindOfClass:NSNumber.class]) return nil;
-    return row; // A historical receipt, never a claim about a live PID.
+    NSMutableDictionary *result = [row mutableCopy];
+    if (receipt[@"latestCheck"]) result[@"latestCheck"] = receipt[@"latestCheck"];
+    if (receipt[@"configurationValid"]) result[@"configurationValid"] = receipt[@"configurationValid"];
+    return result; // Historical observations only; refresh never requests a live syscall.
 }
 // Save provenance with the user-entered raw value in one atomic preference
 // write. Merely turning an old rule on does not invent its missing source OS.

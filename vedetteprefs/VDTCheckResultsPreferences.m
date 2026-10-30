@@ -66,7 +66,13 @@
         ^NSString *(NSString *key) { return VDTLoc(self.class, key); });
     for (NSUInteger index = 0; index < _resultRows.count; index++) {
         PSSpecifier *row = _resultRows[index];
-        [row setProperty:models[index] forKey:@"vdtCheckModel"];
+        NSDictionary *model = models[index];
+        [row setName:model[@"title"]];
+        [row setProperty:model forKey:@"vdtCheckModel"];
+        // Refresh navigation identity along with the displayed result. A cached
+        // link must not keep an earlier identifier, verified host or pending flag.
+        [row setProperty:context forKey:@"vdtCheckContext"];
+        [row setProperty:@(index) forKey:@"vdtCheckIndex"];
         // Keep the table's cached specifier objects alive. No naked _specifiers
         // reset or whole-table rebuild from a notification / transition callback.
         if (!_buildingSpecifiers && _owner.isViewLoaded) [_owner reloadSpecifier:row animated:NO];
@@ -76,8 +82,10 @@
     _buildingSpecifiers = YES;
     if (!_specifiers) {
         NSMutableArray *rows = [NSMutableArray array];
-        PSSpecifier *group = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Last apply result")
+        PSSpecifier *group = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Recent check results")
             target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
+        [group setProperty:VDTLoc(self.class,
+            @"Tap a result for details. These are the latest recorded checks, not live monitoring.") forKey:@"footerText"];
         [rows addObject:group];
         NSMutableArray *results = [NSMutableArray array];
         for (NSUInteger index = 0; index < 3; index++) {
