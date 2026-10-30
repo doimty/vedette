@@ -42,8 +42,8 @@ def mutants(source):
          'else if (diagnostics && ![identifier isEqual:@"readTime"]) [history addObject:field];',
          'group-history'),
         ('history-routed-to-primary',
-         'if (!diagnostics) [result addObject:field];',
-         'if (diagnostics) [result addObject:field];',
+         'else if (diagnostics) [history addObject:field];',
+         'else if (diagnostics) [history addObject:field]; else [result addObject:field];',
          'group-result'),
     ]
     for name, old, new, marker in changes:
@@ -128,7 +128,7 @@ def run_native(source):
                     'mutant survived or failed off-target: ' + name + '\nexit=' + str(result.returncode)
                     + '\nstdout:\n' + result.stdout + '\nstderr:\n' + result.stderr)
             print('KILLED compiled Presentation mutant:', name, '(' + marker + ')', flush=True)
-        print('PASS native Presentation + Model and 5 targeted mutants (Foundation/CoreFoundation; no device IO)', flush=True)
+        print(f'PASS native Presentation + Model and {len(list(mutants(source)))} targeted mutants (Foundation/CoreFoundation; no device IO)', flush=True)
 
 
 def main():
