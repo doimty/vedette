@@ -11,21 +11,19 @@ NSArray<NSDictionary *> *VDTCheckPresentationSections(NSDictionary *model, BOOL 
     NSArray *core = [rawCore isKindOfClass:NSArray.class] ? rawCore : @[];
     NSArray *details = [rawDetails isKindOfClass:NSArray.class] ? rawDetails : @[];
     NSSet *resultIDs = [NSSet setWithArray:@[@"state", @"target", @"observed"]];
-    NSSet *historyIDs = [NSSet setWithArray:@[@"lastAttempt"]];
     NSSet *identityIDs = [NSSet setWithArray:@[@"code", @"evidence", @"pid", @"instance", @"original", @"count"]];
     NSSet *executionIDs = [NSSet setWithArray:@[@"planSkip", @"executionSkip", @"outcome", @"executor", @"errno",
         @"storeError", @"checkedTarget", @"action", @"rawReadback", @"readStart", @"writeCalls"]];
-    NSMutableArray *result = [NSMutableArray array], *check = [NSMutableArray array], *history = [NSMutableArray array];
+    NSMutableArray *result = [NSMutableArray array], *history = [NSMutableArray array];
     NSMutableArray *identity = [NSMutableArray array], *execution = [NSMutableArray array], *coverage = [NSMutableArray array];
     for (id raw in core) {
         if (![raw isKindOfClass:NSDictionary.class]) continue;
         NSDictionary *field = raw;
         NSString *identifier = [field[@"id"] isKindOfClass:NSString.class] ? field[@"id"] : @"";
-        if ([historyIDs containsObject:identifier]) {
-            if (diagnostics) [history addObject:field];
-        } else if (!diagnostics) {
-            [([resultIDs containsObject:identifier] ? result : check) addObject:field];
-        }
+        // The result screen stays deliberately short: status, target, readback.
+        // Every other saved field is still reachable in the diagnostic screen.
+        if ([resultIDs containsObject:identifier]) { if (!diagnostics) [result addObject:field]; }
+        else if (diagnostics) [history addObject:field];
     }
     if (diagnostics) {
         for (id raw in details) {
@@ -45,7 +43,6 @@ NSArray<NSDictionary *> *VDTCheckPresentationSections(NSDictionary *model, BOOL 
         VDTAppendSection(sections, @"coverage", coverage);
     } else {
         VDTAppendSection(sections, @"result", result);
-        VDTAppendSection(sections, @"check", check);
     }
     return [sections copy];
 }

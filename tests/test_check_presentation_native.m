@@ -76,9 +76,9 @@ static void checkProjection(NSDictionary *model, BOOL nice, BOOL future) {
     }
 
     NSArray *resultIDs = @[@"state", @"target", @"observed"];
-    NSArray *checkIDs = nice ? @[@"readTime", @"checkTime", @"scope", @"coverage", @"policyNote"]
-                             : @[@"readTime", @"checkTime", @"scope", @"coverage", @"policyNote", @"scanStatus"];
-    if (future) checkIDs = [checkIDs arrayByAddingObjectsFromArray:@[@"futureCore", @"futureCore2"]];
+    NSArray *historyIDs = nice ? @[@"readTime", @"checkTime", @"scope", @"coverage", @"policyNote"]
+                               : @[@"readTime", @"checkTime", @"scope", @"coverage", @"policyNote", @"lastAttempt", @"scanStatus"];
+    if (future) historyIDs = [historyIDs arrayByAddingObjectsFromArray:@[@"futureCore", @"futureCore2"]];
     NSArray *identityIDs = nice ? @[@"code", @"evidence", @"pid", @"instance", @"original", @"count"]
                                 : @[@"code", @"evidence", @"pid", @"instance", @"count"];
     NSArray *executionIDs = nice ? @[@"errno", @"writeCalls", @"checkedTarget"]
@@ -88,23 +88,20 @@ static void checkProjection(NSDictionary *model, BOOL nice, BOOL future) {
     if (future) coverageIDs = [coverageIDs arrayByAddingObjectsFromArray:@[@"futureDetail", @"futureDetail2"]];
 
     NSArray *primary = VDTCheckPresentationSections(model, NO);
-    REQ("primary-section-count", primary.count == 2);
-    REQ("primary-section-order", [primary[0][@"id"] isEqual:@"result"] && [primary[1][@"id"] isEqual:@"check"]);
+    REQ("primary-section-count", primary.count == 1);
+    REQ("primary-section-order", [primary[0][@"id"] isEqual:@"result"]);
     REQ("group-result", [primary[0][@"fields"] isEqual:expectedFields(model, resultIDs)]);
-    REQ("group-check", [primary[1][@"fields"] isEqual:expectedFields(model, checkIDs)]);
     NSArray *primaryFields = VDTCheckPresentationFields(model, NO);
-    REQ("primary-flatten", [primaryFields isEqual:[primary[0][@"fields"] arrayByAddingObjectsFromArray:primary[1][@"fields"]]]);
+    REQ("primary-flatten", [primaryFields isEqual:primary[0][@"fields"]]);
 
     NSArray *diagnostics = VDTCheckPresentationSections(model, YES);
-    REQ("diagnostic-section-count", diagnostics.count == (nice ? 3u : 4u));
-    NSArray *sectionIDs = nice ? @[@"identity", @"execution", @"coverage"]
-                               : @[@"history", @"identity", @"execution", @"coverage"];
+    REQ("diagnostic-section-count", diagnostics.count == 4);
+    NSArray *sectionIDs = @[@"history", @"identity", @"execution", @"coverage"];
     REQ("diagnostic-section-order", [identifiers(diagnostics) isEqual:sectionIDs]);
-    NSUInteger detailOffset = nice ? 0 : 1;
-    if (!nice) REQ("group-history", [diagnostics[0][@"fields"] isEqual:expectedFields(model, @[@"lastAttempt"])]);
-    REQ("group-identity", [diagnostics[detailOffset][@"fields"] isEqual:expectedFields(model, identityIDs)]);
-    REQ("group-execution", [diagnostics[detailOffset + 1][@"fields"] isEqual:expectedFields(model, executionIDs)]);
-    REQ("group-coverage", [diagnostics[detailOffset + 2][@"fields"] isEqual:expectedFields(model, coverageIDs)]);
+    REQ("group-history", [diagnostics[0][@"fields"] isEqual:expectedFields(model, historyIDs)]);
+    REQ("group-identity", [diagnostics[1][@"fields"] isEqual:expectedFields(model, identityIDs)]);
+    REQ("group-execution", [diagnostics[2][@"fields"] isEqual:expectedFields(model, executionIDs)]);
+    REQ("group-coverage", [diagnostics[3][@"fields"] isEqual:expectedFields(model, coverageIDs)]);
     NSMutableArray *flattened = [NSMutableArray array];
     for (NSDictionary *section in diagnostics) [flattened addObjectsFromArray:section[@"fields"]];
     NSArray *diagnosticFields = VDTCheckPresentationFields(model, YES);
@@ -180,15 +177,14 @@ static void checkInterleavedOrder(void) {
     NSDictionary *unknownDetail2 = @{@"id": @"newDetail2", @"label": @"Detail 2", @"value": @"keep order", @"tone": @"plain"};
     NSDictionary *model = @{@"coreFields": @[unknownCore, observed, readTime, checkTime, lastAttempt, state, scope, unknownCore2],
         @"diagnosticFields": @[unknownDetail, error, code, unknownDetail2, count]};
-    NSArray *primary = @[@{@"id": @"result", @"fields": @[observed, state]},
-        @{@"id": @"check", @"fields": @[unknownCore, readTime, checkTime, scope, unknownCore2]}];
-    NSArray *details = @[@{@"id": @"history", @"fields": @[lastAttempt]},
+    NSArray *primary = @[@{@"id": @"result", @"fields": @[observed, state]}];
+    NSArray *details = @[@{@"id": @"history", @"fields": @[unknownCore, readTime, checkTime, lastAttempt, scope, unknownCore2]},
         @{@"id": @"identity", @"fields": @[code, count]}, @{@"id": @"execution", @"fields": @[error]},
         @{@"id": @"coverage", @"fields": @[unknownDetail, unknownDetail2]}];
     REQ("interleaved-primary-order", [VDTCheckPresentationSections(model, NO) isEqual:primary]);
     REQ("interleaved-diagnostic-order", [VDTCheckPresentationSections(model, YES) isEqual:details]);
-    REQ("interleaved-primary-flatten", [VDTCheckPresentationFields(model, NO) isEqual:@[observed, state, unknownCore, readTime, checkTime, scope, unknownCore2]]);
-    REQ("interleaved-diagnostic-flatten", [VDTCheckPresentationFields(model, YES) isEqual:@[lastAttempt, code, count, error, unknownDetail, unknownDetail2]]);
+    REQ("interleaved-primary-flatten", [VDTCheckPresentationFields(model, NO) isEqual:@[observed, state]]);
+    REQ("interleaved-diagnostic-flatten", [VDTCheckPresentationFields(model, YES) isEqual:@[unknownCore, readTime, checkTime, lastAttempt, scope, unknownCore2, code, count, error, unknownDetail, unknownDetail2]]);
 }
 
 static void checkInvalidModels(void) {
@@ -207,10 +203,10 @@ static void checkInvalidModels(void) {
         @"diagnosticFields": @[@[], noID, badID]};
     NSArray *primary = VDTCheckPresentationSections(badFields, NO);
     NSArray *details = VDTCheckPresentationSections(badFields, YES);
-    REQ("malformed-core-entries", primary.count == 1 && [primary[0][@"id"] isEqual:@"check"] &&
-        [primary[0][@"fields"] isEqual:@[noID, badID]]);
-    REQ("malformed-detail-entries", details.count == 1 && [details[0][@"id"] isEqual:@"coverage"] &&
-        [details[0][@"fields"] isEqual:@[noID, badID]]);
+    REQ("malformed-core-entries", primary.count == 0);
+    REQ("malformed-detail-entries", details.count == 2 && [details[0][@"id"] isEqual:@"history"] &&
+        [details[0][@"fields"] isEqual:@[noID, badID]] &&
+        [details[1][@"id"] isEqual:@"coverage"] && [details[1][@"fields"] isEqual:@[noID, badID]]);
     NSDictionary *onlyState = @{@"coreFields": @[@{@"id": @"state", @"label": @"state", @"value": @"unknown", @"tone": @"neutral"}]};
     REQ("only-result-no-empty-check", VDTCheckPresentationSections(onlyState, NO).count == 1 &&
         [VDTCheckPresentationSections(onlyState, NO)[0][@"id"] isEqual:@"result"]);
@@ -230,22 +226,22 @@ int main(void) {
         NSArray *nicePrimary = VDTCheckPresentationFields(rows[0], NO);
         NSArray *niceDetails = VDTCheckPresentationFields(rows[0], YES);
         REQ("nice-no-attempt", valueForID(niceDetails, @"lastAttempt") == nil && valueForID(nicePrimary, @"scanStatus") == nil);
-        REQ("nice-check-and-read-differ", [valueForID(nicePrimary, @"checkTime") isEqual:dateAt(1700100000)] &&
-            [valueForID(nicePrimary, @"readTime") isEqual:dateAt(1700000000)] &&
-            valueForID(niceDetails, @"readTime") == nil && valueForID(niceDetails, @"scope") == nil);
+        REQ("nice-check-and-read-differ", [valueForID(niceDetails, @"checkTime") isEqual:dateAt(1700100000)] &&
+            [valueForID(niceDetails, @"readTime") isEqual:dateAt(1700000000)] &&
+            valueForID(nicePrimary, @"readTime") == nil && valueForID(nicePrimary, @"scope") == nil);
 
         NSDictionary *memory = rows[1];
         NSArray *primary = VDTCheckPresentationFields(memory, NO);
         NSArray *details = VDTCheckPresentationFields(memory, YES);
         REQ("mixed-warning-state", [valueForID(primary, @"state") isEqual:@"Changed; not overwritten"] &&
             [expectedFields(memory, @[@"state"])[0][@"tone"] isEqual:@"warning"]);
-        REQ("mixed-coverage", [valueForID(primary, @"coverage") isEqual:@"Confirmed 2/3; restored 0; not applied 1; pending 0; unknown 0; no action 0."]);
+        REQ("mixed-coverage", [valueForID(details, @"coverage") isEqual:@"Confirmed 2/3; restored 0; not applied 1; pending 0; unknown 0; no action 0."]);
         REQ("mixed-diagnostics", [valueForID(details, @"summaryFailed") isEqual:@"1"] && [valueForID(details, @"errno") isEqual:@"13"]);
-        REQ("separate-history-and-attempt", [valueForID(primary, @"checkTime") isEqual:dateAt(1700200000)] &&
-            [valueForID(primary, @"readTime") isEqual:dateAt(1700000000)] &&
-            [valueForID(primary, @"scope") isEqual:@"Identified instances in this check only"] &&
+        REQ("separate-history-and-attempt", [valueForID(details, @"checkTime") isEqual:dateAt(1700200000)] &&
+            [valueForID(details, @"readTime") isEqual:dateAt(1700000000)] &&
+            [valueForID(details, @"scope") isEqual:@"Identified instances in this check only"] &&
             [valueForID(details, @"lastAttempt") isEqual:dateAt(1700400000)] &&
-            valueForID(details, @"readTime") == nil && valueForID(details, @"scope") == nil &&
+            valueForID(primary, @"readTime") == nil && valueForID(primary, @"scope") == nil &&
             valueForID(primary, @"lastAttempt") == nil);
 
         NSDictionary *future = futureModel(memory);
@@ -270,13 +266,13 @@ int main(void) {
         REQ("updated-state", [valueForID(newPrimary, @"state") isEqual:@"Readback failed"] &&
             ![valueForID(newPrimary, @"state") isEqual:valueForID(primary, @"state")]);
         REQ("updated-long-readback", [valueForID(newPrimary, @"observed") isEqual:@"2147483647 / 2147483647 MiB"]);
-        REQ("updated-times-not-old", [valueForID(newPrimary, @"checkTime") isEqual:dateAt(1700900000)] &&
-            [valueForID(newPrimary, @"readTime") isEqual:dateAt(1700800000)] &&
+        REQ("updated-times-not-old", [valueForID(newDetails, @"checkTime") isEqual:dateAt(1700900000)] &&
+            [valueForID(newDetails, @"readTime") isEqual:dateAt(1700800000)] &&
             [valueForID(newDetails, @"lastAttempt") isEqual:dateAt(1701000000)]);
-        REQ("failed-counts-and-scan", [valueForID(newPrimary, @"coverage") isEqual:@"Confirmed 0/3; restored 0; not applied 3; pending 0; unknown 0; no action 0."] &&
+        REQ("failed-counts-and-scan", [valueForID(newDetails, @"coverage") isEqual:@"Confirmed 0/3; restored 0; not applied 3; pending 0; unknown 0; no action 0."] &&
             [valueForID(newDetails, @"summaryFailed") isEqual:@"3"] && [valueForID(newDetails, @"scanError") isEqual:@"5"]);
         REQ("old-projection-still-old", [valueForID(primary, @"observed") isEqual:@"64 / 128 MiB"] &&
-            [valueForID(primary, @"checkTime") isEqual:dateAt(1700200000)] && [valueForID(primary, @"readTime") isEqual:dateAt(1700000000)]);
+            [valueForID(details, @"checkTime") isEqual:dateAt(1700200000)] && [valueForID(details, @"readTime") isEqual:dateAt(1700000000)]);
         NSMutableDictionary *sameModel = [memory mutableCopy];
         NSArray *beforeUpdate = VDTCheckPresentationFields(sameModel, NO);
         sameModel[@"coreFields"] = newMemory[@"coreFields"];
@@ -286,8 +282,8 @@ int main(void) {
         REQ("same-model-updated-values", [valueForID(beforeUpdate, @"state") isEqual:@"Changed; not overwritten"] &&
             [valueForID(afterUpdate, @"state") isEqual:@"Readback failed"] &&
             [valueForID(afterUpdate, @"observed") isEqual:@"2147483647 / 2147483647 MiB"]);
-        REQ("same-model-updated-times", [valueForID(afterUpdate, @"checkTime") isEqual:dateAt(1700900000)] &&
-            [valueForID(afterUpdate, @"readTime") isEqual:dateAt(1700800000)] &&
+        REQ("same-model-updated-times", [valueForID(afterUpdateDetails, @"checkTime") isEqual:dateAt(1700900000)] &&
+            [valueForID(afterUpdateDetails, @"readTime") isEqual:dateAt(1700800000)] &&
             [valueForID(afterUpdateDetails, @"lastAttempt") isEqual:dateAt(1701000000)]);
 
         NSMutableDictionary *missing = [updated mutableCopy];
@@ -300,33 +296,35 @@ int main(void) {
         NSArray *missingPrimary = VDTCheckPresentationFields(missingMemory, NO);
         NSArray *missingDetails = VDTCheckPresentationFields(missingMemory, YES);
         REQ("no-borrowed-readback-or-time", [valueForID(missingPrimary, @"observed") isEqual:@"Not recorded"] &&
-            [valueForID(missingPrimary, @"checkTime") isEqual:@"Not recorded"] &&
-            [valueForID(missingPrimary, @"readTime") isEqual:@"Not recorded"] &&
+            [valueForID(missingDetails, @"checkTime") isEqual:@"Not recorded"] &&
+            [valueForID(missingDetails, @"readTime") isEqual:@"Not recorded"] &&
             [valueForID(missingDetails, @"lastAttempt") isEqual:dateAt(1701000000)]);
 
         NSDictionary *unknownMemory = models(niceReceipt, resourceReceipt(summary(0, 1, 2)))[1];
         checkProjection(unknownMemory, NO, NO);
         REQ("unknown-counts-not-invented", [valueForID(VDTCheckPresentationFields(unknownMemory, YES), @"summaryUnknown") isEqual:@"2"] &&
-            [valueForID(VDTCheckPresentationFields(unknownMemory, NO), @"coverage") isEqual:@"Confirmed 0/3; restored 0; not applied 1; pending 0; unknown 2; no action 0."]);
+            [valueForID(VDTCheckPresentationFields(unknownMemory, YES), @"coverage") isEqual:@"Confirmed 0/3; restored 0; not applied 1; pending 0; unknown 2; no action 0."]);
         NSMutableDictionary *pendingNice = [niceReceipt mutableCopy];
         pendingNice[@"localPending"] = @YES;
         pendingNice[@"receiptUpdatedAt"] = @1701000000;
         NSDictionary *newNice = models(pendingNice, mixed)[0];
         checkProjection(newNice, YES, NO);
-        REQ("nice-pending-keeps-historical-times", [valueForID(VDTCheckPresentationFields(newNice, NO), @"checkTime") isEqual:dateAt(1700100000)] &&
-            [valueForID(VDTCheckPresentationFields(newNice, NO), @"readTime") isEqual:dateAt(1700000000)] &&
-            [valueForID(VDTCheckPresentationFields(newNice, YES), @"localPending") isEqual:@"Yes"]);
+        REQ("nice-pending-keeps-historical-times", [valueForID(VDTCheckPresentationFields(newNice, YES), @"checkTime") isEqual:dateAt(1700100000)] &&
+            [valueForID(VDTCheckPresentationFields(newNice, YES), @"readTime") isEqual:dateAt(1700000000)] &&
+            [valueForID(VDTCheckPresentationFields(newNice, YES), @"localPending") isEqual:@"Yes"] &&
+            valueForID(VDTCheckPresentationFields(newNice, NO), @"readTime") == nil);
         NSMutableDictionary *noDetails = [rows[0] mutableCopy];
         [noDetails removeObjectForKey:@"diagnosticFields"];
-        REQ("nice-missing-diagnostic-groups", VDTCheckPresentationSections(noDetails, YES).count == 0 &&
-            VDTCheckPresentationFields(noDetails, YES).count == 0 &&
+        NSArray *niceHistoryOnly = VDTCheckPresentationSections(noDetails, YES);
+        REQ("nice-missing-diagnostic-groups", niceHistoryOnly.count == 1 &&
+            [niceHistoryOnly[0][@"id"] isEqual:@"history"] &&
+            [identifiers(niceHistoryOnly[0][@"fields"]) isEqual:@[@"readTime", @"checkTime", @"scope", @"coverage", @"policyNote"]] &&
             [VDTCheckPresentationFields(noDetails, NO) isEqual:nicePrimary]);
         NSMutableDictionary *resourceNoDetails = [memory mutableCopy];
         [resourceNoDetails removeObjectForKey:@"diagnosticFields"];
         NSArray *historyOnly = VDTCheckPresentationSections(resourceNoDetails, YES);
         REQ("resource-missing-diagnostic-groups", historyOnly.count == 1 && [historyOnly[0][@"id"] isEqual:@"history"] &&
-            [historyOnly[0][@"fields"] isEqual:@[memory[@"coreFields"][8]]] &&
-            [identifiers(historyOnly[0][@"fields"]) isEqual:@[@"lastAttempt"]] &&
+            [identifiers(historyOnly[0][@"fields"]) isEqual:@[@"readTime", @"checkTime", @"scope", @"coverage", @"policyNote", @"lastAttempt", @"scanStatus"]] &&
             [VDTCheckPresentationFields(resourceNoDetails, NO) isEqual:primary]);
         checkInterleavedOrder();
         checkInvalidModels();

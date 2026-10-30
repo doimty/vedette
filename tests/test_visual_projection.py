@@ -38,11 +38,11 @@ def fixture(body=b' anchor\n-old\n+new\n', header=b'@@ -1,2 +1,2 @@\n', path=SYN
 
 class VisualProjection(unittest.TestCase):
     def test_candidate_version_is_consistent_across_package_gates(self):
-        self.assertEqual(VERIFIED_VERSION, '1.1.14-7')
+        self.assertEqual(VERIFIED_VERSION, '1.1.14-8')
         fields = {
-            'control': b'Version: 1.1.14-7\n',
-            '.github/workflows/roothide-build.yml': b'      PACKAGE_VERSION: 1.1.14-7\n',
-            'ci/stage_release.py': b"fields.get('Version','').strip()!='1.1.14-7'",
+            'control': b'Version: 1.1.14-8\n',
+            '.github/workflows/roothide-build.yml': b'      PACKAGE_VERSION: 1.1.14-8\n',
+            'ci/stage_release.py': b"fields.get('Version','').strip()!='1.1.14-8'",
         }
         for path, expected in fields.items():
             with self.subTest(path=path):

@@ -15,7 +15,6 @@ static NSString *VDTCheckSectionTitle(Class owner, NSString *identifier) {
 
 @interface VDTCheckDetailsController () {
     NSArray<PSSpecifier *> *_fieldRows;
-    PSSpecifier *_diagnosticsRow;
     BOOL _ignoresNicePending;
 }
 - (BOOL)showsDiagnostics;
@@ -49,21 +48,17 @@ static NSString *VDTCheckSectionTitle(Class owner, NSString *identifier) {
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = [self showsDiagnostics] ? VDTLoc(self.class, @"Diagnostic details")
-        : (self.specifier.name.length ? self.specifier.name : VDTLoc(self.class, @"Check details"));
+    self.title = self.specifier.name.length ? self.specifier.name : VDTLoc(self.class, @"Check details");
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.view.tintColor = VDTAccentColor();
     VDTStyleTable(self.table);
     UIBarButtonItem *refresh = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
         target:self action:@selector(refreshDisplay)];
     refresh.accessibilityLabel = VDTLoc(self.class, @"Refresh display");
-    if ([self showsDiagnostics]) self.navigationItem.rightBarButtonItem = refresh;
-    else {
-        UIBarButtonItem *edit = [[UIBarButtonItem alloc] initWithTitle:VDTLoc(self.class, @"Edit")
-            style:UIBarButtonItemStylePlain target:self action:@selector(editSettings)];
-        edit.accessibilityLabel = VDTLoc(self.class, @"Edit settings");
-        self.navigationItem.rightBarButtonItems = @[edit, refresh];
-    }
+    UIBarButtonItem *edit = [[UIBarButtonItem alloc] initWithTitle:VDTLoc(self.class, @"Edit")
+        style:UIBarButtonItemStylePlain target:self action:@selector(editSettings)];
+    edit.accessibilityLabel = VDTLoc(self.class, @"Edit settings");
+    self.navigationItem.rightBarButtonItems = @[edit, refresh];
 }
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
@@ -72,7 +67,7 @@ static NSString *VDTCheckSectionTitle(Class owner, NSString *identifier) {
 - (void)updateTitleForModel:(NSDictionary *)model {
     NSString *title = [model[@"title"] isKindOfClass:NSString.class] ? model[@"title"] : nil;
     if (!title.length) title = VDTLoc(self.class, @"Check details");
-    self.title = [self showsDiagnostics] ? VDTLoc(self.class, @"Diagnostic details") : title;
+    self.title = title;
 }
 - (NSArray *)specifiers {
     if (!_specifiers) {
@@ -80,7 +75,7 @@ static NSString *VDTCheckSectionTitle(Class owner, NSString *identifier) {
         NSUInteger index = [self selectedIndexForModels:models];
         NSDictionary *model = index == NSNotFound ? nil : models[index];
         NSMutableArray *rows = [NSMutableArray array], *fields = [NSMutableArray array];
-        for (NSDictionary *section in VDTCheckPresentationSections(model, [self showsDiagnostics])) {
+        for (NSDictionary *section in VDTCheckPresentationSections(model, NO)) {
             NSString *sectionID = section[@"id"];
             PSSpecifier *header = [PSSpecifier preferenceSpecifierNamed:VDTCheckSectionTitle(self.class, sectionID)
                 target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
@@ -94,13 +89,6 @@ static NSString *VDTCheckSectionTitle(Class owner, NSString *identifier) {
                 [fields addObject:row]; [rows addObject:row];
             }
         }
-        if (![self showsDiagnostics] && index != NSNotFound) {
-            _diagnosticsRow = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Diagnostic details")
-                target:nil set:nil get:nil detail:VDTCheckDiagnosticsController.class cell:PSLinkCell edit:nil];
-            [_diagnosticsRow setProperty:[self checkContext] forKey:@"vdtCheckContext"];
-            [_diagnosticsRow setProperty:@(index) forKey:@"vdtCheckIndex"];
-            [rows addObject:_diagnosticsRow];
-        }
         _fieldRows = [fields copy]; _specifiers = [rows copy];
         [self updateTitleForModel:model];
     }
@@ -113,15 +101,12 @@ static NSString *VDTCheckSectionTitle(Class owner, NSString *identifier) {
     // Read saved files only. Clearing this local presentation flag neither
     // requests a retry nor changes the primary view's current pending state.
     _ignoresNicePending = YES;
-    NSDictionary *context = [self checkContext];
-    [_diagnosticsRow setProperty:context forKey:@"vdtCheckContext"];
-    [_diagnosticsRow setProperty:[self.specifier propertyForKey:@"vdtCheckIndex"] forKey:@"vdtCheckIndex"];
     NSArray *models = [self loadModels];
     if (!_specifiers) return;
     NSUInteger index = [self selectedIndexForModels:models];
     NSDictionary *model = index == NSNotFound ? nil : models[index];
     [self updateTitleForModel:model];
-    NSArray *visibleFields = VDTCheckPresentationFields(model, [self showsDiagnostics]);
+    NSArray *visibleFields = VDTCheckPresentationFields(model, NO);
     for (PSSpecifier *row in _fieldRows) {
         NSString *identifier = [row propertyForKey:@"vdtCheckFieldID"];
         NSDictionary *previous = [row propertyForKey:@"vdtCheckField"];

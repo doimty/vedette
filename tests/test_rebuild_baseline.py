@@ -11,7 +11,7 @@ from ci_contract import workflow_test_source
 
 # The current candidate version is the visual branch version; the FORMAL chain
 # still projects control/CI back to its own fixed 1.1.14-4 bytes (asserted below).
-CANDIDATE_VERSION = '1.1.14-7'
+CANDIDATE_VERSION = '1.1.14-8'
 assert FORMAL_VERSION == '1.1.14-4'
 
 OLD_CANDIDATE = 'bb211c0dbbf21819d487c88f6030d9f071022025'

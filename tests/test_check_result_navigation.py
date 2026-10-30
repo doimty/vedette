@@ -93,7 +93,7 @@ def details_contracts(source):
     rows = function_source(source, '- (NSArray *)specifiers {')
     assert 'NSUInteger index = [self selectedIndexForModels:models];' in rows
     assert 'index == NSNotFound ? nil : models[index]' in rows
-    assert 'VDTCheckPresentationSections(model, [self showsDiagnostics])' in rows
+    assert 'VDTCheckPresentationSections(model, NO)' in rows
     assert 'for (NSDictionary *field in section[@"fields"])' in rows
     assert 'first = 0' not in rows and 'models.count;' not in rows, 'details must not fan out to all mechanisms'
     assert 'VDTCheckSectionTitle(self.class, sectionID)' in rows and 'cell:PSGroupCell' in rows
@@ -105,10 +105,9 @@ def details_contracts(source):
     assert 'self.navigationItem.rightBarButtonItems = @[edit, refresh];' in nav
     edit = function_source(source, '- (void)editSettings {')
     assert '[self.navigationController popViewControllerAnimated:YES];' in edit
-    assert 'if (![self showsDiagnostics] && index != NSNotFound)' in rows
-    assert 'detail:VDTCheckDiagnosticsController.class cell:PSLinkCell' in rows
-    assert '[_diagnosticsRow setProperty:[self checkContext] forKey:@"vdtCheckContext"];' in rows
-    assert '[_diagnosticsRow setProperty:@(index) forKey:@"vdtCheckIndex"];' in rows
+    # The saved result screen is deliberately short: three values, no debug pages.
+    assert 'VDTCheckDiagnosticsController' not in rows and 'Diagnostic details' not in rows
+    assert 'PSLinkCell' not in rows
     assert '[row setProperty:field[@"id"] forKey:@"vdtCheckFieldID"];' in rows
     assert 'if (!_specifiers)' in rows and '_fieldRows = [fields copy]; _specifiers = [rows copy];' in rows
     assert 'Historical receipt, not live monitoring. Refresh only reloads saved results.' in rows
@@ -121,11 +120,9 @@ def details_contracts(source):
     assert '[self.specifier setProperty:' not in source, 'refresh must not mutate the root pending snapshot'
     refresh = function_source(source, '- (void)refreshDisplay {')
     assert refresh.index('_ignoresNicePending = YES;') < refresh.index('[self loadModels]')
-    assert '[_diagnosticsRow setProperty:context forKey:@"vdtCheckContext"];' in refresh
-    assert '[_diagnosticsRow setProperty:[self.specifier propertyForKey:@"vdtCheckIndex"] forKey:@"vdtCheckIndex"];' in refresh
     assert 'NSUInteger index = [self selectedIndexForModels:models];' in refresh
     assert 'index == NSNotFound ? nil : models[index]' in refresh
-    for required in ('VDTCheckPresentationFields(model, [self showsDiagnostics])',
+    for required in ('VDTCheckPresentationFields(model, NO)',
                      'for (PSSpecifier *row in _fieldRows)', 'propertyForKey:@"vdtCheckFieldID"',
                      '[field[@"id"] isEqual:identifier]', 'VDTLoc(self.class, @"Not recorded")',
                      '[row setProperty:updated forKey:@"vdtCheckField"]', '[self reloadSpecifier:row animated:NO]'):
@@ -209,14 +206,16 @@ class CheckResultNavigationContracts(unittest.TestCase):
     def test_invalid_index_fallback_is_rejected(self):
         self.reject_mutation(self.details, 'return NSNotFound;', 'return 0;', details_contracts)
 
-    def test_recursive_diagnostics_link_is_rejected(self):
-        self.reject_mutation(self.details, 'if (![self showsDiagnostics] && index != NSNotFound)', 'if (index != NSNotFound)', details_contracts)
+    def test_debug_diagnostics_link_is_rejected(self):
+        self.reject_mutation(self.details, 'VDTCheckPresentationFields(model, NO)', 'VDTCheckPresentationFields(model, YES)',
+                             details_contracts)
 
     def test_permanently_pending_details_are_rejected(self):
         self.reject_mutation(self.details, 'if (_ignoresNicePending) context[@"nicePending"] = @NO;', '', details_contracts)
 
-    def test_stale_diagnostics_context_is_rejected(self):
-        self.reject_mutation(self.details, '[_diagnosticsRow setProperty:context forKey:@"vdtCheckContext"];', '', details_contracts)
+    def test_table_rebuild_is_rejected(self):
+        self.reject_mutation(self.details, '_ignoresNicePending = YES;', '_ignoresNicePending = YES; [self reloadSpecifiers];',
+                             details_contracts)
 
     def test_naked_specifier_reset_is_rejected(self):
         self.reject_mutation(self.details, '_ignoresNicePending = YES;', '_ignoresNicePending = YES; _specifiers = nil;', details_contracts)

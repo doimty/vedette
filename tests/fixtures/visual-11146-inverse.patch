@@ -2,29 +2,37 @@ diff --git a/.gitattributes b/.gitattributes
 index 73578b16f78ff88325a1c5d8664bb0bbd7ef5fd1..6d20f3e43359fc009d6b70d9c4121de0dde4a5af 100644
 --- a/.gitattributes
 +++ b/.gitattributes
-@@ -8,3 +8,4 @@ tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol,-space-before-
+@@ -6,5 +6,6 @@
+ tests/fixtures/appex-ui21-inverse.patch whitespace=-blank-at-eol
+ tests/fixtures/formal-1113-inverse.patch whitespace=-blank-at-eol,-space-before-tab
  
  # Preserve literal reviewed comfort delta context; production whitespace remains checked.
  tests/fixtures/comfort-1114-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 +tests/fixtures/visual-11146-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index 44d5338a51806591f1c52b773d8df039c04e8c42..42c35084c8a4276782a2786ba58a3513da65d3a4 100644
+index 44d5338a51806591f1c52b773d8df039c04e8c42..d2c03f1833b8f4b5fd845b904fd59f8db0e3da6f 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
-@@ -74,7 +74,7 @@ jobs:
+@@ -72,11 +72,11 @@
+     env:
+       THEOS: ${{ github.workspace }}/theos
        THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
        PACKAGE_ARCH: ${{ matrix.package_arch }}
        PACKAGE_PREFIX: ${{ matrix.prefix }}
 -      PACKAGE_VERSION: 1.1.14-6
-+      PACKAGE_VERSION: 1.1.14-7
++      PACKAGE_VERSION: 1.1.14-8
        FINALPACKAGE: 1
        PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
  
+     steps:
+       - name: Checkout
 diff --git a/Makefile.tests b/Makefile.tests
 index dadfa64234643b9fbf7b65137965864b0cfa93b2..d1a23945555c151209cd13b476c6794bcd6846ac 100644
 --- a/Makefile.tests
 +++ b/Makefile.tests
-@@ -69,8 +69,11 @@ test-resource-comfort:
+@@ -67,11 +67,14 @@
+ test-resource-comfort:
+ 	@python3 -B tests/test_pid_snapshot.py --require-compiler
  	@python3 -B tests/test_resource_summary.py --require-compiler
  	@python3 -B tests/test_resource_comfort.py
  	@python3 -B tests/test_check_result_navigation.py
@@ -36,11 +44,14 @@ index dadfa64234643b9fbf7b65137965864b0cfa93b2..d1a23945555c151209cd13b476c6794b
  	@python3 -B tests/test_comfort_projection.py
  
  
+ test: test-cpu test-ui test-nice test-extensions test-rebuild test-resource-write test-resource-comfort
 diff --git a/ci/run_host_tests.sh b/ci/run_host_tests.sh
 index f22f4a74cf0c12b849b2369a67063f1a9224dc41..0749d88a3dd3e0f2c37addb3154596cf0ea9f8a8 100644
 --- a/ci/run_host_tests.sh
 +++ b/ci/run_host_tests.sh
-@@ -8,6 +8,8 @@ python3 -B tests/test_pid_snapshot.py --require-compiler
+@@ -6,10 +6,12 @@
+ tests/run_process_identity_tests.sh
+ python3 -B tests/test_pid_snapshot.py --require-compiler
  python3 -B tests/test_resource_summary.py --require-compiler
  python3 -B tests/test_resource_comfort.py
  python3 -B tests/test_check_result_navigation.py
@@ -49,7 +60,11 @@ index f22f4a74cf0c12b849b2369a67063f1a9224dc41..0749d88a3dd3e0f2c37addb3154596cf
  python3 -B tests/test_check_result_summary_model.py
  python3 tests/check_auto_monitor_path.py
  sh tests/run_list_order_tests.sh
-@@ -30,6 +32,7 @@ python3 -B tests/test_check_result_model_native.py --require-native
+ for suite in test_preferences_ui test_ios15_cell_lifecycle test_ui21_baseline test_process_action_ui21 test_section_text test_efficiency_contracts test_diagnostic_preprocess; do
+   python3 -B "tests/$suite.py"
+@@ -28,9 +30,10 @@
+ python3 -B tests/test_resource_preferences_native.py --require-native
+ python3 -B tests/test_check_result_model_native.py --require-native
  python3 -B tests/test_check_result_reader_native.py --require-native
  python3 -B tests/test_rebuild_baseline.py
  python3 -B tests/test_formal_projection.py
@@ -57,36 +72,45 @@ index f22f4a74cf0c12b849b2369a67063f1a9224dc41..0749d88a3dd3e0f2c37addb3154596cf
  python3 -B tests/test_comfort_projection.py
  python3 -B tests/test_resource_writeback_contracts.py
  sudo python3 -B tests/test_resource_runtime_native.py --require-native
+ sudo python3 -B tests/test_receipt_boot_native.py --require-native
 diff --git a/ci/stage_release.py b/ci/stage_release.py
-index c5b777de66e743a59aa0932335d5b89e445e90ee..a3d420e2fff83426e1c688085876b2c8a77cdfba 100644
+index c5b777de66e743a59aa0932335d5b89e445e90ee..821e41931c04b5fb96ce56c98d8cfd4729bfa0dc 100644
 --- a/ci/stage_release.py
 +++ b/ci/stage_release.py
-@@ -16,7 +16,7 @@ def stage_release(stage,scheme):
+@@ -14,11 +14,11 @@
+     if stage==Path('/') or not (stage/'usr/libexec/vedette-nicectl').is_file():
+         raise ValueError('unexpected staging directory or missing control tool')
      control=stage/'DEBIAN/control'
      if not control.is_file() or control.is_symlink(): raise ValueError('missing/unsafe staged control')
      text=control.read_text();fields=dict(line.split(':',1) for line in text.splitlines() if ':' in line)
 -    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-6':
-+    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-7':
++    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-8':
          raise ValueError('wrong staged package/version')
      if fields.get('Architecture','').strip()!=ARCH[scheme]: raise ValueError('staged scheme/architecture mismatch')
      old='Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist'
+     if text.count(old)!=1: raise ValueError('unexpected dependency declaration')
+     if scheme=='rootless':
 diff --git a/control b/control
-index 34520972409137d6efe5ce162e55e6abf9db9f85..583bde6f38aa1caf53c987c7f20b9af21fcc5db5 100644
+index 34520972409137d6efe5ce162e55e6abf9db9f85..a828a19a81912c7f0803e2f9c3f4b967cfad2f21 100644
 --- a/control
 +++ b/control
-@@ -1,6 +1,6 @@
+@@ -1,8 +1,8 @@
  Package: com.doimty.vedette
  Name: Vedette
 -Version: 1.1.14-6
-+Version: 1.1.14-7
++Version: 1.1.14-8
  Architecture: iphoneos-arm
  Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级，支持内存上限及回收优先级规则
  Conflicts: com.udevs.vedette
+ Replaces: com.udevs.vedette
+ Maintainer: doimty
 diff --git a/vedetteprefs/Resources/en.lproj/Localizable.strings b/vedetteprefs/Resources/en.lproj/Localizable.strings
 index b59507f3fd57cff92e7f43ac486a3d81a537aa94..0c9293f4617c1c2dc68a37eb3ca9bf6d5b46c666 100644
 --- a/vedetteprefs/Resources/en.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/en.lproj/Localizable.strings
-@@ -16,6 +16,14 @@
+@@ -14,10 +14,18 @@
+ "Daemons" = "Daemons";
+ "Development" = "Development";
  "Enable Vedette" = "Enable Vedette";
  "Enable this rule" = "Enable this rule";
  "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required." = "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required.";
@@ -101,11 +125,15 @@ index b59507f3fd57cff92e7f43ac486a3d81a537aa94..0c9293f4617c1c2dc68a37eb3ca9bf6d
  "Edit settings" = "Edit settings";
  "Enabled" = "Enabled";
  "Enabled Configurations" = "Enabled Configurations";
+ "Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity." = "Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity.";
+ "Essential process" = "Essential process";
 diff --git a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
 index 3809d230f6149877f0f948bd8c40b8abd84657cc..2896ead5bf5d0a5a90ab661b74a859a1f3891bb9 100644
 --- a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-@@ -16,6 +16,14 @@
+@@ -14,10 +14,18 @@
+ "Daemons" = "守护进程";
+ "Development" = "支持作者";
  "Enable Vedette" = "启用 Vedette";
  "Enable this rule" = "启用此规则";
  "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required." = "启用后将在进程列表中置顶。规则生效还需要开启总开关，并设置有效参数。";
@@ -120,11 +148,14 @@ index 3809d230f6149877f0f948bd8c40b8abd84657cc..2896ead5bf5d0a5a90ab661b74a859a1
  "Edit settings" = "返回修改设置";
  "Enabled" = "启用";
  "Enabled Configurations" = "已启用";
+ "Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity." = "已启用的规则置顶显示。标记表示已保存的配置，不代表实时 CPU 状态。";
+ "Essential process" = "关键系统进程";
 diff --git a/vedetteprefs/VDTCheckDetailsController.m b/vedetteprefs/VDTCheckDetailsController.m
-index 8b429fee3eecc7e8d63ee23cb6424362424b6aa5..880d7710d89142bf4d71dde66647017543a6721d 100644
+index 8b429fee3eecc7e8d63ee23cb6424362424b6aa5..57dd10e64f0dadb687075840183557552ce6089b 100644
 --- a/vedetteprefs/VDTCheckDetailsController.m
 +++ b/vedetteprefs/VDTCheckDetailsController.m
-@@ -2,12 +2,20 @@
+@@ -1,15 +1,22 @@
+ // Copyright (c) 2026 Vedette contributors. SPDX-License-Identifier: GPL-3.0-only
  #import "VDTCheckDetailsController.h"
  #import "VDTCheckFieldCell.h"
  #import "VDTCheckResultReader.h"
@@ -142,19 +173,23 @@ index 8b429fee3eecc7e8d63ee23cb6424362424b6aa5..880d7710d89142bf4d71dde666470175
  @interface VDTCheckDetailsController () {
      NSArray<PSSpecifier *> *_fieldRows;
 -    PSSpecifier *_fieldGroup, *_diagnosticsRow;
-+    PSSpecifier *_diagnosticsRow;
      BOOL _ignoresNicePending;
  }
  - (BOOL)showsDiagnostics;
-@@ -39,7 +47,6 @@
+ - (void)editSettings;
+ - (void)refreshDisplay;
+@@ -37,62 +44,52 @@
+     if (![value isKindOfClass:NSNumber.class]) return NSNotFound;
+     NSInteger index = [value integerValue];
      if (index < 0 || (NSUInteger)index >= models.count || [value doubleValue] != (double)index) return NSNotFound;
      return (NSUInteger)index; // An invalid link never falls back to another mechanism.
  }
 -- (NSString *)fieldCollection { return [self showsDiagnostics] ? @"diagnosticFields" : @"coreFields"; }
  - (void)viewDidLoad {
      [super viewDidLoad];
-     self.title = [self showsDiagnostics] ? VDTLoc(self.class, @"Diagnostic details")
-@@ -47,8 +54,16 @@
+-    self.title = [self showsDiagnostics] ? VDTLoc(self.class, @"Diagnostic details")
+-        : (self.specifier.name.length ? self.specifier.name : VDTLoc(self.class, @"Check details"));
++    self.title = self.specifier.name.length ? self.specifier.name : VDTLoc(self.class, @"Check details");
      self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
      self.view.tintColor = VDTAccentColor();
      VDTStyleTable(self.table);
@@ -163,25 +198,25 @@ index 8b429fee3eecc7e8d63ee23cb6424362424b6aa5..880d7710d89142bf4d71dde666470175
 +    UIBarButtonItem *refresh = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
 +        target:self action:@selector(refreshDisplay)];
 +    refresh.accessibilityLabel = VDTLoc(self.class, @"Refresh display");
-+    if ([self showsDiagnostics]) self.navigationItem.rightBarButtonItem = refresh;
-+    else {
-+        UIBarButtonItem *edit = [[UIBarButtonItem alloc] initWithTitle:VDTLoc(self.class, @"Edit")
-+            style:UIBarButtonItemStylePlain target:self action:@selector(editSettings)];
-+        edit.accessibilityLabel = VDTLoc(self.class, @"Edit settings");
-+        self.navigationItem.rightBarButtonItems = @[edit, refresh];
-+    }
++    UIBarButtonItem *edit = [[UIBarButtonItem alloc] initWithTitle:VDTLoc(self.class, @"Edit")
++        style:UIBarButtonItemStylePlain target:self action:@selector(editSettings)];
++    edit.accessibilityLabel = VDTLoc(self.class, @"Edit settings");
++    self.navigationItem.rightBarButtonItems = @[edit, refresh];
  }
  - (void)viewWillAppear:(BOOL)animated {
      [super viewWillAppear:animated];
-@@ -57,7 +72,6 @@
+     [self refreshDisplay]; // Re-read saved files, never replace live specifier objects.
+ }
  - (void)updateTitleForModel:(NSDictionary *)model {
      NSString *title = [model[@"title"] isKindOfClass:NSString.class] ? model[@"title"] : nil;
      if (!title.length) title = VDTLoc(self.class, @"Check details");
 -    [_fieldGroup setName:title];
-     self.title = [self showsDiagnostics] ? VDTLoc(self.class, @"Diagnostic details") : title;
+-    self.title = [self showsDiagnostics] ? VDTLoc(self.class, @"Diagnostic details") : title;
++    self.title = title;
  }
  - (NSArray *)specifiers {
-@@ -66,24 +80,19 @@
+     if (!_specifiers) {
+         NSArray *models = [self loadModels];
          NSUInteger index = [self selectedIndexForModels:models];
          NSDictionary *model = index == NSNotFound ? nil : models[index];
          NSMutableArray *rows = [NSMutableArray array], *fields = [NSMutableArray array];
@@ -203,7 +238,14 @@ index 8b429fee3eecc7e8d63ee23cb6424362424b6aa5..880d7710d89142bf4d71dde666470175
 -            [row setProperty:@(index) forKey:@"vdtCheckIndex"];
 -            [row setProperty:field[@"id"] forKey:@"vdtCheckFieldID"];
 -            [fields addObject:row]; [rows addObject:row];
-+        for (NSDictionary *section in VDTCheckPresentationSections(model, [self showsDiagnostics])) {
+-        }
+-        if (![self showsDiagnostics] && index != NSNotFound) {
+-            _diagnosticsRow = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Diagnostic details")
+-                target:nil set:nil get:nil detail:VDTCheckDiagnosticsController.class cell:PSLinkCell edit:nil];
+-            [_diagnosticsRow setProperty:[self checkContext] forKey:@"vdtCheckContext"];
+-            [_diagnosticsRow setProperty:@(index) forKey:@"vdtCheckIndex"];
+-            [rows addObject:_diagnosticsRow];
++        for (NSDictionary *section in VDTCheckPresentationSections(model, NO)) {
 +            NSString *sectionID = section[@"id"];
 +            PSSpecifier *header = [PSSpecifier preferenceSpecifierNamed:VDTCheckSectionTitle(self.class, sectionID)
 +                target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
@@ -217,13 +259,25 @@ index 8b429fee3eecc7e8d63ee23cb6424362424b6aa5..880d7710d89142bf4d71dde666470175
 +                [fields addObject:row]; [rows addObject:row];
 +            }
          }
-         if (![self showsDiagnostics] && index != NSNotFound) {
-             _diagnosticsRow = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Diagnostic details")
-@@ -112,12 +121,13 @@
+         _fieldRows = [fields copy]; _specifiers = [rows copy];
+         [self updateTitleForModel:model];
+     }
+     return _specifiers;
+@@ -102,24 +99,22 @@
+ }
+ - (void)refreshDisplay {
+     // Read saved files only. Clearing this local presentation flag neither
+     // requests a retry nor changes the primary view's current pending state.
+     _ignoresNicePending = YES;
+-    NSDictionary *context = [self checkContext];
+-    [_diagnosticsRow setProperty:context forKey:@"vdtCheckContext"];
+-    [_diagnosticsRow setProperty:[self.specifier propertyForKey:@"vdtCheckIndex"] forKey:@"vdtCheckIndex"];
+     NSArray *models = [self loadModels];
+     if (!_specifiers) return;
      NSUInteger index = [self selectedIndexForModels:models];
      NSDictionary *model = index == NSNotFound ? nil : models[index];
      [self updateTitleForModel:model];
-+    NSArray *visibleFields = VDTCheckPresentationFields(model, [self showsDiagnostics]);
++    NSArray *visibleFields = VDTCheckPresentationFields(model, NO);
      for (PSSpecifier *row in _fieldRows) {
          NSString *identifier = [row propertyForKey:@"vdtCheckFieldID"];
          NSDictionary *previous = [row propertyForKey:@"vdtCheckField"];
@@ -234,11 +288,13 @@ index 8b429fee3eecc7e8d63ee23cb6424362424b6aa5..880d7710d89142bf4d71dde666470175
              if (![field[@"id"] isEqual:identifier]) continue;
              updated = field;
              break;
+         }
+         // Preserve every cached specifier. If a field is absent, replace its
 diff --git a/vedetteprefs/VDTCheckFieldCell.m b/vedetteprefs/VDTCheckFieldCell.m
 index d97a3ed67b5a14afe4adcc9d465ddf8cee733093..53a35cea6635f6732027dabb24a2bec866a4db54 100644
 --- a/vedetteprefs/VDTCheckFieldCell.m
 +++ b/vedetteprefs/VDTCheckFieldCell.m
-@@ -1,6 +1,7 @@
+@@ -1,8 +1,9 @@
  // Copyright (c) 2026 Vedette contributors. SPDX-License-Identifier: GPL-3.0-only
  #import "VDTCheckFieldCell.h"
  #import "VDTCheckResultCell.h"
@@ -246,7 +302,11 @@ index d97a3ed67b5a14afe4adcc9d465ddf8cee733093..53a35cea6635f6732027dabb24a2bec8
  
  PSSpecifier *VDTCheckFieldSpecifier(NSDictionary *field) {
      PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:@"" target:nil set:nil get:nil
-@@ -13,7 +14,10 @@ PSSpecifier *VDTCheckFieldSpecifier(NSDictionary *field) {
+         detail:nil cell:PSStaticTextCell edit:nil];
+     [row setProperty:VDTCheckFieldCell.class forKey:@"cellClass"];
+@@ -11,11 +12,14 @@
+     return row;
+ }
  @interface VDTCheckFieldCell ()
  @property(nonatomic, strong) UILabel *fieldLabel;
  @property(nonatomic, strong) UILabel *fieldValue;
@@ -257,7 +317,11 @@ index d97a3ed67b5a14afe4adcc9d465ddf8cee733093..53a35cea6635f6732027dabb24a2bec8
  @end
  @implementation VDTCheckFieldCell
  - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)identifier specifier:(PSSpecifier *)specifier {
-@@ -30,14 +34,29 @@ PSSpecifier *VDTCheckFieldSpecifier(NSDictionary *field) {
+     self = [super initWithStyle:style reuseIdentifier:identifier specifier:specifier];
+     if (!self) return nil;
+@@ -28,44 +32,81 @@
+         label.isAccessibilityElement = NO;
+     }
      self.fieldLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
      self.fieldLabel.textColor = UIColor.secondaryLabelColor;
      self.fieldValue.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
@@ -291,7 +355,7 @@ index d97a3ed67b5a14afe4adcc9d465ddf8cee733093..53a35cea6635f6732027dabb24a2bec8
          [self.fieldStack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:11],
          [self.fieldStack.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-11]
      ]];
-@@ -45,25 +64,47 @@ PSSpecifier *VDTCheckFieldSpecifier(NSDictionary *field) {
+     [self updateField:specifier];
      return self;
  }
  - (void)updateForWidth:(CGFloat)width {
@@ -346,7 +410,11 @@ index d97a3ed67b5a14afe4adcc9d465ddf8cee733093..53a35cea6635f6732027dabb24a2bec8
      [self updateForWidth:self.contentView.bounds.size.width];
  }
  - (void)layoutSubviews {
-@@ -77,10 +118,19 @@ PSSpecifier *VDTCheckFieldSpecifier(NSDictionary *field) {
+     [super layoutSubviews]; [self updateForWidth:self.contentView.bounds.size.width];
+ }
+@@ -75,12 +116,21 @@
+     return [super systemLayoutSizeFittingSize:size withHorizontalFittingPriority:horizontal verticalFittingPriority:vertical];
+ }
  - (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
      [super refreshCellContentsWithSpecifier:specifier]; [self updateField:specifier];
  }
@@ -372,7 +440,9 @@ diff --git a/vedetteprefs/VDTCheckResultCell.m b/vedetteprefs/VDTCheckResultCell
 index 6e430a1365e7ea68f2c8d0639ad00f803a99376e..0ab0ca1158ffddd33302c8741afce139b174711d 100644
 --- a/vedetteprefs/VDTCheckResultCell.m
 +++ b/vedetteprefs/VDTCheckResultCell.m
-@@ -26,6 +26,9 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
+@@ -24,10 +24,13 @@
+     return row;
+ }
  @interface VDTCheckResultCell ()
  @property(nonatomic, strong) UILabel *checkTitle;
  @property(nonatomic, strong) UILabel *checkState;
@@ -382,7 +452,11 @@ index 6e430a1365e7ea68f2c8d0639ad00f803a99376e..0ab0ca1158ffddd33302c8741afce139
  @property(nonatomic, strong) UIStackView *heading;
  @end
  @implementation VDTCheckResultCell
-@@ -47,7 +50,23 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
+ - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)identifier specifier:(PSSpecifier *)specifier {
+     self = [super initWithStyle:style reuseIdentifier:identifier specifier:specifier];
+@@ -45,11 +48,27 @@
+         label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+     }
      self.checkTitle.textColor = UIColor.labelColor;
      [self.checkTitle setContentHuggingPriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
      [self.checkState setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
@@ -407,7 +481,11 @@ index 6e430a1365e7ea68f2c8d0639ad00f803a99376e..0ab0ca1158ffddd33302c8741afce139
      self.heading.spacing = 12;
      UIStackView *column = self.heading;
      column.translatesAutoresizingMaskIntoConstraints = NO;
-@@ -67,12 +86,14 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
+     [self.contentView addSubview:column];
+     UILayoutGuide *margins = self.contentView.layoutMarginsGuide;
+@@ -65,16 +84,18 @@
+ }
+ - (void)updateHeadingForWidth:(CGFloat)width {
      CGFloat available = MAX(0, width - self.contentView.directionalLayoutMargins.leading
          - self.contentView.directionalLayoutMargins.trailing);
      CGFloat needed = [self.checkTitle sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width
@@ -423,7 +501,11 @@ index 6e430a1365e7ea68f2c8d0639ad00f803a99376e..0ab0ca1158ffddd33302c8741afce139
      BOOL rtl = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
      self.checkState.textAlignment = large ? NSTextAlignmentNatural : (rtl ? NSTextAlignmentLeft : NSTextAlignmentRight);
  }
-@@ -101,7 +122,12 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
+ - (void)updateHeadingLayout { [self updateHeadingForWidth:self.contentView.bounds.size.width]; }
+ - (void)layoutSubviews {
+@@ -99,18 +120,29 @@
+ - (void)updateCheck:(PSSpecifier *)specifier {
+     NSDictionary *model = [specifier propertyForKey:@"vdtCheckModel"];
      if (![model isKindOfClass:NSDictionary.class]) model = @{};
      self.checkTitle.text = [model[@"title"] isKindOfClass:NSString.class] ? model[@"title"] : @"";
      self.checkState.text = [model[@"compactState"] isKindOfClass:NSString.class] ? model[@"compactState"] : @"";
@@ -437,7 +519,7 @@ index 6e430a1365e7ea68f2c8d0639ad00f803a99376e..0ab0ca1158ffddd33302c8741afce139
      [self updateHeadingLayout];
      self.isAccessibilityElement = YES;
      self.accessibilityLabel = self.checkTitle.text;
-@@ -109,6 +135,12 @@ PSSpecifier *VDTCheckResultSpecifier(NSDictionary *model) {
+     self.accessibilityValue = self.checkState.text;
      self.accessibilityHint = VDTLoc(self.class, @"Check details");
      self.accessibilityTraits = UIAccessibilityTraitButton;
  }
@@ -450,22 +532,30 @@ index 6e430a1365e7ea68f2c8d0639ad00f803a99376e..0ab0ca1158ffddd33302c8741afce139
  - (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
      [super refreshCellContentsWithSpecifier:specifier];
      [self updateCheck:specifier];
+ }
+ @end
 diff --git a/vedetteprefs/VDTCheckResultModel.m b/vedetteprefs/VDTCheckResultModel.m
 index 4ede54a7a8ff0ce8da0b810b160bc618e6cef09f..f72376803f989702ba3ddb73000a8960284d7574 100644
 --- a/vedetteprefs/VDTCheckResultModel.m
 +++ b/vedetteprefs/VDTCheckResultModel.m
-@@ -57,6 +57,10 @@ static NSArray *VDTCheckPair(id raw) {
+@@ -54,10 +54,14 @@
+     if (![raw isKindOfClass:NSArray.class] || [raw count] != 4) return nil;
+     for (id field in raw) if (!VDTCheckInteger(field)) return nil;
+     if ([raw[0] longLongValue] > INT32_MAX || [raw[2] longLongValue] > INT32_MAX ||
          [raw[1] longLongValue] < 0 || [raw[3] longLongValue] < 0) return nil;
      return raw;
- }
++}
 +static NSString *VDTCheckRawPair(id raw) {
 +    NSArray *pair = VDTCheckPair(raw);
 +    return pair ? [NSString stringWithFormat:@"[%@, %@, %@, %@]", pair[0], pair[1], pair[2], pair[3]] : nil;
-+}
+ }
  static NSString *VDTCheckMemoryReadback(id raw, VDTCheckLocalizer localize) {
      NSArray *pair = VDTCheckPair(raw);
      if (!pair) return VDTCheckText(localize, @"Not recorded");
-@@ -409,6 +413,8 @@ static NSDictionary *VDTCheckRow(NSString *title, NSDictionary *rule, NSDictiona
+     // Only the full, evidence-backed pair represents unlimited. One large limit,
+@@ -407,10 +411,12 @@
+     if (historical || (resourceSummary.present && !resourceSummary.valid) || unavailable || invalid)
+         coverage = VDTCheckText(localize, @"Current coverage not confirmed");
      else if (resourceSummary.valid) {
          VDTResourceSummaryCounts counts = resourceSummary.counts;
          coverage = !counts.total ? VDTCheckText(localize, @"No identified instances in this check.")
@@ -474,7 +564,11 @@ index 4ede54a7a8ff0ce8da0b810b160bc618e6cef09f..f72376803f989702ba3ddb73000a8960
              : [NSString stringWithFormat:VDTCheckText(localize, @"Confirmed %@/%@; restored %@; not applied %@; pending %@; unknown %@; no action %@."),
                  @(VDTResourceSummaryConfirmedCount(counts)), @(counts.total), @(counts.restored), @(counts.failed),
                  @(counts.pending), @(counts.unknown), @(counts.disabled)];
-@@ -485,11 +491,10 @@ static NSDictionary *VDTCheckRow(NSString *title, NSDictionary *rule, NSDictiona
+     } else if (multiple) coverage = VDTCheckText(localize, @"Other instances have no retained count evidence.");
+     else if ([tone isEqual:@"ok"]) coverage = VDTCheckText(localize, @"Only this recorded instance is confirmed.");
+@@ -483,15 +489,14 @@
+         VDTCheckDiagnostic(diagnostics, @"errno", @"errno", VDTCheckNumber(receipt[[side stringByAppendingString:@"Error"]]), localize);
+         VDTCheckDiagnostic(diagnostics, @"storeError", @"Storage errno", VDTCheckNumber(receipt[@"storeError"]), localize);
          VDTCheckDiagnostic(diagnostics, @"count", @"Recorded instances", VDTCheckNumber(receipt[@"instanceCount"]), localize);
          id executionTarget = receipt[[side stringByAppendingString:@"Target"]];
          VDTCheckDiagnostic(diagnostics, @"checkedTarget", @"Operation target",
@@ -489,3 +583,5 @@ index 4ede54a7a8ff0ce8da0b810b160bc618e6cef09f..f72376803f989702ba3ddb73000a8960
          VDTCheckDiagnostic(diagnostics, @"readStart", @"Read window started at",
              hasObserved ? VDTCheckDate(receipt[[side stringByAppendingString:@"ReadStartedAt"]]) : nil, localize);
          BOOL hasCounts = resourceSummary.valid && !unavailable && !invalid;
+         VDTResourceSummaryCounts counts = resourceSummary.counts;
+         VDTCheckDiagnostic(diagnostics, @"summaryTotal", @"Identified instances", hasCounts ? @(counts.total).stringValue : nil, localize);
