@@ -107,7 +107,7 @@ def check_launch_gate_and_catch_up() -> None:
     require(reconcile, r"current_normalized_configs_sync\s*\(\)", "reused catch-up config snapshot")
     require(handler, r"current_normalized_configs_sync\s*\(\)", "reused fast-path config snapshot")
     forbid(reconcile, "vdt_configs_from_prefs", "per-scan config re-normalization")
-    require(reconcile, r"vdt_resolve_targets\s*\(configs,\s*current_normalized_resource_rules_sync\(\)\)", "catch-up target scan")
+    require(reconcile, r"vdt_resolve_targets_checked\s*\(configs,\s*current_normalized_resource_rules_sync\(\),\s*&scanComplete,\s*&scanError\)", "catch-up target scan")
     require(reconcile, r"retire_targets_without_active_config\s*\(configs\)", "deleted-config retirement retry")
     require(reconcile, r"apply_launch_target_if_needed\s*\(target\)", "catch-up application gate")
     require(reconcile, r"intersectSet:liveInstances", "exited-instance retirement")
@@ -188,17 +188,22 @@ def check_target_binding_and_policy_state_machine() -> None:
 
 
 def check_process_scan_and_config_boundaries() -> None:
-    scan_body = extract_function(MANAGER, "NSArray<NSDictionary *>* vdt_resolve_targets")
+    scan_body = extract_function(MANAGER, "NSArray<NSDictionary *>* vdt_resolve_targets_checked")
     target_body = extract_function(MANAGER, "static NSDictionary *target_for_pid")
 
-    require(scan_body, r"if\s*\(listBytes\s*<=\s*0\)\s*return", "proc_listpids size guard")
-    require(scan_body, r"if\s*\(!buffer\)\s*return", "PID buffer allocation guard")
-    require(
-        scan_body,
-        r"pidCount\s*=\s*writtenBytes\s*/\s*\(int\)sizeof\(int\)",
-        "byte-count to PID-count conversion",
-    )
-    require(scan_body, r"idx\s*<\s*pidCount", "PID-count loop bound")
+    # The bounded, fault-distinguishing kernel owns enumeration; the manager
+    # layer must never treat an incomplete snapshot as a live/absent process set.
+    require(scan_body, r"VDTPIDSnapshot\s+snapshot\s*=\s*VDTCopyPIDSnapshot\s*\(", "bounded PID snapshot kernel")
+    require(scan_body, r"if\s*\(!snapshot\.complete\)\s*return\s*@\[\];", "incomplete enumeration is not a live set")
+    require(scan_body, r"size_t\s+pidCount\s*=\s*snapshot\.count", "snapshot byte/element conversion")
+    require(scan_body, r"idx\s*<\s*pidCount", "snapshot PID loop bound")
+    require(scan_body, r"snapshot\.pids\[idx\]", "snapshot PID access")
+    require(scan_body, r"target_for_pid\s*\(", "snapshot target resolution")
+    require(scan_body, r"deallocate\s*\(snapshot\.pids", "owned snapshot release")
+    require(scan_body, r"\*outScanComplete\s*=\s*snapshot\.complete", "enumeration completeness output")
+    require(scan_body, r"\*outScanError\s*=\s*snapshot\.error", "enumeration error output")
+    wrapper_body = extract_function(MANAGER, "NSArray<NSDictionary *>* vdt_resolve_targets(")
+    require(wrapper_body, r"vdt_resolve_targets_checked\s*\(configs,\s*resourceRules,\s*NULL,\s*NULL\)", "compatibility wrapper")
 
     for helper in ("vdt_array", "vdt_dictionary", "vdt_nonEmptyString"):
         require(MANAGER, rf"static\s+.*?\b{helper}\s*\(", f"plist guard {helper}")

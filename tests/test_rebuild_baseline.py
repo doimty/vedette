@@ -5,9 +5,14 @@ import unittest
 from pathlib import Path
 from extension_projection import (ROOT, RELEASE_BASE, CI_PATH,
                                   baseline_bytes, assert_release_freeze, released_bytes)
-from formal_delta import FORMAL_VERSION as CANDIDATE_VERSION
+from formal_delta import FORMAL_VERSION
 from test_resource_preferences_native import detail_contract, NICE_GUARD
 from ci_contract import workflow_test_source
+
+# The current candidate version is the comfort branch version; the FORMAL chain
+# still projects control/CI back to its own fixed 1.1.14-4 bytes (asserted below).
+CANDIDATE_VERSION = '1.1.14-5'
+assert FORMAL_VERSION == '1.1.14-4'
 
 OLD_CANDIDATE = 'bb211c0dbbf21819d487c88f6030d9f071022025'
 
