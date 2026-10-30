@@ -24,7 +24,7 @@ static NSDictionary *readerRule(NSDictionary *rule, NSDictionary *prefs, BOOL se
     NSMutableDictionary *result = [rule mutableCopy] ?: [NSMutableDictionary dictionary];
     BOOL available = [prefs isKindOfClass:NSDictionary.class];
     result[@"settingsAvailable"] = @(available);
-    result[@"configurationValid"] = @(available && readerGlobalValid(prefs) && sectionValid);
+    result[@"configurationValid"] = available && readerGlobalValid(prefs) && sectionValid ? @YES : @NO;
     if (readerGlobalValid(prefs)) result[@"globallyEnabled"] = prefs[@"enabled"] ?: @YES;
     return [result copy];
 }

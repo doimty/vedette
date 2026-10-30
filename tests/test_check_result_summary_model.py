@@ -116,7 +116,8 @@ def reader_contracts(source):
     assert 'readerSectionValid(prefs, section)' in rule
     metadata = function_source(source, 'static NSDictionary *readerRule(')
     assert 'result[@"settingsAvailable"] = @(available);' in metadata
-    assert 'result[@"configurationValid"] = @(available && readerGlobalValid(prefs) && sectionValid);' in metadata
+    assert 'result[@"configurationValid"] = available && readerGlobalValid(prefs) && sectionValid ? @YES : @NO;' in metadata
+    assert 'result[@"configurationValid"] = @(available &&' not in metadata, 'logical expression boxes as int in Objective-C'
     assert 'return [result copy];' in metadata
     read_only_contracts(source)
 
@@ -155,7 +156,8 @@ def localization_contracts(source):
                           'Partly confirmed (%@/%@)': '部分确认（%@/%@）',
                           'Selected instance confirmed': '已确认（仅此记录）',
                           'Not applied': '未应用', 'Checking…': '正在检查…',
-                          'No restoration needed': '无需恢复'}.items():
+                          'No restoration needed': '无需恢复', 'Yes': '是', 'No': '否',
+                          'Edit settings': '返回修改设置'}.items():
         assert zh[key] == expected, 'user-facing Chinese status: ' + key
 
 
@@ -240,6 +242,11 @@ class CheckResultSummarySourceContracts(unittest.TestCase):
 
     def test_pending_dropping_receipt_is_rejected(self):
         self.reject(self.reader, '[niceReceipt mutableCopy]', '[NSMutableDictionary dictionary]', reader_contracts)
+
+    def test_logical_expression_integer_boxing_is_rejected(self):
+        self.reject(self.reader,
+            'result[@"configurationValid"] = available && readerGlobalValid(prefs) && sectionValid ? @YES : @NO;',
+            'result[@"configurationValid"] = @(available && readerGlobalValid(prefs) && sectionValid);', reader_contracts)
 
     def test_defaulted_preferences_are_rejected(self):
         self.reject(self.reader, 'VDTResourceReadPreferences()', 'getPrefs() ?: @{}', reader_contracts)

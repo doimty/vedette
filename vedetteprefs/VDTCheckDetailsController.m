@@ -11,6 +11,7 @@
     BOOL _ignoresNicePending;
 }
 - (BOOL)showsDiagnostics;
+- (void)editSettings;
 - (void)refreshDisplay;
 @end
 @implementation VDTCheckDetailsController
@@ -65,6 +66,13 @@
         NSUInteger index = [self selectedIndexForModels:models];
         NSDictionary *model = index == NSNotFound ? nil : models[index];
         NSMutableArray *rows = [NSMutableArray array], *fields = [NSMutableArray array];
+        if (![self showsDiagnostics]) {
+            [rows addObject:[PSSpecifier emptyGroupSpecifier]];
+            PSSpecifier *edit = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Edit settings")
+                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+            [edit setButtonAction:@selector(editSettings)];
+            [rows addObject:edit];
+        }
         _fieldGroup = [PSSpecifier preferenceSpecifierNamed:model[@"title"] ?: VDTLoc(self.class, @"Check details")
             target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
         [_fieldGroup setProperty:VDTLoc(self.class, @"Historical receipt, not live monitoring. Refresh only reloads saved results.") forKey:@"footerText"];
@@ -88,6 +96,9 @@
         [self updateTitleForModel:model];
     }
     return _specifiers;
+}
+- (void)editSettings {
+    [self.navigationController popViewControllerAnimated:YES];
 }
 - (void)refreshDisplay {
     // Read saved files only. Clearing this local presentation flag neither

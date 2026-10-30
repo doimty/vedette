@@ -91,6 +91,11 @@ int main(void) {
         REQ("matched-side", [rows[1][@"state"] isEqual:@"Rule readback matched"] && [rows[2][@"state"] isEqual:@"Rule readback matched"]);
         REQ("target-vs-readback", contains(rows[1][@"summary"],@"Saved target (active / inactive): 64 / 128 MiB") && contains(rows[1][@"summary"],@"Last read back: 64 / 128 MiB"));
         REQ("hide-raw-pair", !contains(rows[1][@"summary"],@"Raw memory") && contains(detail(rows[1]),@"[64, 1, 128, 1]"));
+        NSMutableDictionary *noWrite = [base mutableCopy]; noWrite[@"priorityExecutorRan"] = @NO;
+        NSArray *zh = VDTCheckResultModels(@{@"requestedEnabled":@YES,@"valid":@YES,@"value":@10}, nice,
+            @{@"enabled":@YES,@"active":@64,@"inactive":@128}, @{@"enabled":@YES,@"priority":@15}, noWrite,
+            ^NSString *(NSString *key) { return [key isEqual:@"No"] ? @"否" : key; });
+        REQ("not-executed-is-no-not-cancel", [fieldValue(zh[2], @"diagnosticFields", @"executor") isEqual:@"否"]);
         REQ("nice-detail-only", !contains(rows[0][@"summary"],@"errno") && contains(detail(rows[0]),@"Original: 0") && contains(detail(rows[0]),@"Pending targets: 0"));
         NSString *oldest = [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:1700000000]
             dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle];

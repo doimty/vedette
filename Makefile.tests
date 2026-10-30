@@ -70,6 +70,7 @@ test-resource-comfort:
 	@python3 -B tests/test_resource_comfort.py
 	@python3 -B tests/test_check_result_navigation.py
 	@python3 -B tests/test_check_result_summary_model.py
+	@python3 -B tests/test_check_result_reader_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
 	@python3 -B tests/test_comfort_projection.py
 
 

@@ -97,6 +97,10 @@ def details_contracts(source):
     assert 'first = 0' not in rows and 'models.count;' not in rows, 'details must not fan out to all mechanisms'
     collection = function_source(source, '- (NSString *)fieldCollection {')
     assert '[self showsDiagnostics] ? @"diagnosticFields" : @"coreFields"' in collection
+    assert 'if (![self showsDiagnostics]) {' in rows and '@"Edit settings"' in rows
+    assert 'cell:PSButtonCell edit:nil' in rows and '@selector(editSettings)' in rows
+    edit = function_source(source, '- (void)editSettings {')
+    assert '[self.navigationController popViewControllerAnimated:YES];' in edit
     assert 'if (![self showsDiagnostics] && index != NSNotFound)' in rows
     assert 'detail:VDTCheckDiagnosticsController.class cell:PSLinkCell' in rows
     assert '[_diagnosticsRow setProperty:[self checkContext] forKey:@"vdtCheckContext"];' in rows
@@ -175,6 +179,9 @@ class CheckResultNavigationContracts(unittest.TestCase):
 
     def test_stale_link_context_is_rejected(self):
         self.reject_mutation(self.adapter, '[row setProperty:context forKey:@"vdtCheckContext"];', '', adapter_contracts)
+
+    def test_edit_entry_must_return_to_editor(self):
+        self.reject_mutation(self.details, '[self.navigationController popViewControllerAnimated:YES];', '', details_contracts)
 
     def test_missing_selected_index_is_rejected(self):
         self.reject_mutation(self.adapter, '[row setProperty:@(index) forKey:@"vdtCheckIndex"];', '', adapter_contracts)

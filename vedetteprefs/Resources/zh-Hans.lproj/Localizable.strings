@@ -16,6 +16,7 @@
 "Enable Vedette" = "启用 Vedette";
 "Enable this rule" = "启用此规则";
 "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required." = "启用后将在进程列表中置顶。规则生效还需要开启总开关，并设置有效参数。";
+"Edit settings" = "返回修改设置";
 "Enabled" = "启用";
 "Enabled Configurations" = "已启用";
 "Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity." = "已启用的规则置顶显示。标记表示已保存的配置，不代表实时 CPU 状态。";
@@ -30,7 +31,7 @@
 "Loading…" = "正在加载…";
 "Manage" = "管理";
 "Monitor" = "监控";
-"No" = "取消";
+"No" = "否";
 "No Applications" = "暂无应用";
 "No Daemons" = "暂无守护进程";
 "No Results" = "没有匹配的结果";
@@ -68,7 +69,7 @@
 "Vedette" = "Vedette";
 "Vedette by udevs. App lists use AltList; daemon discovery is based on Choicy. This interface is maintained by doimty." = "Vedette 原作者为 udevs。应用列表使用 AltList，守护进程发现基于 Choicy。此界面由 doimty 维护。";
 "Violation Policy Selection" = "超限处理";
-"Yes" = "确定";
+"Yes" = "是";
 "⚠️WARNING⚠️" = "⚠️警告⚠️";
 "Enable CPU limits" = "启用 CPU 限制";
 "Scheduling priority (nice)" = "调度优先级（nice）";

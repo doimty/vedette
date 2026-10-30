@@ -3,7 +3,9 @@
 from pathlib import Path
 import plistlib,subprocess,unittest
 from extension_projection import projected_bytes
-from formal_delta import FORMAL_VERSION as CANDIDATE_VERSION
+from formal_delta import FORMAL_VERSION
+CANDIDATE_VERSION='1.1.14-6'
+assert FORMAL_VERSION=='1.1.14-4'
 ROOT=Path(__file__).resolve().parents[1]
 BASE='4ac149755d093995ce2b14f7971d8299d4df41ce'
 

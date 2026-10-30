@@ -12,7 +12,7 @@ index 6c6529f344019771b5c9284038a26314dc1a70a9..73578b16f78ff88325a1c5d8664bb0bb
 +# Preserve literal reviewed comfort delta context; production whitespace remains checked.
 +tests/fixtures/comfort-1114-inverse.patch whitespace=-blank-at-eol,-space-before-tab
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index abe78b4eb5246bb6ab3caf4db8c4cee44c44baf6..3023951d4090ebef020294ea3c3c7679d917189c 100644
+index abe78b4eb5246bb6ab3caf4db8c4cee44c44baf6..44d5338a51806591f1c52b773d8df039c04e8c42 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
 @@ -9,10 +9,11 @@ on:
@@ -34,14 +34,14 @@ index abe78b4eb5246bb6ab3caf4db8c4cee44c44baf6..3023951d4090ebef020294ea3c3c7679
        PACKAGE_ARCH: ${{ matrix.package_arch }}
        PACKAGE_PREFIX: ${{ matrix.prefix }}
 -      PACKAGE_VERSION: 1.1.14-4
-+      PACKAGE_VERSION: 1.1.14-5
++      PACKAGE_VERSION: 1.1.14-6
        FINALPACKAGE: 1
        PREFIX: /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/
  
      steps:
        - name: Checkout
 diff --git a/Makefile.tests b/Makefile.tests
-index c602c689e294e517403a3647d5c6dbb967c1d1ee..31695b680389d3d6f8cfcb8169f31d9788a0aa56 100644
+index c602c689e294e517403a3647d5c6dbb967c1d1ee..dadfa64234643b9fbf7b65137965864b0cfa93b2 100644
 --- a/Makefile.tests
 +++ b/Makefile.tests
 @@ -1,10 +1,10 @@
@@ -56,7 +56,7 @@ index c602c689e294e517403a3647d5c6dbb967c1d1ee..31695b680389d3d6f8cfcb8169f31d97
  	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
  	  $(CC) $(CFLAGS) -I. tests/test_diagnostics_lazy.c -o "$$bin"; "$$bin"
  	@set -eu; bin=$$(mktemp); trap 'rm -f "$$bin"' EXIT HUP INT TERM; \
-@@ -62,6 +62,15 @@ test-resource-write:
+@@ -62,6 +62,16 @@ test-resource-write:
  	@python3 -B tests/test_memory_policy.py
  	@python3 -B tests/test_resource_apply.py
  	@python3 -B tests/test_resource_writeback_contracts.py
@@ -69,6 +69,7 @@ index c602c689e294e517403a3647d5c6dbb967c1d1ee..31695b680389d3d6f8cfcb8169f31d97
 +	@python3 -B tests/test_resource_comfort.py
 +	@python3 -B tests/test_check_result_navigation.py
 +	@python3 -B tests/test_check_result_summary_model.py
++	@python3 -B tests/test_check_result_reader_native.py; rc=$$?; test "$$rc" = 0 -o "$$rc" = 77
 +	@python3 -B tests/test_comfort_projection.py
 +
 +
@@ -906,7 +907,7 @@ index 718b954899ccd29420a8808aa104c448ab2cbcee..d65cc674e2182b5bd377a888744a7da1
      });
  }
 diff --git a/ci/run_host_tests.sh b/ci/run_host_tests.sh
-index 00f2b395ccc0d4576c77ab252d384c37991243a7..f966bf67904d210ef4511592a88788c80a4c73d6 100644
+index 00f2b395ccc0d4576c77ab252d384c37991243a7..f22f4a74cf0c12b849b2369a67063f1a9224dc41 100644
 --- a/ci/run_host_tests.sh
 +++ b/ci/run_host_tests.sh
 @@ -2,10 +2,15 @@
@@ -925,10 +926,13 @@ index 00f2b395ccc0d4576c77ab252d384c37991243a7..f966bf67904d210ef4511592a88788c8
  for suite in test_preferences_ui test_ios15_cell_lifecycle test_ui21_baseline test_process_action_ui21 test_section_text test_efficiency_contracts test_diagnostic_preprocess; do
    python3 -B "tests/$suite.py"
  done
-@@ -22,8 +27,9 @@ python3 -B tests/test_list_reentry.py --require-native
+@@ -20,10 +25,12 @@ python3 -B tests/test_list_catalog.py
+ python3 -B tests/test_list_catalog_native.py --require-native
+ python3 -B tests/test_list_reentry.py --require-native
  for suite in test_memory_policy test_resource_apply test_resource_manager test_resource_ui21; do python3 -B "tests/$suite.py"; done
  python3 -B tests/test_resource_preferences_native.py --require-native
  python3 -B tests/test_check_result_model_native.py --require-native
++python3 -B tests/test_check_result_reader_native.py --require-native
  python3 -B tests/test_rebuild_baseline.py
  python3 -B tests/test_formal_projection.py
 +python3 -B tests/test_comfort_projection.py
@@ -936,7 +940,7 @@ index 00f2b395ccc0d4576c77ab252d384c37991243a7..f966bf67904d210ef4511592a88788c8
  sudo python3 -B tests/test_resource_runtime_native.py --require-native
  sudo python3 -B tests/test_receipt_boot_native.py --require-native
 diff --git a/ci/stage_release.py b/ci/stage_release.py
-index 30aea6c8617d02eebc1b4b0904827fb22f9b1160..3b344ce5e5d98ca35ec8cbf37d16a1ed1b962033 100644
+index 30aea6c8617d02eebc1b4b0904827fb22f9b1160..c5b777de66e743a59aa0932335d5b89e445e90ee 100644
 --- a/ci/stage_release.py
 +++ b/ci/stage_release.py
 @@ -14,11 +14,11 @@ def stage_release(stage,scheme):
@@ -946,21 +950,21 @@ index 30aea6c8617d02eebc1b4b0904827fb22f9b1160..3b344ce5e5d98ca35ec8cbf37d16a1ed
      if not control.is_file() or control.is_symlink(): raise ValueError('missing/unsafe staged control')
      text=control.read_text();fields=dict(line.split(':',1) for line in text.splitlines() if ':' in line)
 -    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-4':
-+    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-5':
++    if fields.get('Package','').strip()!='com.doimty.vedette' or fields.get('Version','').strip()!='1.1.14-6':
          raise ValueError('wrong staged package/version')
      if fields.get('Architecture','').strip()!=ARCH[scheme]: raise ValueError('staged scheme/architecture mismatch')
      old='Depends: firmware (>= 15.0), roothide, preferenceloader, mobilesubstrate (>= 0.9.5000), com.opa334.altlist'
      if text.count(old)!=1: raise ValueError('unexpected dependency declaration')
      if scheme=='rootless':
 diff --git a/control b/control
-index cbe5a67ee0e780bc811ed6bd2bea6fa2c7d6b025..1e8323f4ac01149c117916fa8681a20e7e6d8707 100644
+index cbe5a67ee0e780bc811ed6bd2bea6fa2c7d6b025..34520972409137d6efe5ce162e55e6abf9db9f85 100644
 --- a/control
 +++ b/control
 @@ -1,8 +1,8 @@
  Package: com.doimty.vedette
  Name: Vedette
 -Version: 1.1.14-4
-+Version: 1.1.14-5
++Version: 1.1.14-6
  Architecture: iphoneos-arm
  Description: 按应用与守护进程独立管理 CPU 限制和 nice 调度优先级，支持内存上限及回收优先级规则
  Conflicts: com.udevs.vedette
@@ -988,10 +992,22 @@ index 4b8f9a94318380aa7f49bbedbb6d0a66cecb8da7..230df0e82e7c839f59466ef969c9a8cd
  #endif
  
 diff --git a/vedetteprefs/Resources/en.lproj/Localizable.strings b/vedetteprefs/Resources/en.lproj/Localizable.strings
-index 367c8998ebe3a370a413a0050aadedd6462459e9..8caa7ba932070509309503085de541d50205d116 100644
+index 367c8998ebe3a370a413a0050aadedd6462459e9..b59507f3fd57cff92e7f43ac486a3d81a537aa94 100644
 --- a/vedetteprefs/Resources/en.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/en.lproj/Localizable.strings
-@@ -249,5 +249,63 @@
+@@ -14,10 +14,11 @@
+ "Daemons" = "Daemons";
+ "Development" = "Development";
+ "Enable Vedette" = "Enable Vedette";
+ "Enable this rule" = "Enable this rule";
+ "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required." = "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required.";
++"Edit settings" = "Edit settings";
+ "Enabled" = "Enabled";
+ "Enabled Configurations" = "Enabled Configurations";
+ "Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity." = "Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity.";
+ "Essential process" = "Essential process";
+ "Failed to reset. %@" = "Failed to reset. %@";
+@@ -249,5 +250,63 @@
  "Not enabled" = "Not enabled";
  "Pending" = "Pending";
  "Not confirmed" = "Not confirmed";
@@ -1056,10 +1072,48 @@ index 367c8998ebe3a370a413a0050aadedd6462459e9..8caa7ba932070509309503085de541d5
 +"There was no recorded Vedette memory override to restore for these identified instances. No write was needed." = "There was no recorded Vedette memory override to restore for these identified instances. No write was needed.";
 +"No write was requested for these identified instances. That is not a write failure." = "No write was requested for these identified instances. That is not a write failure.";
 diff --git a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-index bf01c4b817eaf296b6f47da6a94673ed9c9e2b22..97760d8436733a65edbeefa7b33fb36ce064b1b2 100644
+index bf01c4b817eaf296b6f47da6a94673ed9c9e2b22..3809d230f6149877f0f948bd8c40b8abd84657cc 100644
 --- a/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
 +++ b/vedetteprefs/Resources/zh-Hans.lproj/Localizable.strings
-@@ -246,8 +246,66 @@
+@@ -14,10 +14,11 @@
+ "Daemons" = "守护进程";
+ "Development" = "支持作者";
+ "Enable Vedette" = "启用 Vedette";
+ "Enable this rule" = "启用此规则";
+ "Enable this saved rule and pin it in the process list. The global switch and valid parameters are also required." = "启用后将在进程列表中置顶。规则生效还需要开启总开关，并设置有效参数。";
++"Edit settings" = "返回修改设置";
+ "Enabled" = "启用";
+ "Enabled Configurations" = "已启用";
+ "Enabled rules are pinned first. Status reflects your saved configuration, not live CPU activity." = "已启用的规则置顶显示。标记表示已保存的配置，不代表实时 CPU 状态。";
+ "Essential process" = "关键系统进程";
+ "Failed to reset. %@" = "重置失败：%@";
+@@ -28,11 +29,11 @@
+ "Licensed under GPLv3, except components with their own notices. Enabled badges describe saved rules, not measured CPU usage." = "项目采用 GPLv3 许可证，另有声明的组件除外。启用标记仅表示已保存的规则，不是 CPU 使用量测量结果。";
+ "Limits" = "限制参数";
+ "Loading…" = "正在加载…";
+ "Manage" = "管理";
+ "Monitor" = "监控";
+-"No" = "取消";
++"No" = "否";
+ "No Applications" = "暂无应用";
+ "No Daemons" = "暂无守护进程";
+ "No Results" = "没有匹配的结果";
+ "OK" = "好";
+ "Ok" = "好";
+@@ -66,11 +67,11 @@
+ "Tweak" = "插件";
+ "Twitter" = "Twitter";
+ "Vedette" = "Vedette";
+ "Vedette by udevs. App lists use AltList; daemon discovery is based on Choicy. This interface is maintained by doimty." = "Vedette 原作者为 udevs。应用列表使用 AltList，守护进程发现基于 Choicy。此界面由 doimty 维护。";
+ "Violation Policy Selection" = "超限处理";
+-"Yes" = "确定";
++"Yes" = "是";
+ "⚠️WARNING⚠️" = "⚠️警告⚠️";
+ "Enable CPU limits" = "启用 CPU 限制";
+ "Scheduling priority (nice)" = "调度优先级（nice）";
+ "Enable nice adjustment" = "启用 nice 调整";
+ "Nice value" = "nice 值";
+@@ -246,8 +247,66 @@
  "Last apply result" = "上次应用结果";
  "Applied" = "已生效";
  "Restored" = "已恢复";
@@ -1144,10 +1198,10 @@ index e382f17fed9a90767de43b225058e9b9527b878f..1d307c596f1258ceda742f830fbb1f30
  @interface VDTCheckDiagnosticsController : VDTCheckDetailsController
  @end
 diff --git a/vedetteprefs/VDTCheckDetailsController.m b/vedetteprefs/VDTCheckDetailsController.m
-index ada3032e40778bb087fdfee0b14c25c683b604f7..ae589f53e4a75f9ded44b18b64698658e153d053 100644
+index ada3032e40778bb087fdfee0b14c25c683b604f7..8b429fee3eecc7e8d63ee23cb6424362424b6aa5 100644
 --- a/vedetteprefs/VDTCheckDetailsController.m
 +++ b/vedetteprefs/VDTCheckDetailsController.m
-@@ -5,81 +5,118 @@
+@@ -5,81 +5,129 @@
  #import "VDTLocalization.h"
  #import "VDTStyle.h"
  
@@ -1157,6 +1211,7 @@ index ada3032e40778bb087fdfee0b14c25c683b604f7..ae589f53e4a75f9ded44b18b64698658
 +    BOOL _ignoresNicePending;
  }
  - (BOOL)showsDiagnostics;
++- (void)editSettings;
  - (void)refreshDisplay;
  @end
  @implementation VDTCheckDetailsController
@@ -1236,6 +1291,13 @@ index ada3032e40778bb087fdfee0b14c25c683b604f7..ae589f53e4a75f9ded44b18b64698658
 -                [diagnostics setProperty:@(index) forKey:@"vdtCheckIndex"];
 -                [rows addObject:diagnostics];
 -            }
++        if (![self showsDiagnostics]) {
++            [rows addObject:[PSSpecifier emptyGroupSpecifier]];
++            PSSpecifier *edit = [PSSpecifier preferenceSpecifierNamed:VDTLoc(self.class, @"Edit settings")
++                target:self set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
++            [edit setButtonAction:@selector(editSettings)];
++            [rows addObject:edit];
++        }
 +        _fieldGroup = [PSSpecifier preferenceSpecifierNamed:model[@"title"] ?: VDTLoc(self.class, @"Check details")
 +            target:nil set:nil get:nil detail:nil cell:PSGroupCell edit:nil];
 +        [_fieldGroup setProperty:VDTLoc(self.class, @"Historical receipt, not live monitoring. Refresh only reloads saved results.") forKey:@"footerText"];
@@ -1260,6 +1322,9 @@ index ada3032e40778bb087fdfee0b14c25c683b604f7..ae589f53e4a75f9ded44b18b64698658
      }
      return _specifiers;
  }
++- (void)editSettings {
++    [self.navigationController popViewControllerAnimated:YES];
++}
  - (void)refreshDisplay {
 -    if (!_specifiers || !_fieldRows.count) return;
 +    // Read saved files only. Clearing this local presentation flag neither
@@ -1881,7 +1946,7 @@ index 224a3954192eb115445bb7eb9350535f2178ee7f..4ede54a7a8ff0ce8da0b810b160bc618
  NSArray<NSDictionary *> *VDTCheckResultModels(NSDictionary *niceRule, NSDictionary *niceReceipt,
      NSDictionary *memoryRule, NSDictionary *jetsamRule, NSDictionary *resourceReceipt,
 diff --git a/vedetteprefs/VDTCheckResultReader.m b/vedetteprefs/VDTCheckResultReader.m
-index 26be828cada7df2a790e3a5360637f94f913f23b..ffe2d7bb851d3aa9de0ab0acdf5dca059b99c4ea 100644
+index 26be828cada7df2a790e3a5360637f94f913f23b..f0567f732848ac2ed82656426e8687097c9a5f25 100644
 --- a/vedetteprefs/VDTCheckResultReader.m
 +++ b/vedetteprefs/VDTCheckResultReader.m
 @@ -3,45 +3,96 @@
@@ -1909,7 +1974,7 @@ index 26be828cada7df2a790e3a5360637f94f913f23b..ffe2d7bb851d3aa9de0ab0acdf5dca05
 +    NSMutableDictionary *result = [rule mutableCopy] ?: [NSMutableDictionary dictionary];
 +    BOOL available = [prefs isKindOfClass:NSDictionary.class];
 +    result[@"settingsAvailable"] = @(available);
-+    result[@"configurationValid"] = @(available && readerGlobalValid(prefs) && sectionValid);
++    result[@"configurationValid"] = available && readerGlobalValid(prefs) && sectionValid ? @YES : @NO;
 +    if (readerGlobalValid(prefs)) result[@"globallyEnabled"] = prefs[@"enabled"] ?: @YES;
 +    return [result copy];
 +}
