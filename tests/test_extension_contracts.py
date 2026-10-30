@@ -172,7 +172,12 @@ def parse_strings(source):
 def localization_contract(path, source):
     old = parse_strings(baseline_bytes(path).decode())
     now = parse_strings(source)
-    for key, value in old.items(): assert now.get(key) == value, 'legacy translation changed: ' + key
+    # These two labels are used as Boolean answers in diagnostics, not as
+    # confirmation buttons. Keep the exception explicit; every other legacy
+    # value remains frozen against the original baseline.
+    reviewed = {'No': '否', 'Yes': '是'} if '/zh-Hans.lproj/' in path else {}
+    for key, value in old.items():
+        assert now.get(key) == reviewed.get(key, value), 'legacy translation changed: ' + key
     assert 'App extensions' in now and 'Follow containing app' in now, 'extension labels missing'
 
 
@@ -222,6 +227,12 @@ class ExtensionContracts(unittest.TestCase):
             marker = re.search(r'"Enable Vedette"\s*=\s*"[^"]*";', source)[0]
             broken = source.replace(marker, '"Enable Vedette" = "changed old value";', 1)
             with self.assertRaises(AssertionError): localization_contract(path, broken)
+            if language == 'zh-Hans':
+                for label, correct, wrong in (('No', '否', '取消'), ('Yes', '是', '确定')):
+                    current = '"' + label + '" = "' + correct + '";'
+                    self.assertEqual(source.count(current), 1)
+                    broken = source.replace(current, '"' + label + '" = "' + wrong + '";', 1)
+                    with self.assertRaises(AssertionError): localization_contract(path, broken)
 
     def test_source_mutations_are_rejected_by_extension_evidence(self):
         mutations = [
