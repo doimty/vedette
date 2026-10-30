@@ -13,6 +13,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = '1a5e270'
+COMFORT_BASE = '2a3108cc797da453599086a7f4cbbf13bb32a162'
 FIXTURE = ROOT / 'tests/test_receipt_boot_native.mm'
 NICE = 'VDTNiceShared.mm'
 MATCH = 'BOOL VDTNiceReceiptBootMatches(NSDictionary *receipt)'
@@ -59,8 +60,11 @@ def source_contract():
                'NSDictionary<NSString *, NSDictionary *> *VDTNiceRulesFromPrefs(NSDictionary *prefs)'],
         'VDTNiceRuntime.mm': ['- (void)load {', '- (void)checkRestoreRequest {',
                               '- (int)save:(const VDTNiceRecord *)r target:(NSDictionary *)target {'],
-        'VDTResourceRuntime.mm': ['static BOOL resourcePersist(void)', 'static void resourceLoad(void)',
-                                  'void vdt_resource_reload(NSDictionary *prefs)'],
+        # vdt_resource_reload is intentionally extended by the reviewed comfort
+        # delta (strict prefs snapshot + display-batch reset). Its journal/request
+        # authority is frozen at the whole-file level below instead, so any byte
+        # outside the reviewed literal hunks still fails.
+        'VDTResourceRuntime.mm': ['static BOOL resourcePersist(void)', 'static void resourceLoad(void)'],
         'VDTShared.mm': ['id valueForProcessConfigKeyWithPrefs(NSString *identifier,',
                          'void setValueForProcessConfigKeyWithPrefs(NSString *identifier,',
                          'BOOL VDTProcessConfigHasCPUFields(NSDictionary *entry)'],
@@ -70,6 +74,12 @@ def source_contract():
         for signature in signatures:
             require(function_source(actual, signature) == function_source(baseline, signature),
                     'frozen legacy/CPU/nice function changed: ' + name + ':' + signature)
+    from comfort_delta import COMFORT_PATHS, without_comfort_rules
+    require('VDTResourceRuntime.mm' in COMFORT_PATHS,
+            'resource runtime must stay inside the reviewed comfort delta')
+    require(without_comfort_rules('VDTResourceRuntime.mm', (ROOT / 'VDTResourceRuntime.mm').read_bytes()) ==
+            subprocess.check_output(['git', 'show', COMFORT_BASE + ':VDTResourceRuntime.mm'], cwd=ROOT),
+            'resource runtime bytes outside the reviewed comfort delta')
     for name, signature, variable in [
         (NICE, 'NSDictionary *VDTNiceMatchingStatusWithHost(', 'receipt'),
         ('VDTResourceShared.mm', 'NSDictionary *VDTResourceMatchingStatus(', 'raw'),
