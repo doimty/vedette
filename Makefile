@@ -19,7 +19,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = Vedette
 
 Vedette_FILES = $(wildcard *.xm) $(wildcard *.mm) $(wildcard *.c)
-Vedette_CFLAGS = -fobjc-arc -I$(THEOS_PROJECT_DIR) -g
+Vedette_CFLAGS = -fobjc-arc -I$(THEOS_PROJECT_DIR)
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 SUBPROJECTS += vedetteprefs nicectl
@@ -27,4 +27,4 @@ include $(THEOS_MAKE_PATH)/aggregate.mk
 
 before-package::
 	python3 ci/stage_release.py --scheme "$(THEOS_PACKAGE_SCHEME)" --stage "$(THEOS_STAGING_DIR)"
-	python3 ci/stage_symbols.py --objects "$(THEOS_OBJ_DIR)" --objects vedetteprefs/.theos/obj --objects nicectl/.theos/obj --out symbols
+	python3 ci/collect_symbols.py --objects "$(THEOS_OBJ_DIR)" --objects vedetteprefs/.theos/obj --objects nicectl/.theos/obj --out symbols

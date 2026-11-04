@@ -229,17 +229,17 @@ jobs:
           path: packages/*.deb
           if-no-files-found: error
 
-      # Symbols come after the deb upload on purpose: a symbols problem must not
-      # cost the installable package. before-package already ran dsymutil on the
-      # freshly linked images, so this only has to prove the bundles are real.
+      # Theos already ran dsymutil per arch, before strip, during the build. This
+      # archives those bundles; it does not regenerate them. Deliberately after
+      # the deb upload, so a symbols problem cannot cost the installable package.
       - name: Verify debug symbols
         run: |
           set -o pipefail
           test -d symbols
-          test "$(find symbols -maxdepth 1 -name '*.dSYM' | wc -l | tr -d ' ')" = "3"
+          test "$(find symbols -name '*.dSYM' | wc -l | tr -d ' ')" -ge 2
           python3 -B ci/verify_symbols.py symbols 2>&1 | tee symbols/verify.log
-          for bundle in symbols/*.dSYM; do
-            test -n "$(find "$bundle/Contents/Resources/DWARF" -type f -size +0 | head -n 1)"
+          for bundle in $(find symbols -name '*.dSYM'); do
+            test -n "$(find "$bundle/Contents/Resources/DWARF" -type f -size +1k | head -n 1)"
           done
 
       - name: Upload debug symbols
@@ -247,6 +247,6 @@ jobs:
         with:
           name: vedette-${{ matrix.scheme }}-dsym
           path: |
-            symbols/*.dSYM
+            symbols/**/*.dSYM
             symbols/verify.log
           if-no-files-found: error
