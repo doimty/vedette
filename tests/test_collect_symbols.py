@@ -123,6 +123,18 @@ class CollectSymbols(unittest.TestCase):
         hard = self.run_collect(require=True)
         self.assertEqual(hard.returncode, 1)
 
+    def test_never_recollects_its_own_output(self):
+        self.image(self.obj, 'arm64e', 'Vedette.dylib')
+        first = self.run_collect()
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        # A second pass scans the project root, which now contains symbols/.
+        again = subprocess.run([sys.executable, '-B', str(COLLECT), '--out', str(self.tmp / 'symbols'),
+                                '--objects', str(self.tmp)],
+                               capture_output=True, text=True)
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertIn('1/1 bundle(s) collected', again.stdout)
+        self.assertNotIn('symbols/arm64e/Vedette.dylib.dSYM', again.stdout.replace(' -> ', ' ').split('1/1')[0])
+
     def test_no_bundles_is_reported_not_guessed(self):
         for root in (self.obj, self.prefs_obj, self.ctl_obj):
             root.mkdir(parents=True)

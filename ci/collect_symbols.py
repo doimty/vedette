@@ -27,15 +27,19 @@ import sys
 MINIMUM_DWARF_BYTES = 1024
 
 
-def bundles(roots):
+def bundles(roots, exclude):
     found = []
     for root in roots:
         base = Path(root)
         if not base.is_dir():
             continue
         for path in sorted(base.rglob('*.dSYM')):
-            if path.is_dir() and path not in found:
-                found.append(path)
+            if not path.is_dir() or path in found:
+                continue
+            # Never re-collect our own output when the scan root contains it.
+            if exclude and (path == exclude or exclude in path.parents):
+                continue
+            found.append(path)
     return found
 
 
@@ -54,22 +58,24 @@ def destination(bundle, root, out_dir):
     relative = bundle.relative_to(root)
     if len(relative.parts) < 2:
         relative = Path('flat') / relative.name
-    return out_dir / relative
+    return Path(out_dir) / relative
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--objects', action='append', default=[],
-                        help='object/output root to scan; repeatable')
+                        help='object/output root to scan; repeatable, defaults to the project root '
+                             'so no scheme-specific obj layout has to be assumed')
     parser.add_argument('--out', default='symbols', help='collection directory')
     parser.add_argument('--require', action='store_true',
                         help='fail when no usable bundle was collected')
     args = parser.parse_args()
+    roots = args.objects or ['.']
 
-    out_dir = Path(args.out)
-    found = bundles(args.objects)
+    out_dir = Path(args.out).resolve()
+    found = bundles(roots, out_dir)
     if not found:
-        print('collect_symbols: no .dSYM under %s' % (args.objects or '<none>',))
+        print('collect_symbols: no .dSYM under %s' % (roots or '<none>',))
         return 1 if args.require else 0
 
     collected = 0
@@ -78,7 +84,8 @@ def main() -> int:
         if payload is None:
             print('  empty:   %s (no DWARF payload)' % bundle)
             continue
-        root = next(r for r in map(Path, args.objects) if bundle.is_relative_to(r))
+        resolved = bundle.resolve()
+        root = next(Path(r).resolve() for r in roots if resolved.is_relative_to(Path(r).resolve()))
         target = destination(bundle, root, out_dir)
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
@@ -88,7 +95,7 @@ def main() -> int:
               (bundle, target, payload.name, payload.stat().st_size))
         collected += 1
 
-    print('collect_symbols: %d/%d bundle(s) collected into %s' % (collected, len(found), out_dir))
+    print('collect_symbols: %d/%d bundle(s) collected into %s' % (collected, len(found), args.out))
     if args.require and collected == 0:
         return 1
     return 0
