@@ -494,48 +494,69 @@ static NSString *current_executable_path(pid_t pid){
     return [NSString stringWithUTF8String:path];
 }
 
-%ctor{
+// Everything Vedette does at launch goes through here, never from %ctor itself:
+// an image initializer runs before the host's runtime is ready, and a runtime
+// that takes over the allocator during its own initializers (libmozglue swaps
+// in mozjemalloc from _GLOBAL__sub_I_*) leaves half a zone installed. The first
+// notify_set_state() performs a one-time libxpc entitlement lookup whose
+// dispatch_data buffer is then freed through that zone, and malloc aborts.
+// The main-queue call covers ordinary apps and extensions, whose main queue
+// only drains after the image initializers; the delayed call covers processes
+// that never drain it. Either path runs the setup at most once per process.
+static void vdt_launch_setup_once(void){
+    static int setup_done;
+    if (__atomic_exchange_n(&setup_done, 1, __ATOMIC_RELAXED) != 0) return;
+
     @autoreleasepool {
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            pid_t pid = getpid();
-            NSString *executablePath = current_executable_path(pid);
-            BOOL isRunningBoard = [executablePath isEqualToString:@"/usr/libexec/runningboardd"];
+        pid_t pid = getpid();
+        NSString *executablePath = current_executable_path(pid);
+        BOOL isRunningBoard = [executablePath isEqualToString:@"/usr/libexec/runningboardd"];
 
-            if (isRunningBoard) {
-                reloadPrefs();
-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, resourceRemovalCallback, CFSTR(VDT_RESOURCE_RESTORE_NN), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RETRY_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RESTORE_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                notify_register_dispatch(NOTIFY_PID_NN,
-                                         &notify_pid_token,
-                                         dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
-                                         ^(int token) {
-                    uint64_t reportedPid = 0;
-                    uint32_t stateStatus = notify_get_state(token, &reportedPid);
-                    dispatch_async(vedette_serial_queue(), ^{
-                        // One fast path plus the trailing scan is enough for a
-                        // notification burst. Bound public Darwin-name floods
-                        // to one reconciliation cycle per debounce window.
-                        if (launch_catch_up_scheduled) return;
-                        if (stateStatus == NOTIFY_STATUS_OK && reportedPid > 0 && reportedPid <= INT_MAX) {
-                            handle_reported_pid_sync((pid_t)reportedPid);
-                        } else {
-                            schedule_launch_catch_up_sync();
-                        }
-                    });
+        if (isRunningBoard) {
+            reloadPrefs();
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, resourceRemovalCallback, CFSTR(VDT_RESOURCE_RESTORE_NN), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RETRY_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RESTORE_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            notify_register_dispatch(NOTIFY_PID_NN,
+                                     &notify_pid_token,
+                                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+                                     ^(int token) {
+                uint64_t reportedPid = 0;
+                uint32_t stateStatus = notify_get_state(token, &reportedPid);
+                dispatch_async(vedette_serial_queue(), ^{
+                    // One fast path plus the trailing scan is enough for a
+                    // notification burst. Bound public Darwin-name floods
+                    // to one reconciliation cycle per debounce window.
+                    if (launch_catch_up_scheduled) return;
+                    if (stateStatus == NOTIFY_STATUS_OK && reportedPid > 0 && reportedPid <= INT_MAX) {
+                        handle_reported_pid_sync((pid_t)reportedPid);
+                    } else {
+                        schedule_launch_catch_up_sync();
+                    }
                 });
-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, prefsChangedCallback, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, restoreAllMonitorsCallback, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                return;
-            }
+            });
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, prefsChangedCallback, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, restoreAllMonitorsCallback, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            return;
+        }
 
-            // Every other injected process self-reports. runningboardd owns the
-            // trusted prefs snapshot and decides whether this PID is configured.
-            if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.apple.Preferences"]) {
-                return;
-            }
-            HBLogDebug(@"Notify new pid: %d", pid);
-            notify_new_pid(NOTIFY_PID_NN, (uint64_t)pid);
-        });
+        // Every other injected process self-reports. runningboardd owns the
+        // trusted prefs snapshot and decides whether this PID is configured.
+        if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.apple.Preferences"]) {
+            return;
+        }
+        HBLogDebug(@"Notify new pid: %d", pid);
+        notify_new_pid(NOTIFY_PID_NN, (uint64_t)pid);
     }
+}
+
+%ctor{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        vdt_launch_setup_once();
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+                   ^{
+        vdt_launch_setup_once();
+    });
 }

@@ -32,6 +32,7 @@ python3 -B tests/test_resource_preferences_native.py --require-native
 python3 -B tests/test_check_result_model_native.py --require-native
 python3 -B tests/test_check_result_reader_native.py --require-native
 python3 -B tests/test_rebuild_baseline.py
+python3 -B tests/test_stage_symbols.py
 python3 -B tests/test_formal_projection.py
 python3 -B tests/test_visual_projection.py
 python3 -B tests/test_comfort_projection.py
