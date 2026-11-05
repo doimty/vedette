@@ -219,21 +219,43 @@ class DwarfTools:
         output = self.run([self.dwarfdump, '--arch=' + arch, '--debug-info',
                            '--recurse-depth=0', str(path)])
         # Only root DIEs/attributes are dumped; --verify separately checks the
-        # complete DIE graph/ranges. This keeps many-MB subprogram dumps out of
-        # memory/logs without mistaking symbol-table entries for debug info.
+        # complete DIE graph and ranges. This keeps many-MB subprogram dumps out
+        # of memory and logs without mistaking symbol-table entries for debug
+        # information.
         units = re.split(r'(?m)^\s*0x[0-9A-Fa-f]+:\s*DW_TAG_compile_unit\b', output)[1:]
         for unit in units:
-            has_lines = re.search(r'(?m)^\s+DW_AT_stmt_list\s+\(', unit)
-            ranges = re.search(r'(?m)^\s+DW_AT_ranges\s+\(', unit)
-            range_pairs = re.findall(r'\[0x([0-9A-Fa-f]+),\s*0x([0-9A-Fa-f]+)\)',
-                                     unit[ranges.start():] if ranges else '')
-            has_ranges = any(int(end, 16) > int(start, 16) for start, end in range_pairs)
-            low = re.search(r'(?m)^\s+DW_AT_low_pc\s+\(0x([0-9A-Fa-f]+)\)', unit)
-            high = re.search(r'(?m)^\s+DW_AT_high_pc\s+\(0x([0-9A-Fa-f]+)\)', unit)
-            if has_lines and (has_ranges or (low and high and int(high.group(1), 16) > 0)):
+            if not re.search(r'DW_AT_stmt_list\b', unit):
+                continue
+            # Any nonzero code extent counts. Attribute values are read by taking
+            # the first hex number after the name, so a trailing comment, quoting
+            # or column layout cannot decide whether valid DWARF is rejected.
+            if any(int(value, 16) > 0 for value in _range_ends(unit)):
                 return
-        raise SymbolsError('no code-bearing DWARF compilation unit/line table for %s (%s)' %
-                           (path, arch))
+            low = _attribute_value(unit, 'DW_AT_low_pc')
+            high = _attribute_value(unit, 'DW_AT_high_pc')
+            if low is not None and high is not None and high > low:
+                return
+        excerpt = ' | '.join(output.splitlines()[:6])[:400] if output.strip() else '<empty dump>'
+        raise SymbolsError('no code-bearing DWARF compilation unit for %s (%s); dump began: %s' %
+                           (path, arch, excerpt))
+
+
+def _attribute_value(unit, name):
+    """First hex value after an attribute name, or None when absent."""
+    found = re.search(r'\b' + re.escape(name) + r'\b[^\n]*?0x([0-9A-Fa-f]+)', unit)
+    if found is None and re.search(r'\b' + re.escape(name) + r'\b\s*\n\s*0x([0-9A-Fa-f]+)', unit):
+        found = re.search(r'\b' + re.escape(name) + r'\b\s*\n\s*0x([0-9A-Fa-f]+)', unit)
+    return int(found.group(1), 16) if found else None
+
+
+def _range_ends(unit):
+    """End addresses of every nonempty [start, end) pair in a DW_AT_ranges block."""
+    block = re.search(r'DW_AT_ranges\b', unit)
+    if block is None:
+        return []
+    tail = unit[block.end():]
+    pairs = re.findall(r'\[\s*0x([0-9A-Fa-f]+)\s*,\s*0x([0-9A-Fa-f]+)\s*\)', tail)
+    return [end for start, end in pairs if int(end, 16) > int(start, 16)]
 
 
 def add_tool_arguments(parser):
