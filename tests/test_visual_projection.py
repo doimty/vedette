@@ -11,6 +11,7 @@ from comfort_delta import COMFORT_BASE, COMFORT_PATHS, comfort_baseline, without
 from extension_projection import RELEASE_BASE, assert_release_freeze, released_bytes
 import formal_delta
 from formal_delta import FORMAL_BASE, FORMAL_PATHS, FORMAL_VERSION, formal_baseline, without_formal_rules
+from launch_symbols_delta import without_launch_symbols
 import visual_delta
 from visual_delta import (ROOT, VISUAL_BASE, VISUAL_PATHS, VISUAL_WHITESPACE_ADDITION,
                           parse_visual_regions, visual_baseline, visual_regions, without_visual_rules)
@@ -80,7 +81,9 @@ class VisualProjection(unittest.TestCase):
     def test_unknown_append_or_in_hunk_mutation_rejected(self):
         regions = visual_regions()
         for path in sorted(VISUAL_PATHS):
-            actual = (ROOT / path).read_bytes()
+            # Newer reviewed layers sit above this one; strip them first so the
+            # visual regions are compared in the shape this layer produced.
+            actual = without_launch_symbols(path, (ROOT / path).read_bytes())
             with self.subTest(path=path, mutation='extra-bytes'):
                 with self.assertRaises(AssertionError):
                     without_visual_rules(path, actual + b'\nunknown-visual-bytes\n')
