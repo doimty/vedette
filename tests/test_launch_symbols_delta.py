@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 import launch_symbols_delta as delta
-from extension_projection import assert_release_freeze
+from extension_projection import RELEASE_BASE, assert_release_freeze
 
 ROOT = Path(__file__).resolve().parents[1]
 OLD_FIXTURES = (
@@ -35,7 +35,12 @@ class LaunchSymbolsDelta(unittest.TestCase):
                 self.assertEqual(delta.without_launch_symbols(path, current), base)
                 self.assertEqual(delta.without_launch_symbols(path, current.decode()), base.decode())
                 self.assertIs(delta.without_launch_symbols(path, base), base)
-                if path != '.gitignore':
+                # Only paths present in the release baseline can be frozen to it;
+                # ci/run_host_tests.sh did not exist at that revision.
+                present = subprocess.run(
+                    ['git', 'cat-file', '-e', RELEASE_BASE + ':' + path], cwd=ROOT,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+                if present:
                     assert_release_freeze(path, current)
 
     def test_unknown_edits_fail_closed_every_reviewed_path(self):

@@ -1,0 +1,6 @@
+test: only freeze launch-delta paths to the release baseline
+
+ci/run_host_tests.sh did not exist at 788f43b, so asking the release freeze to
+project it aborts on a missing Git object. Freeze only the paths the release
+actually contains; the launch delta itself still pins all four paths to the last
+green build.
