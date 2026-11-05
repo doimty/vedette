@@ -345,11 +345,12 @@ class CollectSymbols(SymbolsFixtureCase):
 
     def test_input_changed_while_tools_read_it_fails_before_copy(self):
         _, source = self.image(self.obj, 'arm64e', 'Vedette.dylib')
-        payload = self.payload(source)
+        # Compare resolved paths: macOS reports temp dirs under /private/var.
+        payload = self.payload(source).resolve()
 
         def changing_runner(command):
             result = self.runner(command)
-            if '--debug-info' in command and command[-1] == str(payload):
+            if '--debug-info' in command and Path(command[-1]).resolve() == payload:
                 payload.write_bytes(b'input changed during inspection')
             return result
 
@@ -621,10 +622,12 @@ class VerifySymbols(SymbolsFixtureCase):
     def test_package_changed_after_uuid_probe_is_not_attested(self):
         self.ready()
         binary = self.package / verify.PRODUCTS['Vedette.dylib']
+        target = binary.resolve()
 
         def changing_runner(command):
             result = self.runner(command)
-            if '--uuid' in command and command[-1] == str(binary):
+            # Resolved: macOS resolves its temp directory through /private/var.
+            if '--uuid' in command and Path(command[-1]).resolve() == target:
                 binary.write_bytes(b'changed shipped binary')
             return result
 
@@ -736,15 +739,22 @@ class ActualMacOSToolchain(unittest.TestCase):
             source.write_text('int fixture(int n) { return n + 7; }\nint main(void) { return fixture(0); }\n')
             tools = verify.DwarfTools(commands['dwarfdump'], commands['lipo'])
             objects, symbols, package = root / '.theos/obj', root / 'symbols', root / 'package'
+
+            def build(command):
+                # Compilers and dsymutil are not fail-closed tools here: dsymutil
+                # reports ordinary warnings on stderr with a zero exit, and only
+                # the archived DWARF is inspected by DwarfTools later.
+                subprocess.run(command, check=True, capture_output=True)
+
             for product, relative in verify.PRODUCTS.items():
                 image = objects / arch / product
                 image.parent.mkdir(parents=True, exist_ok=True)
                 command = [commands['clang'], '-g', '-O0', '-arch', arch, str(source), '-o', str(image)]
                 if product == 'Vedette.dylib':
                     command.append('-dynamiclib')
-                tools.run(command)
-                tools.run([commands['dsymutil'], str(image)])
-                tools.run([commands['strip'], '-S', str(image)])
+                build(command)
+                build([commands['dsymutil'], str(image)])
+                build([commands['strip'], '-S', str(image)])
                 shipped = package / relative
                 shipped.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(image, shipped)

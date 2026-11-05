@@ -1,0 +1,14 @@
+test: compare resolved paths and build fixtures outside the fail-closed runner
+
+Three of the new symbols tests failed only on macOS:
+
+- temp directories there live under /private/var, so comparing a raw argv path
+  string against an unresolved Path never matched, and the simulated mid-flight
+  input change silently never happened. Compare resolved paths.
+- dsymutil reports ordinary warnings on stderr with a zero exit, which the
+  fail-closed DwarfTools.run() rejects by design. Building the fixture images is
+  not that kind of verification, so clang/dsymutil/strip run through subprocess
+  and only the archived DWARF goes through DwarfTools.
+
+Production strictness is unchanged: lipo and dwarfdump stay fail-closed, and the
+stripped-input negative case still fails via the DWARF content check.
