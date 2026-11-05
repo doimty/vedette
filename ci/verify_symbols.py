@@ -42,6 +42,9 @@ PRODUCTS = {
     'vedette-nicectl': 'usr/libexec/vedette-nicectl',
 }
 MAX_TOOL_OUTPUT_BYTES = 4 * 1024 * 1024
+# Mach-O MH_DSYM: the filetype dsymutil writes. A stripped image substituted for
+# a DWARF payload is MH_DYLIB/MH_OBJECT/MH_EXECUTE instead.
+MH_DSYM = 0xA
 UUID_LINE = re.compile(
     r'^UUID: ([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
     r'[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}) \(([A-Za-z0-9_+.-]+)\) (.+)$')
@@ -227,20 +230,27 @@ class DwarfTools:
         # --verify alone cannot tell "valid debug info" from "no debug info": on a
         # stripped Mach-O it exits 0 and prints nothing. The section inventory
         # answers that from bytes instead of from tool layout.
-        sections = macho_debug_sections(path, arch)
-        if sections is not None:
-            if sections.get('__debug_info', 0) <= 0:
-                raise SymbolsError('no __debug_info section in %s (%s)' % (path, arch))
-            if sections.get('__debug_line', 0) <= 0:
-                raise SymbolsError('no __debug_line section in %s (%s)' % (path, arch))
+        evidence = macho_dwarf_evidence(path, arch)
+        if evidence is not None:
+            filetype, dwarf_bytes = evidence
+            if filetype != MH_DSYM:
+                raise SymbolsError('payload is not a dSYM Mach-O (filetype %d) in %s (%s)' %
+                                   (filetype, path, arch))
+            if dwarf_bytes <= 0:
+                raise SymbolsError('empty __DWARF segment in %s (%s)' % (path, arch))
 
 
-def macho_debug_sections(path, arch):
-    """{section_name: size} for one 64-bit slice, or None when it is not Mach-O.
+def macho_dwarf_evidence(path, arch):
+    """(filetype, total __DWARF payload bytes) for one 64-bit slice, or None.
 
-    None is not "no evidence about the artifact": fixtures use non-Mach-O bytes,
-    and the caller treats it as outside this check's scope. Real Theos dSYM
-    payloads are always 64-bit Mach-O.
+    A dSYM payload is Mach-O of type MH_DSYM whose __DWARF segment carries the
+    debug data. A stripped image substituted for it is MH_DYLIB/MH_EXECUTE with
+    no __DWARF segment at all. That difference is a header fact, so it does not
+    depend on how a tool prints anything, and it does not depend on the names of
+    individual sections either.
+
+    None means "not a 64-bit arm64 Mach-O", which synthetic fixtures use; the
+    caller treats that as outside this check's scope.
     """
     data = Path(path).read_bytes()
     if len(data) < 32:
@@ -258,27 +268,25 @@ def macho_debug_sections(path, arch):
     else:
         return None
 
-    for start, size in spans:
-        image = data[start:start + size]
+    for first, size in spans:
+        image = data[first:first + size]
         if len(image) < 32 or int.from_bytes(image[:4], "little") != 0xFEEDFACF:
             continue
         if int.from_bytes(image[4:8], "little") != 0x0100000C:
-            continue  # only arm64/arm64e slices are packed products
-        offset, sections = 32, {}
+            continue  # arm64 and arm64e share CPU_TYPE_ARM64
+        filetype = int.from_bytes(image[12:16], "little")
+        offset, dwarf = 32, 0
         for _ in range(int.from_bytes(image[16:20], "little")):
             command = int.from_bytes(image[offset:offset + 4], "little")
             length = int.from_bytes(image[offset + 4:offset + 8], "little")
             if length <= 0 or offset + length > len(image):
                 return None
-            if command == 0x19:
-                inner = offset + 72
-                for _ in range(int.from_bytes(image[offset + 64:offset + 68], "little")):
-                    name = image[inner:inner + 16].split(b"\0")[0].decode("ascii", "replace")
-                    sections[name] = int.from_bytes(image[inner + 40:inner + 48], "little")
-                    inner += 80
+            if command == 0x19:  # LC_SEGMENT_64
+                name = image[offset + 8:offset + 24].split(b"\0")[0].decode("ascii", "replace")
+                if name == "__DWARF":
+                    dwarf += int.from_bytes(image[offset + 48:offset + 56], "little")
             offset += length
-        if sections:
-            return sections
+        return filetype, dwarf
     return None
 
 
