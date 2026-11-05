@@ -1,8 +1,8 @@
 diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
-index dff969fa8d21426cf7e899372124903865cd9361..effa0cfc489bcda0a776840b76d60f469bddedfd 100644
+index dff969fa8d21426cf7e899372124903865cd9361..8d1a6e13810ed7c64e9885b008462a7e00c32263 100644
 --- a/.github/workflows/roothide-build.yml
 +++ b/.github/workflows/roothide-build.yml
-@@ -223,8 +223,29 @@
+@@ -223,8 +223,37 @@
 -          done
 -
 -      - name: Upload deb packages
@@ -21,11 +21,19 @@ index dff969fa8d21426cf7e899372124903865cd9361..effa0cfc489bcda0a776840b76d60f46
 +          if-no-files-found: error
 +
 +      # Theos generates per-architecture dSYMs at link time before stripping.
-+      # Collect only project products after the installable deb is uploaded.
++      # Discover the object roots instead of assuming where each subproject puts
++      # them; the collector still validates every root it is given and fails on
++      # anything unexpected. Runs after the deb upload, so a symbols problem
++      # cannot cost the installable package.
 +      - name: Collect debug symbols
 +        run: |
 +          set -o pipefail
-+          python3 -B ci/collect_symbols.py --objects .theos/obj --objects vedetteprefs/.theos/obj --objects nicectl/.theos/obj --out symbols --require
++          roots="$(find . -type d -path '*/.theos/obj' -not -path './theos/*' | sort)"
++          printf '%s\n' "$roots"
++          test -n "$roots"
++          arguments=()
++          for root in $roots; do arguments+=(--objects "$root"); done
++          python3 -B ci/collect_symbols.py "${arguments[@]}" --out symbols --require
 +
 +      - name: Verify debug symbols against the package
 +        run: |
