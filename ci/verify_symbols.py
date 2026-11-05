@@ -30,6 +30,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shlex
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -223,6 +224,62 @@ class DwarfTools:
         # A failing verifier, including output on stderr with a zero exit, is
         # rejected by run().
         self.run([self.dwarfdump, '--arch=' + arch, '--verify', '--quiet', str(path)])
+        # --verify alone cannot tell "valid debug info" from "no debug info": on a
+        # stripped Mach-O it exits 0 and prints nothing. The section inventory
+        # answers that from bytes instead of from tool layout.
+        sections = macho_debug_sections(path, arch)
+        if sections is not None:
+            if sections.get('__debug_info', 0) <= 0:
+                raise SymbolsError('no __debug_info section in %s (%s)' % (path, arch))
+            if sections.get('__debug_line', 0) <= 0:
+                raise SymbolsError('no __debug_line section in %s (%s)' % (path, arch))
+
+
+def macho_debug_sections(path, arch):
+    """{section_name: size} for one 64-bit slice, or None when it is not Mach-O.
+
+    None is not "no evidence about the artifact": fixtures use non-Mach-O bytes,
+    and the caller treats it as outside this check's scope. Real Theos dSYM
+    payloads are always 64-bit Mach-O.
+    """
+    data = Path(path).read_bytes()
+    if len(data) < 32:
+        return None
+    spans = []
+    if int.from_bytes(data[:4], "little") == 0xFEEDFACF:
+        spans.append((0, len(data)))
+    elif int.from_bytes(data[:4], "big") in (0xCAFEBABE, 0xCAFEBABF):
+        for index in range(int.from_bytes(data[4:8], "big")):
+            entry = 8 + index * 20
+            if entry + 20 > len(data):
+                return None
+            _cpu, _sub, offset, size, _align = struct.unpack(">iiIII", data[entry:entry + 20])
+            spans.append((offset, size))
+    else:
+        return None
+
+    for start, size in spans:
+        image = data[start:start + size]
+        if len(image) < 32 or int.from_bytes(image[:4], "little") != 0xFEEDFACF:
+            continue
+        if int.from_bytes(image[4:8], "little") != 0x0100000C:
+            continue  # only arm64/arm64e slices are packed products
+        offset, sections = 32, {}
+        for _ in range(int.from_bytes(image[16:20], "little")):
+            command = int.from_bytes(image[offset:offset + 4], "little")
+            length = int.from_bytes(image[offset + 4:offset + 8], "little")
+            if length <= 0 or offset + length > len(image):
+                return None
+            if command == 0x19:
+                inner = offset + 72
+                for _ in range(int.from_bytes(image[offset + 64:offset + 68], "little")):
+                    name = image[inner:inner + 16].split(b"\0")[0].decode("ascii", "replace")
+                    sections[name] = int.from_bytes(image[inner + 40:inner + 48], "little")
+                    inner += 80
+            offset += length
+        if sections:
+            return sections
+    return None
 
 
 def add_tool_arguments(parser):
