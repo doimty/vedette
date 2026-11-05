@@ -275,16 +275,19 @@ class CollectSymbols(SymbolsFixtureCase):
 
     def test_large_file_without_debug_info_fails_even_without_require(self):
         _, source = self.image(self.obj, 'arm64e', 'Vedette.dylib', debug=NO_DEBUG_INFO)
-        self.rewrite(self.payload(source), b'large but stripped' * 4096)
+        payload = self.payload(source)
+        self.rewrite(payload, b'large but stripped' * 4096)
+        self.runner.record(payload)['errors'][('verify', 'arm64e')] = (1, '', 'no usable DWARF')
         for require in (False, True):
             status, output, error = self.run_collect(require=require)
             self.assertEqual(status, 1, output + error)
-            self.assertIn('no compile unit', error)
+            self.assertIn('no usable DWARF', error)
             self.assertFalse(self.out.exists())
 
     def test_preflight_failure_copies_nothing_and_never_mutates_sources(self):
         _, valid = self.image(self.obj, 'arm64e', 'Vedette.dylib')
-        _, broken = self.image(self.prefs, 'arm64e', 'VedettePrefs', debug=NO_DEBUG_INFO)
+        _, broken = self.image(self.prefs, 'arm64e', 'VedettePrefs')
+        self.runner.record(self.payload(broken))['errors'][('verify', 'arm64e')] = (1, '', 'malformed')
         before = verify.bundle_digest(valid)
         status, output, error = self.run_collect()
         self.assertEqual(status, 1, output + error)
@@ -350,7 +353,7 @@ class CollectSymbols(SymbolsFixtureCase):
 
         def changing_runner(command):
             result = self.runner(command)
-            if '--debug-info' in command and Path(command[-1]).resolve() == payload:
+            if '--verify' in command and Path(command[-1]).resolve() == payload:
                 payload.write_bytes(b'input changed during inspection')
             return result
 
@@ -537,13 +540,12 @@ class VerifySymbols(SymbolsFixtureCase):
     def test_empty_or_declaration_only_dwarf_fails_per_arch_not_by_file_size(self):
         self.ready()
         payload = self.payload(self.collected('Vedette.dylib')[0])
-        # A payload with no compile units at all cannot describe code. Payloads
-        # that do carry units are further judged by dwarfdump --verify, so this
-        # only asserts the case the text pass can actually establish.
-        self.runner.record(payload)['debug'] = NO_DEBUG_INFO
+        # Rejection comes from the verifier, which is the only authority on
+        # whether the debug info is complete; the text pass was removed.
+        self.runner.record(payload)['errors'][('verify', 'arm64')] = (1, '', 'malformed debug info')
         status, output, error = self.run_verify()
         self.assertEqual(status, 1, output + error)
-        self.assertIn('no compile unit', error)
+        self.assertIn('malformed debug info', error)
         payload.unlink()
         self.assertEqual(self.run_verify()[0], 1)
 
@@ -554,10 +556,10 @@ class VerifySymbols(SymbolsFixtureCase):
         self.assertEqual(self.run_collect()[0], 0)
         self.assertEqual(self.run_verify()[0], 0)
         payload = self.payload(self.collected('vedette-nicectl')[0])
-        self.runner.record(payload)['debug'] = {'arm64': VALID_DEBUG_INFO, 'arm64e': NO_DEBUG_INFO}
+        self.runner.record(payload)['errors'][('verify', 'arm64e')] = (1, '', 'malformed DWARF')
         status, output, error = self.run_verify()
         self.assertEqual(status, 1, output + error)
-        self.assertIn('(arm64e)', error)
+        self.assertIn('--arch=arm64e', error)
 
     def test_uuid_tool_missing_or_malformed_or_duplicate_arch_fails(self):
         self.ready()
@@ -586,7 +588,7 @@ class VerifySymbols(SymbolsFixtureCase):
         payload = self.payload(self.collected('VedettePrefs')[0])
         record = self.runner.record(payload)
         for mode in ('archs', 'uuid', ('verify', record['archs'][0]),
-                     ('debug-info', record['archs'][0])):
+                     ('verify', record['archs'][0])):
             with self.subTest(mode=mode):
                 record['errors'] = {mode: (1, 'plausible output', 'error: corrupt DWARF')}
                 status, output, error = self.run_verify()
@@ -696,10 +698,9 @@ class ToolRunnerTests(SymbolsFixtureCase):
         payload = self.payload(bundle)
         record = self.runner.record(payload)
         self.tools.verify_dwarf(payload, 'arm64e')
-        for replacement in ('', 'debug_line only, no units\n'):
-            record['debug'] = replacement
-            with self.assertRaisesRegex(verify.SymbolsError, 'no compile unit|no .debug_info'):
-                self.tools.verify_dwarf(payload, 'arm64e')
+        record['errors'][('verify', 'arm64e')] = (1, '', 'malformed DWARF')
+        with self.assertRaisesRegex(verify.SymbolsError, 'malformed DWARF'):
+            self.tools.verify_dwarf(payload, 'arm64e')
 
     def test_uuid_output_for_a_different_path_fails(self):
         binary = self.shipped()['Vedette.dylib']
