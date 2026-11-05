@@ -222,14 +222,18 @@ class DwarfTools:
         # complete DIE graph and ranges. This keeps many-MB subprogram dumps out
         # of memory and logs without mistaking symbol-table entries for debug
         # information.
-        units = re.split(r'(?m)^\s*0x[0-9A-Fa-f]+:\s*DW_TAG_compile_unit\b', output)[1:]
-        for unit in units:
+        #
+        # Split on the tag itself rather than on a guessed line prefix: Apple's
+        # dwarfdump and llvm-dwarfdump differ in address column, quoting and
+        # indentation, and a prefix assumption here already rejected a dSYM that
+        # --verify had just accepted.
+        starts = [m.start() for m in re.finditer(r'DW_TAG_compile_unit\b', output)]
+        for begin, end in zip(starts, starts[1:] + [len(output)]):
+            unit = output[begin:end]
             if not re.search(r'DW_AT_stmt_list\b', unit):
                 continue
-            # Any nonzero code extent counts. Attribute values are read by taking
-            # the first hex number after the name, so a trailing comment, quoting
-            # or column layout cannot decide whether valid DWARF is rejected.
-            if any(int(value, 16) > 0 for value in _range_ends(unit)):
+            # Any nonzero code extent counts.
+            if _range_ends(unit):
                 return
             low = _attribute_value(unit, 'DW_AT_low_pc')
             high = _attribute_value(unit, 'DW_AT_high_pc')
