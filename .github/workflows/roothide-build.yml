@@ -229,24 +229,23 @@ jobs:
           path: packages/*.deb
           if-no-files-found: error
 
-      # Theos already ran dsymutil per arch, before strip, during the build. This
-      # archives those bundles; it does not regenerate them. Deliberately after
-      # the deb upload, so a symbols problem cannot cost the installable package.
-      - name: Verify debug symbols
+      # Theos generates per-architecture dSYMs at link time before stripping.
+      # Collect only project products after the installable deb is uploaded.
+      - name: Collect debug symbols
         run: |
           set -o pipefail
-          test -d symbols
-          test "$(find symbols -name '*.dSYM' | wc -l | tr -d ' ')" -ge 2
-          python3 -B ci/verify_symbols.py symbols 2>&1 | tee symbols/verify.log
-          for bundle in $(find symbols -name '*.dSYM'); do
-            test -n "$(find "$bundle/Contents/Resources/DWARF" -type f -size +1k | head -n 1)"
-          done
+          python3 -B ci/collect_symbols.py --objects .theos/obj --objects vedetteprefs/.theos/obj --objects nicectl/.theos/obj --out symbols --require
+
+      - name: Verify debug symbols against the package
+        run: |
+          set -o pipefail
+          python3 -B ci/verify_symbols.py symbols --package-root /tmp/vedette-package --package-prefix "$PACKAGE_PREFIX" --manifest symbols/manifest.json 2>&1 | tee symbols/verify.log
 
       - name: Upload debug symbols
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: vedette-${{ matrix.scheme }}-dsym
-          path: |
-            symbols/**/*.dSYM
-            symbols/verify.log
+          path: symbols/
+          include-hidden-files: true
+          retention-days: 90
           if-no-files-found: error

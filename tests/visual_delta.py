@@ -142,6 +142,9 @@ def without_visual_rules(path, source):
     base = visual_baseline(path)
     if data == base:
         return source
+    from launch_symbols_delta import without_launch_symbols
+    source = without_launch_symbols(path, source)
+    data = _bytes(source)
     regions = visual_regions().get(path, ())
     pieces = []
     cursor = 0

@@ -12,6 +12,7 @@ python3 -B tests/test_check_field_presentation.py --require-compiler
 python3 -B tests/test_check_presentation_native.py --require-native
 python3 -B tests/test_check_result_summary_model.py
 python3 tests/check_auto_monitor_path.py
+python3 -B tests/test_launch_symbols_delta.py
 sh tests/run_list_order_tests.sh
 for suite in test_preferences_ui test_ios15_cell_lifecycle test_ui21_baseline test_process_action_ui21 test_section_text test_efficiency_contracts test_diagnostic_preprocess; do
   python3 -B "tests/$suite.py"

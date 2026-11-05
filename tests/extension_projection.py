@@ -121,6 +121,8 @@ def inverse_extension_source(path, source):
 def released_bytes(path, source=None):
     """Candidate -> full 788; only reviewed regions/fields are reversed."""
     if source is None: source = (ROOT / path).read_bytes()
+    from launch_symbols_delta import without_launch_symbols
+    source = without_launch_symbols(path, source)
     from formal_delta import without_formal_rules
     source = without_formal_rules(path, source)
     if path not in REVIEWED_PATHS and path not in (CI_PATH, 'control', 'ci/stage_release.py', '.gitattributes'):

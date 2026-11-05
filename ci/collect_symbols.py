@@ -1,104 +1,130 @@
 #!/usr/bin/env python3
-"""Collect the .dSYM bundles Theos already generated, so they can be archived.
+"""Archive only the three products' existing, verified Theos dSYMs.
 
-Theos generates debug symbols itself: `makefiles/instance/rules.mk` runs
-`$(TARGET_DSYMUTIL) "$@"` right after linking and *before* `strip`, so with
-`dsymutil` on PATH (CI installs the Xcode toolchain) every image gets
-`<obj dir>/<arch>/<image>.dSYM`. Nothing here needs to run dsymutil again: by
-before-package the images are already stripped, and re-running dsymutil on them
-fails with "no debug map".
+Pinned Theos links -> dsymutil -> strip per architecture, then lipo merges the
+images. Its existing DEBUGFLAG=-ggdb is sufficient: do not regenerate dSYMs from
+stripped binaries or add another build here. Pass each project's .theos/obj
+explicitly; the default is only .theos/obj, never the entire checkout.
 
-So this copies what exists into `symbols/`, preserving the arch directory, and
-reports anything that looks like a bundle but carries no DWARF. It never touches
-the built images and never fails the build on its own; `--require` turns "no
-bundle at all" into a failure for the CI step that must prove symbols exist.
+Layout: symbols/{product}/root-{index}/{original-relative-bundle-path}.
+The log maps root indices to the supplied object roots. All nested scheme,
+architecture and subproject paths survive; no architecture is guessed from a
+folder name. Unknown products and theos/vendor trees are excluded. Output is
+pruned before walking, and all identities/collisions are checked before copying.
+An identical rerun is idempotent; different content at an existing destination
+is an error (choose a fresh output directory for a different build).
 
-Note the layout this expects: Theos produces one dSYM per architecture, and the
-fat image made by "Merging tweak" has none of its own. So `symbols/arm64e/...`
-and `symbols/arm64/...` are the deliverable, and `atos` needs `-arch`.
+This only proves DWARF is present/valid. verify_symbols.py must subsequently
+pair it with every architecture of every product in the *extracted deb*.
 """
-from pathlib import Path
+from __future__ import annotations
+
 import argparse
+from pathlib import Path
 import shutil
 import sys
 
-# A DWARF-bearing image is never tiny; treating any non-empty file as success is
-# how an empty bundle gets reported as fine.
-MINIMUM_DWARF_BYTES = 1024
+if __package__:
+    from .verify_symbols import (DwarfTools, PRODUCTS, SymbolsError, add_tool_arguments,
+                                 bundle_digest, dsym_bundles, inspect_dsym)
+else:
+    from verify_symbols import (DwarfTools, PRODUCTS, SymbolsError, add_tool_arguments,
+                                bundle_digest, dsym_bundles, inspect_dsym)
 
 
-def bundles(roots, exclude):
-    found = []
+def bundles(roots, exclude=None):
+    found = set()
     for root in roots:
-        base = Path(root)
-        if not base.is_dir():
-            continue
-        for path in sorted(base.rglob('*.dSYM')):
-            if not path.is_dir() or path in found:
-                continue
-            # Never re-collect our own output when the scan root contains it.
-            if exclude and (path == exclude or exclude in path.parents):
-                continue
-            found.append(path)
-    return found
+        found.update(dsym_bundles(root, exclude=exclude, skip_vendor=True))
+    return sorted(found)
 
 
-def dwarf_payload(dsym):
-    dwarf = dsym / 'Contents/Resources/DWARF'
-    if not dwarf.is_dir():
-        return None
-    for entry in dwarf.iterdir():
-        if entry.is_file() and entry.stat().st_size >= MINIMUM_DWARF_BYTES:
-            return entry
-    return None
-
-
-def destination(bundle, root, out_dir):
-    """Keep the arch directory; a bundle directly under the root gets `flat`."""
+def destination(bundle, root, out_dir, root_index=0):
+    """Canonicalize both operands before relative_to, retaining original paths."""
+    bundle, root, out_dir = (Path(path).resolve() for path in (bundle, root, out_dir))
     relative = bundle.relative_to(root)
-    if len(relative.parts) < 2:
-        relative = Path('flat') / relative.name
-    return Path(out_dir) / relative
+    if relative == Path('.'):
+        relative = Path(bundle.name)
+    product = bundle.name.removesuffix('.dSYM')
+    return out_dir / product / ('root-%03d' % root_index) / relative
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
+def collect_symbols(roots, out_dir, tools, require=False):
+    out_dir = Path(out_dir).resolve()
+    normalized = []
+    for root in roots:
+        root = Path(root).resolve()
+        if root not in normalized:
+            normalized.append(root)
+    for index, root in enumerate(normalized):
+        print('  root-%03d: %s' % (index, root))
+    found = bundles(normalized, out_dir)
+    selected = []
+    for bundle in found:
+        if bundle.name.removesuffix('.dSYM') not in PRODUCTS:
+            print('  ignored non-product dSYM: %s' % bundle)
+            continue
+        if out_dir.is_relative_to(bundle):
+            raise SymbolsError('output is inside an input dSYM; self-copy prohibited: %s' % bundle)
+        selected.append(bundle)
+    if not selected:
+        print('collect_symbols: no project-product .dSYM under %s' % normalized)
+        if require:
+            raise SymbolsError('no required project-product dSYMs collected')
+        return []
+
+    # Preflight the complete set. No partial copy if a later input/tool/target
+    # fails. Most-specific root owns inputs when explicit scan roots overlap.
+    plan = []
+    for bundle in selected:
+        info = inspect_dsym(bundle, tools)
+        owner = max((root for root in normalized if bundle.is_relative_to(root)),
+                    key=lambda root: len(root.parts))
+        target = destination(bundle, owner, out_dir, normalized.index(owner))
+        if not target.resolve().is_relative_to(out_dir):
+            raise SymbolsError('destination escapes collection through a symlink: %s' % target)
+        exists = target.exists() or target.is_symlink()
+        if exists and bundle_digest(target) != info.bundle_sha256:
+            raise SymbolsError('destination has different content; not overwriting: %s' % target)
+        plan.append((info, target, exists))
+
+    copied = []
+    for info, target, exists in plan:
+        # Recheck content to detect inputs changing during collection. Theos must
+        # have finished linking/dsymutil before this step begins.
+        if bundle_digest(info.bundle) != info.bundle_sha256:
+            raise SymbolsError('dSYM changed after preflight: %s' % info.bundle)
+        if exists:
+            print('  unchanged identical: %s -> %s' % (info.bundle, target))
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(info.bundle, target)  # Never removes/replaces a target.
+            if bundle_digest(target) != info.bundle_sha256:
+                raise SymbolsError('copied dSYM content differs from source: %s' % target)
+            print('  kept: %s -> %s (%s)' %
+                  (info.bundle, target, ', '.join(sorted(info.uuids))))
+        copied.append(target)
+    print('collect_symbols: %d/%d bundle(s) collected into %s' %
+          (len(copied), len(selected), out_dir))
+    return copied
+
+
+def main(argv=None, tools=None):
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--objects', action='append', default=[],
-                        help='object/output root to scan; repeatable, defaults to the project root '
-                             'so no scheme-specific obj layout has to be assumed')
+                        help='project .theos/obj root to scan; repeatable; default: .theos/obj')
     parser.add_argument('--out', default='symbols', help='collection directory')
     parser.add_argument('--require', action='store_true',
-                        help='fail when no usable bundle was collected')
-    args = parser.parse_args()
-    roots = args.objects or ['.']
-
-    out_dir = Path(args.out).resolve()
-    found = bundles(roots, out_dir)
-    if not found:
-        print('collect_symbols: no .dSYM under %s' % (roots or '<none>',))
-        return 1 if args.require else 0
-
-    collected = 0
-    for bundle in found:
-        payload = dwarf_payload(bundle)
-        if payload is None:
-            print('  empty:   %s (no DWARF payload)' % bundle)
-            continue
-        resolved = bundle.resolve()
-        root = next(Path(r).resolve() for r in roots if resolved.is_relative_to(Path(r).resolve()))
-        target = destination(bundle, root, out_dir)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(bundle, target)
-        print('  kept:    %s -> %s (%s, %d bytes)' %
-              (bundle, target, payload.name, payload.stat().st_size))
-        collected += 1
-
-    print('collect_symbols: %d/%d bundle(s) collected into %s' % (collected, len(found), args.out))
-    if args.require and collected == 0:
+                        help='also fail when no selected dSYM exists (invalid inputs always fail)')
+    add_tool_arguments(parser)
+    args = parser.parse_args(argv)
+    try:
+        tools = tools or DwarfTools(args.dwarfdump, args.lipo, timeout=args.tool_timeout)
+        collect_symbols(args.objects or ['.theos/obj'], args.out, tools, args.require)
+        return 0
+    except (SymbolsError, OSError) as error:
+        print('collect_symbols: FAIL %s' % error, file=sys.stderr)
         return 1
-    return 0
 
 
 if __name__ == '__main__':

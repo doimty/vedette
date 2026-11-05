@@ -27,4 +27,3 @@ include $(THEOS_MAKE_PATH)/aggregate.mk
 
 before-package::
 	python3 ci/stage_release.py --scheme "$(THEOS_PACKAGE_SCHEME)" --stage "$(THEOS_STAGING_DIR)"
-	python3 ci/collect_symbols.py --objects "$(THEOS_PROJECT_DIR)" --out symbols

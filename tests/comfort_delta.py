@@ -159,6 +159,9 @@ def without_comfort_rules(path, source):
     base = comfort_baseline(path)
     if data == base:
         return source
+    from launch_symbols_delta import without_launch_symbols
+    source = without_launch_symbols(path, source)
+    data = _bytes(source)
     from visual_delta import VISUAL_PATHS, without_visual_rules
     if path in VISUAL_PATHS:
         source = without_visual_rules(path, source)

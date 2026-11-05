@@ -1,0 +1,254 @@
+diff --git a/.github/workflows/roothide-build.yml b/.github/workflows/roothide-build.yml
+index dff969fa8d21426cf7e899372124903865cd9361..effa0cfc489bcda0a776840b76d60f469bddedfd 100644
+--- a/.github/workflows/roothide-build.yml
++++ b/.github/workflows/roothide-build.yml
+@@ -223,8 +223,29 @@
+-          done
+-
+-      - name: Upload deb packages
+-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+-        with:
+-          name: vedette-${{ matrix.scheme }}-packages
+-          path: packages/*.deb
+-          if-no-files-found: error
++          done
++
++      - name: Upload deb packages
++        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
++        with:
++          name: vedette-${{ matrix.scheme }}-packages
++          path: packages/*.deb
++          if-no-files-found: error
++
++      # Theos generates per-architecture dSYMs at link time before stripping.
++      # Collect only project products after the installable deb is uploaded.
++      - name: Collect debug symbols
++        run: |
++          set -o pipefail
++          python3 -B ci/collect_symbols.py --objects .theos/obj --objects vedetteprefs/.theos/obj --objects nicectl/.theos/obj --out symbols --require
++
++      - name: Verify debug symbols against the package
++        run: |
++          set -o pipefail
++          python3 -B ci/verify_symbols.py symbols --package-root /tmp/vedette-package --package-prefix "$PACKAGE_PREFIX" --manifest symbols/manifest.json 2>&1 | tee symbols/verify.log
++
++      - name: Upload debug symbols
++        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
++        with:
++          name: vedette-${{ matrix.scheme }}-dsym
++          path: symbols/
++          include-hidden-files: true
++          retention-days: 90
++          if-no-files-found: error
+diff --git a/.gitignore b/.gitignore
+index 429afe0807ef98f64ecf354c22866b2d7604a50b..45820ef8e327253df592ad7fafd267b308f2dcd9 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,4 +1,5 @@
+-.theos/
+-packages/
+-__pycache__/
+-*.pyc
++.theos/
++packages/
++__pycache__/
++*.pyc
++symbols/
+diff --git a/Vedette.xm b/Vedette.xm
+index d65cc674e2182b5bd377a888744a7da188a9d281..6af0ca81ac9cbbb31b383f7cfd187c04501a3a53 100644
+--- a/Vedette.xm
++++ b/Vedette.xm
+@@ -489,53 +489,72 @@
+-}
+-
+-static NSString *current_executable_path(pid_t pid){
+-    char path[PROC_PIDPATHINFO_MAXSIZE];
+-    if (!VDTCopyProcessInfoString(pid, path, sizeof(path), proc_pidpath)) return nil;
+-    return [NSString stringWithUTF8String:path];
+-}
+-
+-%ctor{
+-    @autoreleasepool {
+-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+-            pid_t pid = getpid();
+-            NSString *executablePath = current_executable_path(pid);
+-            BOOL isRunningBoard = [executablePath isEqualToString:@"/usr/libexec/runningboardd"];
+-
+-            if (isRunningBoard) {
+-                reloadPrefs();
+-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, resourceRemovalCallback, CFSTR(VDT_RESOURCE_RESTORE_NN), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RETRY_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RESTORE_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+-                notify_register_dispatch(NOTIFY_PID_NN,
+-                                         &notify_pid_token,
+-                                         dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+-                                         ^(int token) {
+-                    uint64_t reportedPid = 0;
+-                    uint32_t stateStatus = notify_get_state(token, &reportedPid);
+-                    dispatch_async(vedette_serial_queue(), ^{
+-                        // One fast path plus the trailing scan is enough for a
+-                        // notification burst. Bound public Darwin-name floods
+-                        // to one reconciliation cycle per debounce window.
+-                        if (launch_catch_up_scheduled) return;
+-                        if (stateStatus == NOTIFY_STATUS_OK && reportedPid > 0 && reportedPid <= INT_MAX) {
+-                            handle_reported_pid_sync((pid_t)reportedPid);
+-                        } else {
+-                            schedule_launch_catch_up_sync();
+-                        }
+-                    });
+-                });
+-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, prefsChangedCallback, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, restoreAllMonitorsCallback, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+-                return;
+-            }
+-
+-            // Every other injected process self-reports. runningboardd owns the
+-            // trusted prefs snapshot and decides whether this PID is configured.
+-            if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.apple.Preferences"]) {
+-                return;
+-            }
+-            HBLogDebug(@"Notify new pid: %d", pid);
+-            notify_new_pid(NOTIFY_PID_NN, (uint64_t)pid);
+-        });
+-    }
+-}
++}
++
++static NSString *current_executable_path(pid_t pid){
++    char path[PROC_PIDPATHINFO_MAXSIZE];
++    if (!VDTCopyProcessInfoString(pid, path, sizeof(path), proc_pidpath)) return nil;
++    return [NSString stringWithUTF8String:path];
++}
++
++// Defer launch setup instead of starting its worker during loader initializers.
++// Reynard Helper's crash records notify_set_state -> libxpc -> free -> abort
++// while the main thread is still running libmozglue initializers. Allocator
++// interference is a hypothesis, not an established allocation/free history.
++// The main-queue path runs after normal loader startup. The timed fallback is
++// best effort for processes without a draining main queue; elapsed time alone
++// does not prove that all initialization finished. Both paths share one guard.
++static void vdt_launch_setup_once(void){
++    static int setup_done;
++    if (__atomic_exchange_n(&setup_done, 1, __ATOMIC_RELAXED) != 0) return;
++
++    @autoreleasepool {
++        pid_t pid = getpid();
++        NSString *executablePath = current_executable_path(pid);
++        BOOL isRunningBoard = [executablePath isEqualToString:@"/usr/libexec/runningboardd"];
++
++        if (isRunningBoard) {
++            reloadPrefs();
++            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, resourceRemovalCallback, CFSTR(VDT_RESOURCE_RESTORE_NN), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
++            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RETRY_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
++            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, niceRefreshCallback, CFSTR(VDT_NICE_RESTORE_NOTIFICATION), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
++            notify_register_dispatch(NOTIFY_PID_NN,
++                                     &notify_pid_token,
++                                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
++                                     ^(int token) {
++                uint64_t reportedPid = 0;
++                uint32_t stateStatus = notify_get_state(token, &reportedPid);
++                dispatch_async(vedette_serial_queue(), ^{
++                    // One fast path plus the trailing scan is enough for a
++                    // notification burst. Bound public Darwin-name floods
++                    // to one reconciliation cycle per debounce window.
++                    if (launch_catch_up_scheduled) return;
++                    if (stateStatus == NOTIFY_STATUS_OK && reportedPid > 0 && reportedPid <= INT_MAX) {
++                        handle_reported_pid_sync((pid_t)reportedPid);
++                    } else {
++                        schedule_launch_catch_up_sync();
++                    }
++                });
++            });
++            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, prefsChangedCallback, (CFStringRef)PREFS_CHANGED_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
++            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, restoreAllMonitorsCallback, (CFStringRef)RESTORE_ALL_MONITORS_NN, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
++            return;
++        }
++
++        // Every other injected process self-reports. runningboardd owns the
++        // trusted prefs snapshot and decides whether this PID is configured.
++        if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.apple.Preferences"]) {
++            return;
++        }
++        HBLogDebug(@"Notify new pid: %d", pid);
++        notify_new_pid(NOTIFY_PID_NN, (uint64_t)pid);
++    }
++}
++
++%ctor{
++    dispatch_async(dispatch_get_main_queue(), ^{
++        vdt_launch_setup_once();
++    });
++    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
++                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
++                   ^{
++        vdt_launch_setup_once();
++    });
++}
+diff --git a/ci/run_host_tests.sh b/ci/run_host_tests.sh
+index 1228c174c08cfcd785b237662c7c7074524fec09..c9d69e685f41d759d0f4e97e826afd7439d1743e 100644
+--- a/ci/run_host_tests.sh
++++ b/ci/run_host_tests.sh
+@@ -7,16 +7,17 @@
+-python3 -B tests/test_pid_snapshot.py --require-compiler
+-python3 -B tests/test_resource_summary.py --require-compiler
+-python3 -B tests/test_resource_comfort.py
+-python3 -B tests/test_check_result_navigation.py
+-python3 -B tests/test_check_field_presentation.py --require-compiler
+-python3 -B tests/test_check_presentation_native.py --require-native
+-python3 -B tests/test_check_result_summary_model.py
+-python3 tests/check_auto_monitor_path.py
+-sh tests/run_list_order_tests.sh
+-for suite in test_preferences_ui test_ios15_cell_lifecycle test_ui21_baseline test_process_action_ui21 test_section_text test_efficiency_contracts test_diagnostic_preprocess; do
+-  python3 -B "tests/$suite.py"
+-done
+-make -f Makefile.tests test-nice STORE_RUNNER=sudo
+-sudo bash tests/run_nice_native_tests.sh
+-sudo bash tests/run_springboard_native_tests.sh
+-for suite in test_extension_contracts test_bundle_rules; do python3 -B "tests/$suite.py"; done
++python3 -B tests/test_pid_snapshot.py --require-compiler
++python3 -B tests/test_resource_summary.py --require-compiler
++python3 -B tests/test_resource_comfort.py
++python3 -B tests/test_check_result_navigation.py
++python3 -B tests/test_check_field_presentation.py --require-compiler
++python3 -B tests/test_check_presentation_native.py --require-native
++python3 -B tests/test_check_result_summary_model.py
++python3 tests/check_auto_monitor_path.py
++python3 -B tests/test_launch_symbols_delta.py
++sh tests/run_list_order_tests.sh
++for suite in test_preferences_ui test_ios15_cell_lifecycle test_ui21_baseline test_process_action_ui21 test_section_text test_efficiency_contracts test_diagnostic_preprocess; do
++  python3 -B "tests/$suite.py"
++done
++make -f Makefile.tests test-nice STORE_RUNNER=sudo
++sudo bash tests/run_nice_native_tests.sh
++sudo bash tests/run_springboard_native_tests.sh
++for suite in test_extension_contracts test_bundle_rules; do python3 -B "tests/$suite.py"; done
+@@ -27,14 +28,15 @@
+-python3 -B tests/test_list_catalog_native.py --require-native
+-python3 -B tests/test_list_reentry.py --require-native
+-python3 -B tests/test_list_reuse.py
+-for suite in test_memory_policy test_resource_apply test_resource_manager test_resource_ui21; do python3 -B "tests/$suite.py"; done
+-python3 -B tests/test_resource_preferences_native.py --require-native
+-python3 -B tests/test_check_result_model_native.py --require-native
+-python3 -B tests/test_check_result_reader_native.py --require-native
+-python3 -B tests/test_rebuild_baseline.py
+-python3 -B tests/test_formal_projection.py
+-python3 -B tests/test_visual_projection.py
+-python3 -B tests/test_comfort_projection.py
+-python3 -B tests/test_resource_writeback_contracts.py
+-sudo python3 -B tests/test_resource_runtime_native.py --require-native
+-sudo python3 -B tests/test_receipt_boot_native.py --require-native
++python3 -B tests/test_list_catalog_native.py --require-native
++python3 -B tests/test_list_reentry.py --require-native
++python3 -B tests/test_list_reuse.py
++for suite in test_memory_policy test_resource_apply test_resource_manager test_resource_ui21; do python3 -B "tests/$suite.py"; done
++python3 -B tests/test_resource_preferences_native.py --require-native
++python3 -B tests/test_check_result_model_native.py --require-native
++python3 -B tests/test_check_result_reader_native.py --require-native
++python3 -B tests/test_rebuild_baseline.py
++python3 -B tests/test_collect_symbols.py
++python3 -B tests/test_formal_projection.py
++python3 -B tests/test_visual_projection.py
++python3 -B tests/test_comfort_projection.py
++python3 -B tests/test_resource_writeback_contracts.py
++sudo python3 -B tests/test_resource_runtime_native.py --require-native
++sudo python3 -B tests/test_receipt_boot_native.py --require-native

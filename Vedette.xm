@@ -494,15 +494,13 @@ static NSString *current_executable_path(pid_t pid){
     return [NSString stringWithUTF8String:path];
 }
 
-// Everything Vedette does at launch goes through here, never from %ctor itself:
-// an image initializer runs before the host's runtime is ready, and a runtime
-// that takes over the allocator during its own initializers (libmozglue swaps
-// in mozjemalloc from _GLOBAL__sub_I_*) leaves half a zone installed. The first
-// notify_set_state() performs a one-time libxpc entitlement lookup whose
-// dispatch_data buffer is then freed through that zone, and malloc aborts.
-// The main-queue call covers ordinary apps and extensions, whose main queue
-// only drains after the image initializers; the delayed call covers processes
-// that never drain it. Either path runs the setup at most once per process.
+// Defer launch setup instead of starting its worker during loader initializers.
+// Reynard Helper's crash records notify_set_state -> libxpc -> free -> abort
+// while the main thread is still running libmozglue initializers. Allocator
+// interference is a hypothesis, not an established allocation/free history.
+// The main-queue path runs after normal loader startup. The timed fallback is
+// best effort for processes without a draining main queue; elapsed time alone
+// does not prove that all initialization finished. Both paths share one guard.
 static void vdt_launch_setup_once(void){
     static int setup_done;
     if (__atomic_exchange_n(&setup_done, 1, __ATOMIC_RELAXED) != 0) return;
