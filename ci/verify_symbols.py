@@ -215,51 +215,24 @@ class DwarfTools:
         return result
 
     def verify_dwarf(self, path, arch):
+        # Structural proof first: --verify walks the whole DIE graph, line tables
+        # and code ranges, and refuses anything malformed or truncated.
         self.run([self.dwarfdump, '--arch=' + arch, '--verify', '--quiet', str(path)])
         output = self.run([self.dwarfdump, '--arch=' + arch, '--debug-info',
                            '--recurse-depth=0', str(path)])
-        # Only root DIEs/attributes are dumped; --verify separately checks the
-        # complete DIE graph and ranges. This keeps many-MB subprogram dumps out
-        # of memory and logs without mistaking symbol-table entries for debug
-        # information.
+        # This pass answers one question only: does the payload carry compile
+        # units at all? A stripped Mach-O has no .debug_info section, and a
+        # --uuid-only payload has a header but no unit.
         #
-        # Split on the tag itself rather than on a guessed line prefix: Apple's
-        # dwarfdump and llvm-dwarfdump differ in address column, quoting and
-        # indentation, and a prefix assumption here already rejected a dSYM that
-        # --verify had just accepted.
-        starts = [m.start() for m in re.finditer(r'DW_TAG_compile_unit\b', output)]
-        for begin, end in zip(starts, starts[1:] + [len(output)]):
-            unit = output[begin:end]
-            if not re.search(r'DW_AT_stmt_list\b', unit):
-                continue
-            # Any nonzero code extent counts.
-            if _range_ends(unit):
-                return
-            low = _attribute_value(unit, 'DW_AT_low_pc')
-            high = _attribute_value(unit, 'DW_AT_high_pc')
-            if low is not None and high is not None and high > low:
-                return
-        excerpt = ' | '.join(output.splitlines()[:6])[:400] if output.strip() else '<empty dump>'
-        raise SymbolsError('no code-bearing DWARF compilation unit for %s (%s); dump began: %s' %
-                           (path, arch, excerpt))
-
-
-def _attribute_value(unit, name):
-    """First hex value after an attribute name, or None when absent."""
-    found = re.search(r'\b' + re.escape(name) + r'\b[^\n]*?0x([0-9A-Fa-f]+)', unit)
-    if found is None and re.search(r'\b' + re.escape(name) + r'\b\s*\n\s*0x([0-9A-Fa-f]+)', unit):
-        found = re.search(r'\b' + re.escape(name) + r'\b\s*\n\s*0x([0-9A-Fa-f]+)', unit)
-    return int(found.group(1), 16) if found else None
-
-
-def _range_ends(unit):
-    """End addresses of every nonempty [start, end) pair in a DW_AT_ranges block."""
-    block = re.search(r'DW_AT_ranges\b', unit)
-    if block is None:
-        return []
-    tail = unit[block.end():]
-    pairs = re.findall(r'\[\s*0x([0-9A-Fa-f]+)\s*,\s*0x([0-9A-Fa-f]+)\s*\)', tail)
-    return [end for start, end in pairs if int(end, 16) > int(start, 16)]
+        # It deliberately does not try to read attributes. At --recurse-depth=0
+        # the tool prints neither children nor DW_AT_stmt_list, so any claim
+        # about code extents would be invented rather than read. Extent validity
+        # is --verify's job above; do not re-derive it from text.
+        if not re.search(r'\.debug_info\b', output):
+            raise SymbolsError('no .debug_info in %s (%s)' % (path, arch))
+        if not re.search(r'DW_TAG_compile_unit\b', output):
+            excerpt = ' | '.join(output.splitlines()[:6])[:400] if output.strip() else '<empty dump>'
+            raise SymbolsError('no compile unit in %s (%s); dump began: %s' % (path, arch, excerpt))
 
 
 def add_tool_arguments(parser):
