@@ -230,11 +230,19 @@ jobs:
           if-no-files-found: error
 
       # Theos generates per-architecture dSYMs at link time before stripping.
-      # Collect only project products after the installable deb is uploaded.
+      # Discover the object roots instead of assuming where each subproject puts
+      # them; the collector still validates every root it is given and fails on
+      # anything unexpected. Runs after the deb upload, so a symbols problem
+      # cannot cost the installable package.
       - name: Collect debug symbols
         run: |
           set -o pipefail
-          python3 -B ci/collect_symbols.py --objects .theos/obj --objects vedetteprefs/.theos/obj --objects nicectl/.theos/obj --out symbols --require
+          roots="$(find . -type d -path '*/.theos/obj' -not -path './theos/*' | sort)"
+          printf '%s\n' "$roots"
+          test -n "$roots"
+          arguments=()
+          for root in $roots; do arguments+=(--objects "$root"); done
+          python3 -B ci/collect_symbols.py "${arguments[@]}" --out symbols --require
 
       - name: Verify debug symbols against the package
         run: |
